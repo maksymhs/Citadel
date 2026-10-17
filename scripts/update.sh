@@ -59,6 +59,13 @@ else
   git_safe reset --hard "origin/$BRANCH"
 fi
 
+# When running as root, git checkout and file writes above are owned by root.
+# Re-assert ownership on the service user BEFORE running npm as that user,
+# otherwise npm cannot rewrite package-lock.json (EACCES).
+if [ "$(id -u)" -eq 0 ] && id "$RUN_USER" >/dev/null 2>&1; then
+  chown -R "$RUN_USER:$RUN_USER" "$(dirname "$APP_DIR")" 2>/dev/null || true
+fi
+
 echo "[citadel-update] Installing dependencies..."
 if [ "$(id -u)" -eq 0 ] && id "$RUN_USER" >/dev/null 2>&1; then
   if command -v runuser >/dev/null 2>&1; then
@@ -66,13 +73,20 @@ if [ "$(id -u)" -eq 0 ] && id "$RUN_USER" >/dev/null 2>&1; then
   else
     su -s /bin/bash "$RUN_USER" -c "cd '$APP_DIR' && npm install --omit=dev"
   fi
-  chown -R "$RUN_USER:$RUN_USER" "$(dirname "$APP_DIR")" 2>/dev/null || true
 else
   npm install --omit=dev
 fi
 
 echo "[citadel-update] Running diagnostics..."
-node scripts/doctor.js || true
+if [ "$(id -u)" -eq 0 ] && id "$RUN_USER" >/dev/null 2>&1; then
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$RUN_USER" -- bash -c "cd '$APP_DIR' && node scripts/doctor.js" || true
+  else
+    su -s /bin/bash "$RUN_USER" -c "cd '$APP_DIR' && node scripts/doctor.js" || true
+  fi
+else
+  node scripts/doctor.js || true
+fi
 
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
   echo "[citadel-update] Restarting $SERVICE..."
