@@ -77,8 +77,17 @@ Citadel is a self-hosted, ultralight, modular and secure web platform designed f
 5. **`audit_logs`**: ID, user_id, action, target_type, target_id, details, ip, created_at.
 6. **`deployments`**: ID, project_id, domain, target_port, status, ssl_active, created_at.
 7. **`plugins`**: ID, name, version, enabled, config, created_at.
+8. **`git_credentials`**: provider (github/gitlab), username, token_encrypted, created_at, updated_at.
 
 > Note: the session identifier is stored directly in the `sessions` table; no additional hashing is applied because it is already a random 256-bit value that the client only knows through an `HttpOnly` cookie.
+
+---
+
+## 3.1 Git Provider Credentials
+
+- Providers (GitHub, GitLab) are connected from the **Repositories** view using a personal access token.
+- Tokens are encrypted at rest with AES-256-GCM before being stored in `git_credentials`. The 256-bit key is read from `CITADEL_SECRET_KEY` or generated once into `DATA_DIR/secret.key` (mode `0600`).
+- The token is never returned to the browser. Repository discovery uses the provider REST API; cloning and pulling inject the token as a host-scoped `http.<host>.extraheader` **only** for the provider's own host, and `GIT_TERMINAL_PROMPT=0` makes missing credentials fail fast instead of hanging.
 
 ---
 

@@ -7,6 +7,7 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
 ## 1. Key Features
 
 - **Unified Project Management**: Register, create, import and clone Git repositories with live status and branch inspection.
+- **Git Provider Integration**: Connect GitHub or GitLab with a personal access token to browse and one-click clone your private repositories. Tokens are encrypted at rest (AES-256-GCM) and never sent to any host other than the provider's.
 - **Persistent Terminals with tmux**: A web terminal built on `xterm.js`, `node-pty` and `tmux`. Your processes and sessions keep running even if you close the browser or restart the panel.
 - **AI CLI Agent Launcher**: Detects and runs CLI tools such as **Claude Code**, **Codex CLI**, **OpenCode** and custom binaries under the server's authorized Linux account, without requiring commercial APIs or exposing secrets.
 - **Low Resource Usage**: A lean architecture built on Fastify and SQLite in WAL mode, designed to run on VPS instances with as little as 512 MB of RAM.
@@ -14,6 +15,7 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
   - Listens on `127.0.0.1` by default.
   - Mandatory authentication with `HttpOnly`, `SameSite=Strict` cookies.
   - WebSocket origin validation and strict path-traversal prevention.
+  - Git provider tokens encrypted at rest with AES-256-GCM; the key lives in `DATA_DIR/secret.key` (0600) or `CITADEL_SECRET_KEY`.
   - Audit log with automatic credential redaction.
 - **Domain Publishing (Optional)**: Caddy integration through its local admin API for reverse proxying and automatic HTTPS via Let's Encrypt.
 - **Docker Monitoring (Optional)**: Container inspection over a protected Unix socket. The core works 100% without Docker or Caddy.

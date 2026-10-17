@@ -10,11 +10,16 @@ class GitService {
   /**
    * Execute git command with structured array arguments
    */
-  _execGit(args, cwd) {
+  _execGit(args, cwd, extraEnv = {}) {
     return new Promise((resolve, reject) => {
       const proc = spawn('git', args, {
         cwd,
-        env: { ...process.env, LC_ALL: 'C' },
+        env: {
+          ...process.env,
+          LC_ALL: 'C',
+          GIT_TERMINAL_PROMPT: '0',
+          ...extraEnv,
+        },
       });
 
       let stdout = '';
@@ -38,6 +43,23 @@ class GitService {
   }
 
   /**
+   * Build git environment overrides that authenticate over HTTP(S) using a
+   * Basic Authorization header, scoped to the credential's host only so the
+   * token is never sent to any other server.
+   */
+  _authEnv(auth) {
+    if (!auth || !auth.token) return {};
+    const user = auth.cloneUser || auth.username || 'x-access-token';
+    const encoded = Buffer.from(`${user}:${auth.token}`).toString('base64');
+    const host = auth.host || 'github.com';
+    return {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: `http.https://${host}/.extraheader`,
+      GIT_CONFIG_VALUE_0: `Authorization: Basic ${encoded}`,
+    };
+  }
+
+  /**
    * Check if directory is a git repository
    */
   isGitRepo(targetDir) {
@@ -49,7 +71,7 @@ class GitService {
   /**
    * Clone a remote repository to target directory
    */
-  async clone(repoUrl, targetDir, branch = null) {
+  async clone(repoUrl, targetDir, branch = null, auth = null) {
     if (!repoUrl || typeof repoUrl !== 'string') {
       throw new Error('Repository URL is required.');
     }
@@ -71,7 +93,7 @@ class GitService {
       fs.mkdirSync(parentDir, { recursive: true });
     }
 
-    await this._execGit(args, parentDir);
+    await this._execGit(args, parentDir, this._authEnv(auth));
     return { success: true, targetDir, repoUrl: cleanUrl };
   }
 
@@ -143,11 +165,11 @@ class GitService {
   /**
    * Pull updates from remote
    */
-  async pull(repoPath) {
+  async pull(repoPath, auth = null) {
     if (!this.isGitRepo(repoPath)) {
       throw new Error('Not a git repository.');
     }
-    const output = await this._execGit(['pull'], repoPath);
+    const output = await this._execGit(['pull'], repoPath, this._authEnv(auth));
     return { success: true, output };
   }
 

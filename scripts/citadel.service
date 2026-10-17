@@ -10,6 +10,7 @@ WorkingDirectory=/srv/citadel/app
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOST=127.0.0.1
+Environment=DATA_DIR=/srv/citadel/data
 Environment=DATABASE_PATH=/srv/citadel/data/citadel.db
 Environment=PROJECTS_DIR=/srv/citadel/projects
 Environment=LOGS_DIR=/srv/citadel/logs

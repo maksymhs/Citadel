@@ -18,6 +18,7 @@ const pluginLoader = require('./services/pluginLoader');
 // Routes
 const authRoutes = require('./routes/authRoutes');
 const projectRoutes = require('./routes/projectRoutes');
+const gitRoutes = require('./routes/gitRoutes');
 const agentRoutes = require('./routes/agentRoutes');
 const terminalRoutes = require('./routes/terminalRoutes');
 const systemRoutes = require('./routes/systemRoutes');
@@ -85,6 +86,7 @@ async function buildServer(options = {}) {
   // 7. Register API routes
   await fastify.register(authRoutes);
   await fastify.register(projectRoutes);
+  await fastify.register(gitRoutes);
   await fastify.register(agentRoutes);
   await fastify.register(terminalRoutes);
   await fastify.register(systemRoutes);

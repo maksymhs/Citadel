@@ -5,6 +5,7 @@ const path = require('node:path');
 const { requireAuth } = require('../security/auth');
 const projectService = require('../services/projectService');
 const gitService = require('../services/gitService');
+const gitCredentialsService = require('../services/gitCredentialsService');
 const auditService = require('../services/auditService');
 const { PROJECTS_DIR } = require('../config');
 const { sanitizeSlug } = require('../security/guard');
@@ -79,8 +80,9 @@ async function projectRoutes(fastify) {
       const cleanSlug = sanitizeSlug(slug || derivedName);
       const targetDir = path.join(PROJECTS_DIR, cleanSlug);
 
-      // Perform clone
-      await gitService.clone(repoUrl, targetDir, branch);
+      // Perform clone (using stored provider credentials when available)
+      const auth = gitCredentialsService.resolveAuthForUrl(repoUrl);
+      await gitService.clone(repoUrl, targetDir, branch, auth);
 
       // Register as project
       const project = projectService.importProject({
@@ -163,7 +165,8 @@ async function projectRoutes(fastify) {
     if (!project) return reply.status(404).send({ error: 'Project not found.' });
 
     try {
-      const res = await gitService.pull(project.path);
+      const auth = project.git_remote ? gitCredentialsService.resolveAuthForUrl(project.git_remote) : null;
+      const res = await gitService.pull(project.path, auth);
       auditService.logAction({
         userId: request.user.id,
         action: 'git_pull',
