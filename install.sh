@@ -19,9 +19,28 @@ echo "=================================================================="
 echo -e "${NC}"
 
 CHECK_ONLY=false
-if [ "${1:-}" = "--check-only" ] || [ "${1:-}" = "--dry-run" ]; then
-  CHECK_ONLY=true
+ADMIN_TERMINAL_USER=""
+for arg in "$@"; do
+  case "$arg" in
+    --check-only|--dry-run)
+      CHECK_ONLY=true
+      ;;
+    --admin-terminal)
+      ADMIN_TERMINAL_USER="${ADMIN_TERMINAL_USER:-ubuntu}"
+      ;;
+    --admin-terminal=*)
+      ADMIN_TERMINAL_USER="${arg#*=}"
+      ;;
+  esac
+done
+
+if [ "$CHECK_ONLY" = true ]; then
   echo -e "${YELLOW}[CHECK MODE] No changes will be applied to the system.${NC}\n"
+fi
+
+if [ -n "$ADMIN_TERMINAL_USER" ]; then
+  echo -e "${YELLOW}[ADMIN TERMINAL] The in-panel System Terminal will run as '$ADMIN_TERMINAL_USER'."
+  echo -e "                 This grants the panel root-equivalent access to the host.${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)
@@ -217,6 +236,43 @@ else
     $SUDO systemctl restart citadel.service
     echo "      citadel service started and enabled at boot."
   fi
+
+  # Optional: privileged "System Terminal" (opt-in via --admin-terminal).
+  # Grants the service user a sudoers rule to open a shell as the admin user and
+  # relaxes the sandbox drop-in. This makes the panel root-capable by design.
+  if [ -n "$ADMIN_TERMINAL_USER" ]; then
+    if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && command -v systemctl >/dev/null 2>&1; then
+      echo "      Enabling privileged System Terminal as '$ADMIN_TERMINAL_USER'..."
+
+      SUDOERS_FILE="/etc/sudoers.d/citadel-terminal"
+      echo "$RUN_USER ALL=($ADMIN_TERMINAL_USER) NOPASSWD: /bin/bash, /usr/bin/bash" | $SUDO tee "$SUDOERS_FILE" >/dev/null
+      $SUDO chmod 0440 "$SUDOERS_FILE"
+      $SUDO visudo -cf "$SUDOERS_FILE" >/dev/null
+
+      DROPIN_DIR="/etc/systemd/system/citadel.service.d"
+      $SUDO mkdir -p "$DROPIN_DIR"
+      $SUDO tee "$DROPIN_DIR/admin-terminal.conf" >/dev/null <<'EOF'
+[Service]
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+EOF
+
+      if $SUDO test -f "$APP_DIR/.env"; then
+        if $SUDO grep -q '^TERMINAL_ADMIN_USER=' "$APP_DIR/.env"; then
+          $SUDO sed -i "s|^TERMINAL_ADMIN_USER=.*|TERMINAL_ADMIN_USER=$ADMIN_TERMINAL_USER|" "$APP_DIR/.env"
+        else
+          echo "TERMINAL_ADMIN_USER=$ADMIN_TERMINAL_USER" | $SUDO tee -a "$APP_DIR/.env" >/dev/null
+        fi
+      fi
+
+      $SUDO systemctl daemon-reload
+      $SUDO systemctl restart citadel.service
+      echo "      System Terminal will run as '$ADMIN_TERMINAL_USER'."
+    else
+      echo -e "${YELLOW}      Skipping --admin-terminal (requires Linux + systemd + sudo).${NC}"
+    fi
+  fi
 fi
 
 # 9. Health check
@@ -259,6 +315,9 @@ else
   echo "  Data Directory:        $DATA_DIR"
   echo "  Projects Directory:    $PROJECTS_DIR"
   echo "  Diagnostics:           node $APP_DIR/scripts/doctor.js"
+  if [ -n "$ADMIN_TERMINAL_USER" ]; then
+    echo "  System Terminal User:  $ADMIN_TERMINAL_USER (privileged / root-capable)"
+  fi
   echo ""
   echo "  Mandatory First Step:"
   echo "  Open http://127.0.0.1:3000 in your browser to set up your"

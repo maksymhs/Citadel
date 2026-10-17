@@ -17,6 +17,7 @@ async function terminalRoutes(fastify) {
     return {
       sessions: terminalManager.listSessions(projectId, globalOnly),
       tmuxAvailable: terminalManager.isTmuxAvailable(),
+      runAsUser: terminalManager.getAdminTerminalUser(),
     };
   });
 

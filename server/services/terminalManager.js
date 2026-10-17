@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { getDatabase } = require('../database/db');
-const { TMUX_PATH } = require('../config');
+const { TMUX_PATH, TERMINAL_ADMIN_USER } = require('../config');
 
 class TerminalManager {
   constructor() {
@@ -70,6 +70,45 @@ class TerminalManager {
   }
 
   /**
+   * Resolve the OS user a session should run as. Only non-project ("System
+   * Terminal") sessions can run as the configured admin user; project and agent
+   * sessions always run as the unprivileged service user.
+   */
+  _buildRunAs(projectId, adminUser = TERMINAL_ADMIN_USER) {
+    if (projectId || !adminUser) return null;
+    return {
+      command: 'sudo',
+      args: ['-u', adminUser, '-H', '/bin/bash', '-l'],
+      user: adminUser,
+    };
+  }
+
+  /**
+   * Resolve the configured admin user for the System Terminal, if any.
+   */
+  getAdminTerminalUser() {
+    const runAs = this._buildRunAs(null);
+    return runAs ? runAs.user : null;
+  }
+
+  /**
+   * Best-effort lookup of a user's home directory from /etc/passwd.
+   */
+  _homeForUser(user) {
+    try {
+      const line = fs.readFileSync('/etc/passwd', 'utf8').split('\n').find((l) => l.startsWith(`${user}:`));
+      if (line) {
+        const home = line.split(':')[5];
+        if (home && fs.existsSync(home)) return home;
+      }
+    } catch {
+      // Ignore; fall back below.
+    }
+    const fallback = `/home/${user}`;
+    return fs.existsSync(fallback) ? fallback : null;
+  }
+
+  /**
    * Check if a tmux session is alive on the system
    */
   hasTmuxSession(sessionName) {
@@ -98,6 +137,13 @@ class TerminalManager {
       }
     }
 
+    // Global ("System Terminal") sessions may run as a configured admin user.
+    const runAs = this._buildRunAs(projectId);
+    if (runAs && !cwd) {
+      const adminHome = this._homeForUser(runAs.user);
+      if (adminHome) targetCwd = adminHome;
+    }
+
     if (!fs.existsSync(targetCwd)) {
       fs.mkdirSync(targetCwd, { recursive: true });
     }
@@ -121,6 +167,8 @@ class TerminalManager {
       cwd: targetCwd,
       cols,
       rows,
+      command: runAs ? runAs.command : null,
+      args: runAs ? runAs.args : [],
     });
 
     return {
@@ -130,6 +178,7 @@ class TerminalManager {
       tmuxSession: tmuxSessionName,
       hasTmux: this.isTmuxAvailable(),
       cwd: targetCwd,
+      runAsUser: runAs ? runAs.user : null,
       status: 'active',
       createdAt: now,
     };
@@ -280,11 +329,14 @@ class TerminalManager {
       }
 
       // Re-spawn PTY attached to existing or new tmux session
+      const runAs = this._buildRunAs(sessionRow.project_id);
       sessionData = this._spawnPty({
         sessionId: sessionRow.id,
         projectId: sessionRow.project_id,
         tmuxSessionName: sessionRow.tmux_session,
         cwd,
+        command: runAs ? runAs.command : null,
+        args: runAs ? runAs.args : [],
       });
     }
 

@@ -35,6 +35,12 @@ const ALLOWED_ORIGINS = allowedOriginsEnv.split(',').map((o) => o.trim()).filter
 const SESSION_TTL_DAYS = parseInt(process.env.SESSION_TTL_DAYS, 10) || 7;
 const SESSION_SECRET = process.env.SESSION_SECRET || null; // Will auto-generate if null
 
+// Optional privileged user for the in-panel System Terminal. When set (e.g.
+// "ubuntu"), non-project sessions are spawned as that OS user via sudo, which
+// makes the panel root-capable. Empty keeps terminals as the unprivileged
+// service user (secure default).
+const TERMINAL_ADMIN_USER = process.env.TERMINAL_ADMIN_USER || null;
+
 // Tool and integration paths
 const TMUX_PATH = process.env.TMUX_PATH || 'tmux';
 const CADDY_ADMIN_API = process.env.CADDY_ADMIN_API || 'http://127.0.0.1:2019';
@@ -64,6 +70,7 @@ module.exports = {
   ALLOWED_ORIGINS,
   SESSION_TTL_DAYS,
   SESSION_SECRET,
+  TERMINAL_ADMIN_USER,
   TMUX_PATH,
   CADDY_ADMIN_API,
   DOCKER_SOCKET,

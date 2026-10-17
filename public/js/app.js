@@ -952,6 +952,216 @@
     });
   }
 
+  // --- System (host) Terminal View ---
+  async function renderTerminalView() {
+    const content = document.getElementById('main-content');
+    content.style.padding = '0'; // Terminal takes full viewport
+
+    // Tear down any existing client sockets; tmux keeps the real shell alive.
+    for (const item of state.sysTerminals.values()) {
+      try {
+        if (item.ws) item.ws.close();
+        if (item.term) item.term.dispose();
+      } catch {
+        // Ignore
+      }
+    }
+    state.sysTerminals.clear();
+    state.activeSysTerminalId = null;
+
+    content.innerHTML = `
+      <div class="workspace-container">
+        <div class="terminal-tabs-bar" id="sys-terminal-tabs-container">
+          <button class="btn btn-secondary btn-sm" id="sys-tab-new-terminal-btn" style="margin-left:auto;">
+            + New Terminal
+          </button>
+        </div>
+        <div class="terminal-view-wrapper" id="sys-terminal-viewport"></div>
+      </div>
+    `;
+
+    document.getElementById('sys-tab-new-terminal-btn').onclick = () => spawnSysTerminal();
+
+    try {
+      const termRes = await api('/api/terminals?scope=global');
+      const actions = document.getElementById('top-bar-actions');
+      actions.innerHTML = `<span style="font-size:12px;color:var(--text-muted);">Host shell${termRes.runAsUser ? ` (as ${escapeHtml(termRes.runAsUser)})` : ''}</span>`;
+
+      const sessions = termRes.sessions || [];
+      if (sessions.length > 0) {
+        await activateSysTerminal(sessions[0].id, sessions[0].name);
+      } else {
+        await spawnSysTerminal();
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function spawnSysTerminal() {
+    try {
+      const res = await api('/api/terminals', {
+        method: 'POST',
+        body: { name: `Host ${state.sysTerminals.size + 1}` },
+      });
+      await activateSysTerminal(res.session.sessionId, res.session.name);
+    } catch (err) {
+      showToast(`Failed to create terminal: ${err.message}`, 'error');
+    }
+  }
+
+  async function activateSysTerminal(sessionId, name = 'Terminal') {
+    state.activeSysTerminalId = sessionId;
+    const viewport = document.getElementById('sys-terminal-viewport');
+    if (!viewport) return;
+
+    for (const [id, item] of state.sysTerminals.entries()) {
+      if (item.containerEl) {
+        item.containerEl.style.display = (id === sessionId) ? 'block' : 'none';
+      }
+    }
+
+    let item = state.sysTerminals.get(sessionId);
+
+    if (!item) {
+      const termDiv = document.createElement('div');
+      termDiv.className = 'terminal-element';
+      viewport.appendChild(termDiv);
+
+      const term = new Terminal({
+        cursorBlink: true,
+        fontSize: 13,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+        theme: {
+          background: '#000000',
+          foreground: '#f0f6fc',
+          cursor: '#58a6ff',
+          selectionBackground: 'rgba(88, 166, 255, 0.3)',
+          black: '#161b22',
+          red: '#f85149',
+          green: '#3fb950',
+          yellow: '#d29922',
+          blue: '#58a6ff',
+          magenta: '#bc8cff',
+          cyan: '#39c5cf',
+          white: '#b1bac4',
+        },
+      });
+
+      const fitAddon = new FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
+      term.loadAddon(new WebLinksAddon.WebLinksAddon());
+      term.open(termDiv);
+      fitAddon.fit();
+
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${sessionId}`);
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'output' && msg.data) {
+            term.write(msg.data);
+          } else if (msg.type === 'exit') {
+            term.write(`\r\n\x1b[33m[Terminal process finished]\x1b[0m\r\n`);
+          } else if (msg.type === 'error') {
+            term.write(`\r\n\x1b[31m[Error]: ${msg.message}\x1b[0m\r\n`);
+          }
+        } catch {
+          term.write(event.data);
+        }
+      };
+
+      ws.onclose = () => {
+        term.write(`\r\n\x1b[90m[WebSocket connection closed]\x1b[0m\r\n`);
+      };
+
+      term.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'input', data }));
+        }
+      });
+
+      term.onResize((size) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+        }
+      });
+
+      item = { sessionId, name, term, fitAddon, ws, containerEl: termDiv };
+      state.sysTerminals.set(sessionId, item);
+
+      window.addEventListener('resize', () => {
+        if (state.activeSysTerminalId === sessionId) {
+          fitAddon.fit();
+        }
+      });
+    }
+
+    renderSysTerminalTabs();
+    setTimeout(() => {
+      item.fitAddon.fit();
+      item.term.focus();
+    }, 50);
+  }
+
+  function renderSysTerminalTabs() {
+    const tabsContainer = document.getElementById('sys-terminal-tabs-container');
+    if (!tabsContainer) return;
+
+    const existingNewBtn = document.getElementById('sys-tab-new-terminal-btn');
+    tabsContainer.querySelectorAll('.terminal-tab').forEach((el) => el.remove());
+
+    for (const [id, item] of state.sysTerminals.entries()) {
+      const tab = document.createElement('div');
+      tab.className = `terminal-tab ${id === state.activeSysTerminalId ? 'active' : ''}`;
+      tab.innerHTML = `
+        <span>${escapeHtml(item.name)}</span>
+        <button class="tab-close-btn" data-id="${id}">&times;</button>
+      `;
+
+      tab.onclick = (e) => {
+        if (!e.target.classList.contains('tab-close-btn')) {
+          activateSysTerminal(id, item.name);
+        }
+      };
+
+      tab.querySelector('.tab-close-btn').onclick = async (e) => {
+        e.stopPropagation();
+        await closeSysTerminal(id);
+      };
+
+      tabsContainer.insertBefore(tab, existingNewBtn);
+    }
+  }
+
+  async function closeSysTerminal(sessionId) {
+    const item = state.sysTerminals.get(sessionId);
+    if (item) {
+      try {
+        if (item.ws) item.ws.close();
+        if (item.term) item.term.dispose();
+        if (item.containerEl) item.containerEl.remove();
+      } catch {
+        // Ignore
+      }
+      state.sysTerminals.delete(sessionId);
+      await api(`/api/terminals/${sessionId}`, { method: 'DELETE' }).catch(() => {});
+    }
+
+    if (state.sysTerminals.size > 0) {
+      const nextId = Array.from(state.sysTerminals.keys())[0];
+      const nextItem = state.sysTerminals.get(nextId);
+      activateSysTerminal(nextId, nextItem.name);
+    } else {
+      renderSysTerminalTabs();
+    }
+  }
+
   // 3. Project Workspace & Terminal View (xterm.js + WebSockets + node-pty + tmux)
   async function renderWorkspaceView() {
     await loadProjects();

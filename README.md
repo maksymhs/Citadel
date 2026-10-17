@@ -68,6 +68,17 @@ Both methods are idempotent. The installer:
 
 You can override the source repository or branch with the `CITADEL_REPO_URL` and `CITADEL_REPO_BRANCH` environment variables.
 
+### Privileged System Terminal (opt-in)
+
+By default every terminal in the panel runs as the unprivileged service user. To let the **System Terminal** run as a privileged account (so you can administer the whole VPS from the panel):
+
+```bash
+sudo bash install.sh --admin-terminal            # defaults to user 'ubuntu'
+sudo bash install.sh --admin-terminal=deploy     # or any existing OS user
+```
+
+This installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. **Security warning:** it makes the panel root-equivalent — anyone able to log into the panel can obtain a root shell on the host. Only enable it on a personal, single-admin server.
+
 ---
 
 ## 4. Local Development

@@ -80,4 +80,19 @@ describe('Terminal & Persistent Session Tests', () => {
     terminalManager.killSession(s1.sessionId);
     terminalManager.killSession(s2.sessionId);
   });
+
+  test('System Terminal run-as resolution honors the admin user', () => {
+    // Project sessions always run as the unprivileged service user.
+    assert.equal(terminalManager._buildRunAs('some-project-id', 'ubuntu'), null);
+
+    // Global sessions run as the admin user when configured.
+    const runAs = terminalManager._buildRunAs(null, 'ubuntu');
+    assert.ok(runAs);
+    assert.equal(runAs.command, 'sudo');
+    assert.equal(runAs.user, 'ubuntu');
+    assert.deepEqual(runAs.args, ['-u', 'ubuntu', '-H', '/bin/bash', '-l']);
+
+    // No admin user configured means no privilege escalation.
+    assert.equal(terminalManager._buildRunAs(null, null), null);
+  });
 });
