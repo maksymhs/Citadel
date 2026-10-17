@@ -78,7 +78,7 @@ class TerminalManager {
     if (projectId || !adminUser) return null;
     return {
       command: 'sudo',
-      args: ['-u', adminUser, '-H', '/bin/bash', '-l'],
+      args: ['-u', adminUser, '-H', '/bin/bash', '-lc', 'cd "$HOME" 2>/dev/null; exec /bin/bash -l'],
       user: adminUser,
     };
   }
@@ -138,10 +138,11 @@ class TerminalManager {
     }
 
     // Global ("System Terminal") sessions may run as a configured admin user.
+    // The tmux server runs as the service user, so its cwd must be a path that
+    // user can enter; the login shell then changes into its own $HOME.
     const runAs = this._buildRunAs(projectId);
     if (runAs && !cwd) {
-      const adminHome = this._homeForUser(runAs.user);
-      if (adminHome) targetCwd = adminHome;
+      targetCwd = os.tmpdir();
     }
 
     if (!fs.existsSync(targetCwd)) {
@@ -328,8 +329,7 @@ class TerminalManager {
           cwd = project.path;
         }
       } else if (runAs) {
-        const adminHome = this._homeForUser(runAs.user);
-        if (adminHome) cwd = adminHome;
+        cwd = os.tmpdir();
       }
 
       // Re-spawn PTY attached to existing or new tmux session

@@ -90,7 +90,7 @@ describe('Terminal & Persistent Session Tests', () => {
     assert.ok(runAs);
     assert.equal(runAs.command, 'sudo');
     assert.equal(runAs.user, 'ubuntu');
-    assert.deepEqual(runAs.args, ['-u', 'ubuntu', '-H', '/bin/bash', '-l']);
+    assert.deepEqual(runAs.args, ['-u', 'ubuntu', '-H', '/bin/bash', '-lc', 'cd "$HOME" 2>/dev/null; exec /bin/bash -l']);
 
     // No admin user configured means no privilege escalation.
     assert.equal(terminalManager._buildRunAs(null, null), null);
