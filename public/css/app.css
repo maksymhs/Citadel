@@ -841,6 +841,8 @@ html.is-mobile-ui #app-container {
   }
 
   .data-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     background-color: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 8px;
@@ -854,13 +856,13 @@ html.is-mobile-ui #app-container {
 
   .data-table td {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
     min-width: 0;
-    padding: 7px 12px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--border-color);
-    text-align: right;
+    text-align: left;
     overflow-wrap: anywhere;
   }
 
@@ -868,11 +870,19 @@ html.is-mobile-ui #app-container {
     border-bottom: 0;
   }
 
+  /* Cells holding actions span the full width; keep buttons on one row. */
+  .data-table td:has(button) {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+
   .data-table td::before {
     content: attr(data-label);
-    flex: 0 0 auto;
     margin: 0;
-    font-size: 10px;
+    font-size: 9px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     font-weight: 600;
@@ -881,7 +891,7 @@ html.is-mobile-ui #app-container {
   }
 
   .data-table td[colspan] {
-    display: block;
+    grid-column: 1 / -1;
     text-align: center;
     color: var(--text-muted);
   }
@@ -999,6 +1009,8 @@ html.is-mobile-ui .data-table td {
 }
 
 html.is-mobile-ui .data-table tr {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
@@ -1012,13 +1024,13 @@ html.is-mobile-ui .data-table tr:last-child {
 
 html.is-mobile-ui .data-table td {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   min-width: 0;
-  padding: 7px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border-color);
-  text-align: right;
+  text-align: left;
   overflow-wrap: anywhere;
 }
 
@@ -1026,11 +1038,19 @@ html.is-mobile-ui .data-table td:last-child {
   border-bottom: 0;
 }
 
+/* Cells holding actions span the full width; keep buttons on one row. */
+html.is-mobile-ui .data-table td:has(button) {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
 html.is-mobile-ui .data-table td::before {
   content: attr(data-label);
-  flex: 0 0 auto;
   margin: 0;
-  font-size: 10px;
+  font-size: 9px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   font-weight: 600;
@@ -1039,7 +1059,7 @@ html.is-mobile-ui .data-table td::before {
 }
 
 html.is-mobile-ui .data-table td[colspan] {
-  display: block;
+  grid-column: 1 / -1;
   text-align: center;
   color: var(--text-muted);
 }
