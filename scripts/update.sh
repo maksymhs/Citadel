@@ -242,6 +242,18 @@ fi
 
 echo "[citadel-update] Update completed: $TARGET"
 
+# Ensure the friendly `citadel` CLI launcher exists (and points at this app dir).
+CLI_DST="/usr/local/bin/citadel"
+if [ "$(id -u)" -eq 0 ] && [ -f "$APP_DIR/scripts/citadel" ]; then
+  CLI_TMP="$(mktemp)"
+  printf '#!/bin/sh\n# Citadel CLI launcher (managed by the installer/updater)\nexec bash "%s/scripts/citadel" "$@"\n' "$APP_DIR" > "$CLI_TMP"
+  if ! cmp -s "$CLI_TMP" "$CLI_DST"; then
+    install -m 0755 "$CLI_TMP" "$CLI_DST"
+    echo "[citadel-update] Installed the 'citadel' CLI launcher."
+  fi
+  rm -f "$CLI_TMP"
+fi
+
 # Keep the installed helper in sync with the repository. Only when running as
 # root and invoked as the installed helper. Replaced via rename (new inode) so
 # the currently executing script is not truncated mid-read.
