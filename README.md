@@ -68,6 +68,16 @@ Both methods are idempotent. The installer:
 
 You can override the source repository or branch with the `CITADEL_REPO_URL` and `CITADEL_REPO_BRANCH` environment variables.
 
+### Updating an existing installation
+
+Re-running the same installer upgrades in place: it pulls the latest code from the configured branch, reinstalls dependencies, refreshes the service unit and helper scripts, and restarts Citadel. Your data, `.env` and projects are preserved.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash -s -- --update
+# or, once installed:
+citadel update
+```
+
 ### Managing Citadel (`citadel` CLI)
 
 Once installed, a small `citadel` command is available system-wide:

@@ -25,10 +25,14 @@ KIOSK_USER=""
 LAN_ACCESS=false
 HOST_ADDR=""
 PANEL_PORT=3000
+UPDATE_MODE=false
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
       CHECK_ONLY=true
+      ;;
+    --update|--upgrade)
+      UPDATE_MODE=true
       ;;
     --admin-terminal)
       ADMIN_TERMINAL_USER="${ADMIN_TERMINAL_USER:-ubuntu}"
@@ -204,6 +208,14 @@ else
   fi
 
   $SUDO mkdir -p "$APP_DIR" "$DATA_DIR" "$PROJECTS_DIR" "$LOGS_DIR"
+
+  # Re-running the installer upgrades an existing installation in place: it pulls
+  # the latest code, reinstalls dependencies and restarts the service.
+  if $SUDO test -d "$APP_DIR/.git" || $SUDO test -f "$APP_DIR/package.json"; then
+    echo -e "${BLUE}      Existing installation detected — updating in place.${NC}"
+  elif [ "$UPDATE_MODE" = true ]; then
+    echo -e "${YELLOW}      Nothing to update yet; performing a fresh installation.${NC}"
+  fi
 
   # Obtain the source code: from a local checkout or by cloning the official repository.
   # This supports both `./install.sh` and `curl -fsSL .../install.sh | bash`.
