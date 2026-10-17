@@ -137,6 +137,32 @@ if (missingVendor.length === 0) {
   report('FAIL', 'Local Assets (xterm.js)', `Missing files: ${missingVendor.join(', ')}. Run: npm run postinstall`);
 }
 
+// 10. Check systemd KillMode (keeps tmux terminals alive across service restarts)
+if (process.platform === 'linux') {
+  let systemctlAvailable = false;
+  try {
+    systemctlAvailable = spawnSync('systemctl', ['--version'], { stdio: 'ignore' }).status === 0;
+  } catch {
+    systemctlAvailable = false;
+  }
+
+  if (systemctlAvailable) {
+    try {
+      const show = spawnSync('systemctl', ['show', 'citadel', '-p', 'KillMode'], { encoding: 'utf8' });
+      const killMode = (show.stdout || '').trim().split('=')[1];
+      if (!killMode) {
+        report('WARN', 'Terminal Persistence (systemd)', 'citadel.service is not installed or not systemd-managed; terminals will not survive service restarts.');
+      } else if (killMode === 'process') {
+        report('PASS', 'Terminal Persistence (systemd)', 'KillMode=process (tmux sessions survive service restarts/updates)');
+      } else {
+        report('WARN', 'Terminal Persistence (systemd)', `KillMode=${killMode}. The whole cgroup (including tmux) is killed on every restart/update, so open terminals are lost. Install scripts/citadel.service or add a KillMode=process drop-in.`);
+      }
+    } catch {
+      // Ignore: systemctl show failures are non-fatal.
+    }
+  }
+}
+
 console.log('\n====================================================');
 console.log(`Diagnostics complete: ${passCount} passed, ${warnCount} warnings, ${failCount} failures`);
 console.log('====================================================\n');

@@ -103,6 +103,28 @@ if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1 \
   systemctl daemon-reload
 fi
 
+# Persistent drop-in: guarantee detached tmux terminals (and the opencode
+# sessions running inside them) survive every service restart/update, even if
+# the main unit is later replaced by an older copy. Idempotent: never clobbers
+# unrelated overrides, only ensures KillMode=process is present.
+DROPIN_DIR="/etc/systemd/system/${SERVICE}.service.d"
+DROPIN_FILE="$DROPIN_DIR/terminal-persistence.conf"
+if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+  dropin_changed=false
+  if [ ! -f "$DROPIN_FILE" ]; then
+    mkdir -p "$DROPIN_DIR"
+    printf '[Service]\nKillMode=process\n' > "$DROPIN_FILE"
+    dropin_changed=true
+  elif ! grep -qE '^[[:space:]]*KillMode=process' "$DROPIN_FILE"; then
+    printf '\n[Service]\nKillMode=process\n' >> "$DROPIN_FILE"
+    dropin_changed=true
+  fi
+  if [ "$dropin_changed" = true ]; then
+    echo "[citadel-update] Ensuring tmux terminal persistence (KillMode=process)..."
+    systemctl daemon-reload
+  fi
+fi
+
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
   echo "[citadel-update] Restarting $SERVICE..."
   systemctl restart --no-block "$SERVICE"

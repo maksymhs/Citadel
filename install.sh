@@ -241,6 +241,16 @@ else
     $SUDO sed -i "s|User=citadel|User=$RUN_USER|g" "$SERVICE_FILE"
     $SUDO sed -i "s|Group=citadel|Group=$RUN_USER|g" "$SERVICE_FILE"
 
+    # Persistent drop-in: guarantee detached tmux terminals (and the opencode
+    # sessions running inside them) survive every service restart/update, even
+    # if the main unit above is later replaced by an older copy.
+    DROPIN_DIR="/etc/systemd/system/citadel.service.d"
+    $SUDO mkdir -p "$DROPIN_DIR"
+    $SUDO tee "$DROPIN_DIR/terminal-persistence.conf" >/dev/null <<'EOF'
+[Service]
+KillMode=process
+EOF
+
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable citadel.service
     $SUDO systemctl restart citadel.service
