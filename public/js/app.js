@@ -368,6 +368,7 @@
 
     document.getElementById('logout-btn').onclick = async () => {
       await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+      teardownSession();
       state.user = null;
       renderLoginView();
     };
@@ -679,6 +680,7 @@
       });
 
       await refreshProcessTable();
+      if (state.dashboardTimer) clearInterval(state.dashboardTimer);
       state.dashboardTimer = setInterval(() => {
         if (state.dashboardPaused || document.hidden) return;
         refreshProcessTable();
@@ -1272,6 +1274,22 @@
     } catch {
       // Ignore
     }
+  }
+
+  // Drop every background resource owned by the current session: the dashboard
+  // poll timer and all open terminal sockets/timers. Called on logout so a
+  // signed-out browser stops talking to the server.
+  function teardownSession() {
+    if (state.dashboardTimer) {
+      clearInterval(state.dashboardTimer);
+      state.dashboardTimer = null;
+    }
+    for (const item of state.terminals.values()) disposeTerminalItem(item);
+    state.terminals.clear();
+    state.activeTerminalId = null;
+    for (const item of state.sysTerminals.values()) disposeTerminalItem(item);
+    state.sysTerminals.clear();
+    state.activeSysTerminalId = null;
   }
 
   // Re-fit the currently visible terminals when the window changes size.
