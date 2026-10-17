@@ -245,7 +245,7 @@
           <div class="sidebar-header">
             <div class="logo-icon">C</div>
             <span class="logo-text">Citadel</span>
-            <span class="version-tag">v0.1.0</span>
+            <span class="version-tag" id="app-version-tag"></span>
           </div>
           <nav class="sidebar-nav">
             <div class="nav-section-title">Development</div>
@@ -333,6 +333,21 @@
     // Load initial data
     loadProjects();
     loadAgents();
+    loadVersionTag();
+  }
+
+  async function loadVersionTag() {
+    const tag = document.getElementById('app-version-tag');
+    if (!tag) return;
+    try {
+      const res = await api('/api/system/version');
+      if (res.version && res.version.version) {
+        tag.textContent = `v${res.version.version}`;
+        tag.title = res.version.commit ? `commit ${res.version.commit}` : '';
+      }
+    } catch {
+      // Non-fatal: leave the tag empty if the version cannot be fetched.
+    }
   }
 
   function navigateTo(view) {
