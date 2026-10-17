@@ -1227,13 +1227,23 @@ html.is-mobile-ui .files-table .file-name {
 }
 
 .connect-qr svg {
-  width: 148px;
-  height: 148px;
+  width: min(260px, 72vw);
+  height: auto;
   display: block;
+  shape-rendering: crispEdges;
 }
 
 @media (max-width: 768px) {
   .connect-grid {
     flex-direction: column;
+    align-items: center;
+  }
+
+  .connect-grid > div:last-child {
+    align-self: stretch;
+  }
+
+  .connect-qr {
+    align-self: center;
   }
 }

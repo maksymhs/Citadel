@@ -76,10 +76,12 @@ function resolve() {
 }
 
 function qrSvg(text) {
-  const qr = qrcode(0, 'M');
+  const qr = qrcode(0, 'H');
   qr.addData(text);
   qr.make();
-  return qr.createSvgTag({ cellSize: 4, margin: 4 });
+  const svg = qr.createSvgTag({ cellSize: 8, margin: 4 });
+  // Hard-edged modules scan far more reliably than anti-aliased ones.
+  return svg.replace('<svg ', '<svg shape-rendering="crispEdges" ');
 }
 
 function getConnectInfo() {
