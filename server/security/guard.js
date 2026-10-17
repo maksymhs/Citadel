@@ -6,6 +6,17 @@ const fs = require('node:fs');
 const { PROJECTS_DIR, ALLOWED_ORIGINS } = require('../config');
 
 /**
+ * True when `target` is `base` itself or lives inside it. Uses path.relative
+ * instead of a raw string prefix so a sibling like `/data/projects_evil` can no
+ * longer masquerade as being inside `/data/projects`.
+ */
+function isInsideBase(base, target) {
+  const rel = path.relative(base, target);
+  if (rel === '') return true;
+  return !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`);
+}
+
+/**
  * Validates that a requested path resolves to a safe directory inside allowed bases.
  * Prevents directory traversal, '../', and sneaky symlink escapes.
  */
@@ -23,14 +34,14 @@ function validateSafePath(targetPath, allowedBase = PROJECTS_DIR) {
     const canonicalTarget = fs.realpathSync(resolvedTarget);
     const canonicalBase = fs.existsSync(resolvedBase) ? fs.realpathSync(resolvedBase) : resolvedBase;
 
-    if (!canonicalTarget.startsWith(canonicalBase)) {
+    if (!isInsideBase(canonicalBase, canonicalTarget)) {
       throw new Error(`Path traversal denied: path escapes allowed base directory.`);
     }
     return canonicalTarget;
   }
 
   // If creating new path, check resolved parent
-  if (!resolvedTarget.startsWith(resolvedBase)) {
+  if (!isInsideBase(resolvedBase, resolvedTarget)) {
     throw new Error(`Path traversal denied: target path is outside allowed base directory.`);
   }
 

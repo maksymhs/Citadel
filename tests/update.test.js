@@ -2,6 +2,12 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
+
+// Point the updater at a path that never exists so the suite can NEVER trigger a
+// real self-update on a host that has the privileged helper installed. This must
+// be set before the config/updateService modules are required below.
+process.env.CITADEL_UPDATER_PATH = '/nonexistent/citadel-update-test';
+
 const { buildServer } = require('../server/index');
 const { closeDatabase, getDatabase, initDatabase } = require('../server/database/db');
 const updateService = require('../server/services/updateService');

@@ -2,6 +2,7 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 const { validateSafePath, sanitizeSlug, validateDomain, isAllowedOrigin } = require('../server/security/guard');
 const { buildServer } = require('../server/index');
 const { closeDatabase } = require('../server/database/db');
@@ -44,6 +45,25 @@ describe('Security & Protection Tests', () => {
     assert.throws(() => {
       validateSafePath('/etc/shadow', base);
     }, /Path traversal denied/i);
+  });
+
+  test('validateSafePath rejects sibling dirs that share a name prefix', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-guard-'));
+    const base = path.join(tmp, 'projects');
+    const evil = path.join(tmp, 'projects_evil');
+    const inside = path.join(base, 'child');
+    fs.mkdirSync(inside, { recursive: true });
+    fs.mkdirSync(evil, { recursive: true });
+    try {
+      assert.equal(validateSafePath(inside, base), fs.realpathSync(inside));
+      assert.throws(() => validateSafePath(evil, base), /Path traversal denied/i);
+      assert.throws(
+        () => validateSafePath(path.join(base, '..', 'projects_evil'), base),
+        /Path traversal denied/i,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test('sanitizeSlug validates and sanitizes strings', () => {

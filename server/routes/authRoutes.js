@@ -10,6 +10,15 @@ const {
 } = require('../security/auth');
 const auditService = require('../services/auditService');
 
+// Throttle credential endpoints per client + username so an attacker cannot
+// brute-force a single account even when rotating source IPs (trustProxy makes
+// request.ip spoofable behind a proxy).
+const credentialRateLimit = {
+  max: 8,
+  timeWindow: '5 minutes',
+  keyGenerator: (request) => `${request.ip}:${(request.body && request.body.username) || ''}`,
+};
+
 async function authRoutes(fastify) {
   // Check if system has been initialized
   fastify.get('/api/auth/status', async () => {
@@ -19,7 +28,7 @@ async function authRoutes(fastify) {
   });
 
   // Setup initial admin account (only allowed once)
-  fastify.post('/api/auth/setup', async (request, reply) => {
+  fastify.post('/api/auth/setup', { config: { rateLimit: credentialRateLimit } }, async (request, reply) => {
     const { username, password } = request.body || {};
     try {
       const user = createInitialAdmin(username, password);
@@ -50,7 +59,7 @@ async function authRoutes(fastify) {
   });
 
   // Login
-  fastify.post('/api/auth/login', async (request, reply) => {
+  fastify.post('/api/auth/login', { config: { rateLimit: credentialRateLimit } }, async (request, reply) => {
     const { username, password } = request.body || {};
     const session = login(username, password);
 

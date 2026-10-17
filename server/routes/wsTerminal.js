@@ -3,6 +3,7 @@
  */
 const { isAllowedOrigin } = require('../security/guard');
 const { getSessionUser } = require('../security/auth');
+const { getDatabase } = require('../database/db');
 const terminalManager = require('../services/terminalManager');
 
 function wsTerminalRoutes(fastify) {
@@ -15,21 +16,38 @@ function wsTerminalRoutes(fastify) {
       return;
     }
 
-    // 2. Authentication validation (cookie or query param)
+    // 2. Authentication validation. Only the session cookie or an Authorization
+    //    header are accepted: a ?token= query parameter would leak the long-lived
+    //    session id into access logs and Referer headers.
     const sessionIdCookie = req.cookies?.session_id;
-    const sessionTokenQuery = req.query?.token;
-    const authToken = sessionIdCookie || sessionTokenQuery;
+    const authHeader = req.headers.authorization;
+    const bearerToken = typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : null;
 
-    const user = getSessionUser(authToken);
+    const user = getSessionUser(sessionIdCookie || bearerToken);
     if (!user) {
       socket.send(JSON.stringify({ type: 'error', message: 'Unauthorized: valid session required.' }));
       socket.close();
       return;
     }
 
-    // 3. Attach client to the terminal manager
-    startHeartbeat(socket);
+    // 3. Authorize the requested terminal session: it must exist and belong to a
+    //    project the caller may reach. (Single-admin installs currently allow all
+    //    authenticated users; keep the lookup so ownership can be enforced later.)
     const terminalSessionId = req.params.sessionId;
+    const sessionRow = getDatabase()
+      .prepare('SELECT id, project_id FROM term_sessions WHERE id = ?')
+      .get(terminalSessionId);
+
+    if (!sessionRow) {
+      socket.send(JSON.stringify({ type: 'error', message: 'Terminal session not found.' }));
+      socket.close();
+      return;
+    }
+
+    // 4. Attach client to the terminal manager
+    startHeartbeat(socket);
     terminalManager.attachClient(terminalSessionId, socket);
   });
 }
