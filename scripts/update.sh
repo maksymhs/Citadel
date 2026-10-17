@@ -95,3 +95,12 @@ if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE
 fi
 
 echo "[citadel-update] Update completed: $TARGET"
+
+# Keep the installed helper in sync with the repository. Only when running as
+# root and invoked as the installed helper. Replaced via rename (new inode) so
+# the currently executing script is not truncated mid-read.
+if [ "$(id -u)" -eq 0 ] && [ -f "$APP_DIR/scripts/update.sh" ] && [ "$0" = "/usr/local/sbin/citadel-update" ]; then
+  install -m 0755 "$APP_DIR/scripts/update.sh" /usr/local/sbin/.citadel-update.new \
+    && mv -f /usr/local/sbin/.citadel-update.new /usr/local/sbin/citadel-update \
+    && echo "[citadel-update] Updater helper refreshed."
+fi
