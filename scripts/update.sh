@@ -78,14 +78,15 @@ else
 fi
 
 echo "[citadel-update] Running diagnostics..."
+DIAG_DATA_DIR="${DATA_DIR:-$(dirname "$APP_DIR")/data}"
 if [ "$(id -u)" -eq 0 ] && id "$RUN_USER" >/dev/null 2>&1; then
   if command -v runuser >/dev/null 2>&1; then
-    runuser -u "$RUN_USER" -- bash -c "cd '$APP_DIR' && node scripts/doctor.js" || true
+    runuser -u "$RUN_USER" -- bash -c "cd '$APP_DIR' && DATA_DIR='$DIAG_DATA_DIR' node scripts/doctor.js" || true
   else
-    su -s /bin/bash "$RUN_USER" -c "cd '$APP_DIR' && node scripts/doctor.js" || true
+    su -s /bin/bash "$RUN_USER" -c "cd '$APP_DIR' && DATA_DIR='$DIAG_DATA_DIR' node scripts/doctor.js" || true
   fi
 else
-  node scripts/doctor.js || true
+  DATA_DIR="$DIAG_DATA_DIR" node scripts/doctor.js || true
 fi
 
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
