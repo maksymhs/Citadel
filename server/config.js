@@ -8,6 +8,14 @@ const os = require('node:os');
 // Helper to resolve paths relative to root or environment
 const ROOT_DIR = path.resolve(__dirname, '..');
 
+// Load optional .env file (no dependency). Values already present in the
+// environment (e.g. set by systemd) take precedence over the file.
+try {
+  process.loadEnvFile(path.join(ROOT_DIR, '.env'));
+} catch {
+  // No .env file present; rely on the process environment / systemd unit.
+}
+
 // Environment variables with secure defaults
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const HOST = process.env.HOST || '127.0.0.1'; // Listen on localhost by default for security

@@ -173,6 +173,12 @@ else
     echo "      Code already present in $APP_DIR (skipping download)."
   fi
 
+  # Ensure an editable .env exists for optional configuration (e.g. ALLOWED_ORIGINS
+  # when served behind a domain/proxy). Never overwrite an existing .env.
+  if ! $SUDO test -f "$APP_DIR/.env" && $SUDO test -f "$APP_DIR/.env.example"; then
+    $SUDO cp "$APP_DIR/.env.example" "$APP_DIR/.env" 2>/dev/null || true
+  fi
+
   # Permissions
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
     $SUDO chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
