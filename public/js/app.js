@@ -27,6 +27,30 @@
     containers: [],
   };
 
+  // Persist lightweight UI state so a page reload returns to the same view,
+  // project and active terminal instead of always resetting to the dashboard.
+  const UI_STATE_KEY = 'citadel.uiState';
+  const KNOWN_VIEWS = [
+    'dashboard', 'projects', 'repos', 'workspace', 'terminal',
+    'agents', 'deployments', 'docker', 'plugins', 'system',
+  ];
+
+  function loadUiState() {
+    try {
+      return JSON.parse(localStorage.getItem(UI_STATE_KEY)) || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveUiState(partial) {
+    try {
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...loadUiState(), ...partial }));
+    } catch {
+      // Ignore storage errors (private mode / quota).
+    }
+  }
+
   // API helper with cookie credentials
   async function api(path, options = {}) {
     const opts = { ...options, headers: { ...(options.headers || {}) } };
@@ -126,8 +150,7 @@
       try {
         const meRes = await api('/api/auth/me');
         state.user = meRes.user;
-        renderAppShell();
-        navigateTo('dashboard');
+        startApp();
       } catch {
         renderLoginView();
       }
@@ -181,8 +204,7 @@
         state.user = res.user;
         state.setupComplete = true;
         showToast('Admin account created successfully.', 'success');
-        renderAppShell();
-        navigateTo('dashboard');
+        startApp();
       } catch (err) {
         showToast(err.message, 'error');
       }
@@ -227,8 +249,7 @@
         });
         state.user = res.user;
         showToast('Signed in.', 'success');
-        renderAppShell();
-        navigateTo('dashboard');
+        startApp();
       } catch (err) {
         showToast(err.message, 'error');
       }
@@ -350,8 +371,19 @@
     }
   }
 
+  function startApp() {
+    const ui = loadUiState();
+    state.activeProjectId = ui.activeProjectId || null;
+    state.activeTerminalId = ui.activeTerminalId || null;
+    state.activeSysTerminalId = ui.activeSysTerminalId || null;
+    renderAppShell();
+    const view = KNOWN_VIEWS.includes(ui.currentView) ? ui.currentView : 'dashboard';
+    navigateTo(view);
+  }
+
   function navigateTo(view) {
     state.currentView = view;
+    saveUiState({ currentView: view });
     document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
       if (item.getAttribute('data-view') === view) {
         item.classList.add('active');
@@ -1166,6 +1198,7 @@
     if (!viewport) return;
 
     state.activeSysTerminalId = sessionId;
+    saveUiState({ activeSysTerminalId: sessionId });
     let item = state.sysTerminals.get(sessionId);
     if (!item) {
       item = createTerminalItem({
@@ -1245,6 +1278,7 @@
 
     const currentProject = state.projects.find((p) => p.id === state.activeProjectId) || state.projects[0];
     state.activeProjectId = currentProject.id;
+    saveUiState({ activeProjectId: currentProject.id });
 
     // Top action bar
     const actions = document.getElementById('top-bar-actions');
@@ -1344,6 +1378,7 @@
     if (!viewport) return;
 
     state.activeTerminalId = sessionId;
+    saveUiState({ activeTerminalId: sessionId });
     let item = state.terminals.get(sessionId);
     if (!item) {
       item = createTerminalItem({
