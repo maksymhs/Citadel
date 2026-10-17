@@ -74,6 +74,7 @@
     const root = document.getElementById('toast-root');
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
     toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
     root.appendChild(toast);
     setTimeout(() => {
@@ -96,12 +97,13 @@
   // Generic modal helper
   function openModal({ title, bodyHtml, confirmText = 'Confirm', onConfirm }) {
     const root = document.getElementById('modal-root');
+    const previouslyFocused = document.activeElement;
     root.innerHTML = `
       <div class="modal-overlay" id="active-modal-overlay">
-        <div class="modal-content">
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="active-modal-title">
           <div class="modal-header">
-            <h3 class="modal-title">${escapeHtml(title)}</h3>
-            <button class="tab-close-btn" id="modal-close-btn">&times;</button>
+            <h3 class="modal-title" id="active-modal-title">${escapeHtml(title)}</h3>
+            <button class="tab-close-btn" id="modal-close-btn" aria-label="Close dialog">&times;</button>
           </div>
           <div class="modal-body">
             ${bodyHtml}
@@ -115,7 +117,35 @@
     `;
 
     const overlay = document.getElementById('active-modal-overlay');
-    const close = () => { root.innerHTML = ''; };
+    const close = () => {
+      document.removeEventListener('keydown', onKeydown);
+      root.innerHTML = '';
+      if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+    };
+
+    // Escape closes; Tab is trapped inside the dialog.
+    const onKeydown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const focusable = root.querySelectorAll(
+        'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeydown);
 
     document.getElementById('modal-close-btn').onclick = close;
     document.getElementById('modal-cancel-btn').onclick = close;
@@ -136,6 +166,10 @@
         close();
       }
     };
+
+    // Move focus into the dialog.
+    const firstField = root.querySelector('input, textarea, select, button');
+    if (firstField) firstField.focus();
   }
 
   // Bootstrap check
@@ -358,11 +392,24 @@
 
     // Bind sidebar clicks
     document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
-      item.onclick = (e) => {
-        e.preventDefault();
+      // The nav items are anchors without href, so make them operable by
+      // keyboard/screen readers explicitly.
+      item.setAttribute('role', 'button');
+      item.setAttribute('tabindex', '0');
+      const activate = () => {
         const view = item.getAttribute('data-view');
         navigateTo(view);
         closeSidebar();
+      };
+      item.onclick = (e) => {
+        e.preventDefault();
+        activate();
+      };
+      item.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          activate();
+        }
       };
     });
 
@@ -429,8 +476,10 @@
     document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
       if (item.getAttribute('data-view') === view) {
         item.classList.add('active');
+        item.setAttribute('aria-current', 'page');
       } else {
         item.classList.remove('active');
+        item.removeAttribute('aria-current');
       }
     });
 
@@ -1125,7 +1174,7 @@
     const mobile = document.documentElement.classList.contains('is-mobile-ui');
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: mobile ? 11 : 13,
+      fontSize: mobile ? 10 : 12,
       lineHeight: 1.0,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       theme: {
