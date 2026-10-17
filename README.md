@@ -89,6 +89,10 @@ sudo bash install.sh --enable-updater
 
 This installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. It is disabled by default; without it the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.
 
+### Git credentials for terminals
+
+The installer also registers a git credential helper (`/usr/local/bin/citadel-git-credential`) system-wide. It lets plain `git fetch/pull/push` inside project terminals reuse the provider tokens you stored in **Repositories**, decrypting them on demand — tokens are never written to disk in clear text. It only resolves credentials for hosts that have a configured provider (GitHub/GitLab).
+
 ---
 
 ## 4. Local Development

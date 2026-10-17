@@ -300,6 +300,20 @@ EOF
       echo -e "${YELLOW}      Skipping --enable-updater (requires Linux + sudo).${NC}"
     fi
   fi
+
+  # Git credential helper: lets project terminals reuse the provider tokens
+  # already stored (encrypted) by the panel for git fetch/pull/push, without
+  # ever writing them in clear text. Tokens are only decryptable by the service
+  # user that owns the data directory.
+  if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && command -v git >/dev/null 2>&1; then
+    echo "      Configuring git credential helper (panel provider tokens)..."
+    $SUDO tee /usr/local/bin/citadel-git-credential >/dev/null <<EOF
+#!/bin/sh
+DATA_DIR="$DATA_DIR" DATABASE_PATH="$DATA_DIR/citadel.db" exec node "$APP_DIR/scripts/git-credential-citadel.js" "\$@"
+EOF
+    $SUDO chmod 0755 /usr/local/bin/citadel-git-credential
+    $SUDO git config --system credential.helper /usr/local/bin/citadel-git-credential
+  fi
 fi
 
 # 9. Health check
