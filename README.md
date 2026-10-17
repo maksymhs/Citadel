@@ -79,6 +79,16 @@ sudo bash install.sh --admin-terminal=deploy     # or any existing OS user
 
 This installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. **Security warning:** it makes the panel root-equivalent — anyone able to log into the panel can obtain a root shell on the host. Only enable it on a personal, single-admin server.
 
+### In-panel Updater (opt-in)
+
+Citadel can check GitHub for new releases (System view) and, optionally, update itself with one click:
+
+```bash
+sudo bash install.sh --enable-updater
+```
+
+This installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. It is disabled by default; without it the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.
+
 ---
 
 ## 4. Local Development
@@ -122,10 +132,10 @@ citadel/
 ├── scripts/              # Maintenance scripts
 │   ├── copy-vendor.js    # Copies xterm assets and applies +x permissions
 │   ├── doctor.js         # Health and dependency diagnostics
-│   ├── update.sh         # Safe updater (preserves data and repos)
+│   ├── update.sh         # Self-updater (git fetch/reset + deps + restart)
 │   ├── uninstall.sh      # Controlled uninstaller
 │   └── citadel.service   # systemd unit for Linux
-├── tests/                # Automated tests (33 tests across 8 suites)
+├── tests/                # Automated tests (49 tests across 11 suites)
 ├── docs/                 # Architecture documentation and ADRs
 ├── install.sh            # Main installer
 └── package.json
@@ -139,8 +149,9 @@ citadel/
 # Full component and dependency diagnostics
 node scripts/doctor.js
 
-# Update the application while preserving data and projects
+# Update the application while preserving data and projects (run with sudo on a server)
 ./scripts/update.sh
+sudo /usr/local/sbin/citadel-update --check   # verify the updater without changing anything
 
 # Uninstall while preserving data by default
 ./scripts/uninstall.sh

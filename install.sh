@@ -20,6 +20,7 @@ echo -e "${NC}"
 
 CHECK_ONLY=false
 ADMIN_TERMINAL_USER=""
+ENABLE_UPDATER=false
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
@@ -31,6 +32,9 @@ for arg in "$@"; do
     --admin-terminal=*)
       ADMIN_TERMINAL_USER="${arg#*=}"
       ;;
+    --enable-updater)
+      ENABLE_UPDATER=true
+      ;;
   esac
 done
 
@@ -41,6 +45,10 @@ fi
 if [ -n "$ADMIN_TERMINAL_USER" ]; then
   echo -e "${YELLOW}[ADMIN TERMINAL] The in-panel System Terminal will run as '$ADMIN_TERMINAL_USER'."
   echo -e "                 This grants the panel root-equivalent access to the host.${NC}\n"
+fi
+
+if [ "$ENABLE_UPDATER" = true ]; then
+  echo -e "${YELLOW}[UPDATER] Installing the privileged in-panel updater (root-owned helper).${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)
@@ -273,6 +281,23 @@ EOF
       echo -e "${YELLOW}      Skipping --admin-terminal (requires Linux + systemd + sudo).${NC}"
     fi
   fi
+
+  # Optional: privileged in-panel updater (opt-in via --enable-updater).
+  # Installs a root-owned helper and a scoped sudoers rule so the panel can run
+  # exactly that updater (and nothing else) as root.
+  if [ "$ENABLE_UPDATER" = true ]; then
+    if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
+      echo "      Installing privileged updater helper..."
+      $SUDO install -o root -g root -m 0755 "$APP_DIR/scripts/update.sh" /usr/local/sbin/citadel-update
+      UPDATER_SUDOERS="/etc/sudoers.d/citadel-updater"
+      echo "$RUN_USER ALL=(root) NOPASSWD: /usr/local/sbin/citadel-update" | $SUDO tee "$UPDATER_SUDOERS" >/dev/null
+      $SUDO chmod 0440 "$UPDATER_SUDOERS"
+      $SUDO visudo -cf "$UPDATER_SUDOERS" >/dev/null
+      echo "      In-panel updater enabled (System → Update)."
+    else
+      echo -e "${YELLOW}      Skipping --enable-updater (requires Linux + sudo).${NC}"
+    fi
+  fi
 fi
 
 # 9. Health check
@@ -317,6 +342,9 @@ else
   echo "  Diagnostics:           node $APP_DIR/scripts/doctor.js"
   if [ -n "$ADMIN_TERMINAL_USER" ]; then
     echo "  System Terminal User:  $ADMIN_TERMINAL_USER (privileged / root-capable)"
+  fi
+  if [ "$ENABLE_UPDATER" = true ]; then
+    echo "  In-panel Updater:      enabled (System view → Update)"
   fi
   echo ""
   echo "  Mandatory First Step:"

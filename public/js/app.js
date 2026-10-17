@@ -1726,15 +1726,40 @@
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading diagnostics and audit logs...</div>';
 
     try {
-      const [nodeRes, auditRes] = await Promise.all([
+      const [nodeRes, auditRes, versionRes] = await Promise.all([
         api('/api/system/node'),
         api('/api/audit?limit=25'),
+        api('/api/system/version'),
       ]);
 
       const node = nodeRes.node;
       const logs = auditRes.logs || [];
+      const ver = versionRes.version || {};
 
       content.innerHTML = `
+        <div class="card" style="margin-bottom:24px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+            <div>
+              <h3 style="font-size:16px;font-weight:600;">Updates</h3>
+              <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
+                Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
+                ${ver.commit ? `<span style="color:var(--text-muted);">(${escapeHtml(ver.commit)})</span>` : ''}
+                ${ver.repo ? `· <code>${escapeHtml(ver.repo)}</code>` : ''}
+                ${ver.branch ? `· branch <code>${escapeHtml(ver.branch)}</code>` : ''}
+              </p>
+              <div id="update-status" style="margin-top:8px;font-size:13px;color:var(--text-muted);">
+                ${ver.updaterAvailable
+                  ? 'The in-panel updater is enabled.'
+                  : 'In-panel updater not installed. Run install.sh --enable-updater to enable one-click updates.'}
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0;">
+              <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
+              ${ver.updaterAvailable ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
+            </div>
+          </div>
+        </div>
+
         <div class="card" style="margin-bottom:24px;">
           <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">Node Diagnostics</h3>
           <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;font-size:13px;">
@@ -1788,6 +1813,58 @@
           </table>
         </div>
       `;
+
+      const statusEl = document.getElementById('update-status');
+      const checkBtn = document.getElementById('check-updates-btn');
+      if (checkBtn) {
+        checkBtn.onclick = async () => {
+          checkBtn.disabled = true;
+          statusEl.style.color = 'var(--text-muted)';
+          statusEl.textContent = 'Checking GitHub for the latest release...';
+          try {
+            const res = await api('/api/system/updates?force=true');
+            const u = res.updates || {};
+            if (u.error) {
+              statusEl.style.color = 'var(--warning-color)';
+              statusEl.textContent = `Could not check for updates: ${u.error}`;
+            } else if (!u.latest) {
+              statusEl.style.color = 'var(--text-muted)';
+              statusEl.textContent = 'No published releases or tags found yet.';
+            } else if (u.updateAvailable) {
+              statusEl.style.color = 'var(--warning-color)';
+              statusEl.innerHTML = `Update available: <strong>v${escapeHtml(u.latest)}</strong>${u.releaseUrl ? ` — <a href="${escapeHtml(u.releaseUrl)}" target="_blank" rel="noopener" style="color:var(--accent-color);">release notes</a>` : ''}`;
+            } else {
+              statusEl.style.color = 'var(--success-color)';
+              statusEl.textContent = `You are running the latest version (v${u.latest}).`;
+            }
+          } catch (err) {
+            statusEl.style.color = 'var(--danger-color)';
+            statusEl.textContent = `Error: ${err.message}`;
+          } finally {
+            checkBtn.disabled = false;
+          }
+        };
+      }
+
+      const applyBtn = document.getElementById('apply-update-btn');
+      if (applyBtn) {
+        applyBtn.onclick = async () => {
+          if (!confirm('Update Citadel now? The service will restart and brief downtime is expected.')) return;
+          applyBtn.disabled = true;
+          statusEl.style.color = 'var(--text-muted)';
+          statusEl.textContent = 'Starting update...';
+          try {
+            await api('/api/system/update', { method: 'POST' });
+            showToast('Update started. The service will restart shortly.', 'success');
+            statusEl.style.color = 'var(--warning-color)';
+            statusEl.textContent = 'Update in progress. Reload this page in ~20 seconds.';
+          } catch (err) {
+            applyBtn.disabled = false;
+            statusEl.style.color = 'var(--danger-color)';
+            statusEl.textContent = `Error: ${err.message}`;
+          }
+        };
+      }
     } catch (err) {
       content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
     }

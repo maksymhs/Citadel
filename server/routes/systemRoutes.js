@@ -7,6 +7,7 @@ const terminalManager = require('../services/terminalManager');
 const gitService = require('../services/gitService');
 const proxyProvider = require('../services/proxyProvider');
 const dockerService = require('../services/dockerService');
+const updateService = require('../services/updateService');
 const auditService = require('../services/auditService');
 
 async function systemRoutes(fastify) {
@@ -49,6 +50,34 @@ async function systemRoutes(fastify) {
         docker,
       },
     };
+  });
+
+  // Running application version and updater availability
+  fastify.get('/api/system/version', async () => {
+    return { version: updateService.getVersionInfo() };
+  });
+
+  // Check GitHub for a newer release/tag
+  fastify.get('/api/system/updates', async (request) => {
+    const force = request.query?.force === 'true';
+    return { updates: await updateService.checkForUpdates({ force }) };
+  });
+
+  // Trigger the privileged updater helper (opt-in; requires --enable-updater)
+  fastify.post('/api/system/update', async (request, reply) => {
+    try {
+      const res = updateService.triggerUpdate();
+      auditService.logAction({
+        userId: request.user.id,
+        action: 'system_update_triggered',
+        targetType: 'system',
+        targetId: 'citadel',
+        ip: request.ip,
+      });
+      return res;
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
   });
 
   // Audit logs query

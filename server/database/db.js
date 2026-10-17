@@ -8,6 +8,48 @@ const { DATABASE_PATH } = require('../config');
 
 let dbInstance = null;
 
+/**
+ * Ordered, idempotent schema migrations. Fresh databases get the full current
+ * schema from the CREATE TABLE statements below, so migration #1 is a baseline
+ * marker; every future schema change (new columns, data backfills) must be
+ * added here as a new numbered entry so existing installs upgrade in place.
+ */
+const MIGRATIONS = [
+  {
+    name: '001_baseline',
+    up: () => {
+      // Baseline: schema as of v0.1.0 (projects, terminals, credentials, ...).
+    },
+  },
+];
+
+function columnExists(db, table, column) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  return columns.some((c) => c.name === column);
+}
+
+function runMigrations(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      applied_at TEXT NOT NULL
+    );
+  `);
+
+  const applied = new Set(db.prepare('SELECT name FROM schema_migrations').all().map((r) => r.name));
+  const record = db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)');
+
+  for (const migration of MIGRATIONS) {
+    if (applied.has(migration.name)) continue;
+    const apply = db.transaction(() => {
+      migration.up(db);
+      record.run(migration.name, new Date().toISOString());
+    });
+    apply();
+  }
+}
+
 function initDatabase(customPath = null) {
   const dbFile = customPath || DATABASE_PATH;
   const dbDir = path.dirname(dbFile);
@@ -117,6 +159,8 @@ function initDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
   `);
 
+  runMigrations(db);
+
   dbInstance = db;
   return db;
 }
@@ -143,4 +187,6 @@ module.exports = {
   initDatabase,
   getDatabase,
   closeDatabase,
+  runMigrations,
+  columnExists,
 };

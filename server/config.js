@@ -41,6 +41,18 @@ const SESSION_SECRET = process.env.SESSION_SECRET || null; // Will auto-generate
 // service user (secure default).
 const TERMINAL_ADMIN_USER = process.env.TERMINAL_ADMIN_USER || null;
 
+// Application version and self-update configuration
+let APP_VERSION = '0.0.0';
+try {
+  APP_VERSION = require(path.join(ROOT_DIR, 'package.json')).version || APP_VERSION;
+} catch {
+  // package.json unavailable; keep default.
+}
+const UPDATE_REPO = process.env.CITADEL_REPO || 'maksymhs/Citadel'; // "owner/name" on GitHub
+const UPDATE_BRANCH = process.env.CITADEL_REPO_BRANCH || 'main';
+const UPDATER_PATH = process.env.CITADEL_UPDATER_PATH || '/usr/local/sbin/citadel-update';
+const SERVICE_NAME = process.env.CITADEL_SERVICE || 'citadel';
+
 // Tool and integration paths
 const TMUX_PATH = process.env.TMUX_PATH || 'tmux';
 const CADDY_ADMIN_API = process.env.CADDY_ADMIN_API || 'http://127.0.0.1:2019';
@@ -71,6 +83,11 @@ module.exports = {
   SESSION_TTL_DAYS,
   SESSION_SECRET,
   TERMINAL_ADMIN_USER,
+  APP_VERSION,
+  UPDATE_REPO,
+  UPDATE_BRANCH,
+  UPDATER_PATH,
+  SERVICE_NAME,
   TMUX_PATH,
   CADDY_ADMIN_API,
   DOCKER_SOCKET,
