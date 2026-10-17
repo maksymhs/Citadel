@@ -6,9 +6,9 @@
 - **Consecuencias**: Arranque casi instantáneo, mínimo overhead y alta capacidad para flujos concurrentes de terminales.
 
 ## ADR-002: Base de datos SQLite embebida con WAL
-- **Contexto**: NexusVPS debe ser autónomo por servidor sin requerir un demonio de base de datos como PostgreSQL o MySQL.
+- **Contexto**: Citadel debe ser autónomo por servidor sin requerir un demonio de base de datos como PostgreSQL o MySQL.
 - **Decisión**: SQLite utilizando `better-sqlite3` con modo WAL (`journal_mode = WAL`) y sincronización normal.
-- **Consecuencias**: Cero mantenimiento de base de datos, archivo único en `data/nexusvps.db`, respaldos directos por copia de archivo y persistencia inmediata.
+- **Consecuencias**: Cero mantenimiento de base de datos, archivo único en `data/citadel.db`, respaldos directos por copia de archivo y persistencia inmediata.
 
 ## ADR-003: Persistencia de terminales mediante desacoplamiento PTY + tmux
 - **Contexto**: Un PTY puro muere si se interrumpe la conexión o se reinicia el proceso del panel. Los agentes de IA de larga ejecución (como Claude Code compilando o editando) perderían su estado de trabajo.

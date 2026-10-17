@@ -105,7 +105,7 @@ class TerminalManager {
     const sessionId = crypto.randomUUID();
     const shortId = sessionId.split('-')[0];
     const sanitizedSlug = projectSlug.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const tmuxSessionName = `nvps_${sanitizedSlug}_${shortId}`;
+    const tmuxSessionName = `citadel_${sanitizedSlug}_${shortId}`;
 
     const now = new Date().toISOString();
     db.prepare(`

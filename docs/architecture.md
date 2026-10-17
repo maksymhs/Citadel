@@ -1,8 +1,8 @@
-# NexusVPS — Arquitectura del Sistema
+# Citadel — Arquitectura del Sistema
 
 ## 1. Visión General y Principios de Diseño
 
-NexusVPS es una plataforma web autohospedada, ultraligera, modular y segura diseñada para desarrolladores y agentes de IA que trabajan en VPS. Proporciona:
+Citadel es una plataforma web autohospedada, ultraligera, modular y segura diseñada para desarrolladores y agentes de IA que trabajan en VPS. Proporciona:
 
 - Gestión unificada de proyectos y repositorios Git.
 - Terminales web interactivas y persistentes (`xterm.js` + `node-pty` + `tmux`).
@@ -12,7 +12,7 @@ NexusVPS es una plataforma web autohospedada, ultraligera, modular y segura dise
 - Despliegue reproducible e idempotente mediante un instalador de una sola línea (`install.sh`).
 
 ### Principios Fundamentales
-1. **Entorno de desarrollo primero**: NexusVPS es una estación de trabajo para desarrolladores y agentes de IA. La publicación y despliegue son capacidades accesorias.
+1. **Entorno de desarrollo primero**: Citadel es una estación de trabajo para desarrolladores y agentes de IA. La publicación y despliegue son capacidades accesorias.
 2. **Cero dependencias pesadas**: No requiere Kubernetes, microservicios, Redis, colas externas ni bases de datos remotas. Funciona en VPS económicos con 512 MB - 1 GB de RAM.
 3. **Resiliencia ante dependencias ausentes**: Si `tmux`, `caddy`, `docker` o un agente CLI no están instalados, el núcleo se degrada limpiamente y sigue funcionando.
 4. **Seguridad por diseño**:
@@ -60,7 +60,7 @@ NexusVPS es una plataforma web autohospedada, ultraligera, modular y segura dise
         v                                        v
 +-----------------------+              +--------------------------+
 | SQLite (better-sqlite3)|              | Host Linux OS            |
-| data/nexusvps.db      |              | - Proyectos (/srv/...)   |
+| data/citadel.db       |              | - Proyectos (/srv/...)   |
 | WAL mode              |              | - tmux sessions          |
 +-----------------------+              | - CLI agents / binaries  |
                                        +--------------------------+
@@ -83,8 +83,8 @@ NexusVPS es una plataforma web autohospedada, ultraligera, modular y segura dise
 ## 4. Persistencia de Terminales con `tmux`
 
 - Cada proyecto puede abrir múltiples terminales.
-- Cada terminal se vincula a una sesión `tmux` identificada de forma determinista y segura: `nvps_<project_slug>_<session_id>`.
-- `node-pty` ejecuta `tmux new-session -A -s nvps_<project_slug>_<session_id>` con el directorio de trabajo del proyecto.
+- Cada terminal se vincula a una sesión `tmux` identificada de forma determinista y segura: `citadel_<project_slug>_<session_id>`.
+- `node-pty` ejecuta `tmux new-session -A -s citadel_<project_slug>_<session_id>` con el directorio de trabajo del proyecto.
 - Si el navegador se desconecta y vuelve a conectarse, se reconecta al mismo PTY o reanuda la sesión tmux sin perder el estado ni matar procesos en curso.
 - Si `tmux` no está instalado en el sistema operativo, el gestor utiliza `node-pty` en modo directo y notifica al usuario que instale `tmux` para persistencia ante reinicios.
 

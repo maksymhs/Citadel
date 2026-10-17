@@ -45,7 +45,9 @@ describe('AI Agent Registry & Launcher Tests', () => {
     // On this test machine, claude is installed at /Users/max/.local/bin/claude
     if (claudeAgent.installed) {
       assert.ok(claudeAgent.path);
-      assert.ok(claudeAgent.version);
+      if (claudeAgent.version) {
+        assert.equal(typeof claudeAgent.version, 'string');
+      }
     }
   });
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# NexusVPS — Instalador Oficial Autónomo e Idempotente
+# Citadel — Instalador Oficial Autónomo e Idempotente
 # Soporte oficial inicial: Debian / Ubuntu (x86_64, aarch64)
 # ==============================================================================
 
@@ -14,7 +14,7 @@ NC='\033[0m'
 
 echo -e "${BLUE}"
 echo "=================================================================="
-echo "          NexusVPS — Instalador del Sistema                       "
+echo "          Citadel — Instalador del Sistema                        "
 echo "=================================================================="
 echo -e "${NC}"
 
@@ -103,7 +103,7 @@ if [ "$NODE_INSTALLED" = false ]; then
 fi
 
 # 6. Preparación de Directorios y Usuario
-TARGET_DIR="/srv/nexusvps"
+TARGET_DIR="/srv/citadel"
 APP_DIR="$TARGET_DIR/app"
 DATA_DIR="$TARGET_DIR/data"
 PROJECTS_DIR="$TARGET_DIR/projects"
@@ -116,11 +116,11 @@ else
   # Determinar usuario de ejecución
   RUN_USER="${SUDO_USER:-$(whoami)}"
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
-    if ! id "nexusvps" >/dev/null 2>&1; then
-      echo "      Creando usuario de servicio del sistema 'nexusvps'..."
-      $SUDO useradd -r -s /bin/bash -m -d /srv/nexusvps nexusvps 2>/dev/null || true
+    if ! id "citadel" >/dev/null 2>&1; then
+      echo "      Creando usuario de servicio del sistema 'citadel'..."
+      $SUDO useradd -r -s /bin/bash -m -d /srv/citadel citadel 2>/dev/null || true
     fi
-    RUN_USER="nexusvps"
+    RUN_USER="citadel"
   fi
 
   $SUDO mkdir -p "$APP_DIR" "$DATA_DIR" "$PROJECTS_DIR" "$LOGS_DIR"
@@ -128,7 +128,7 @@ else
   # Copiar código fuente actual al directorio de instalación
   SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   if [ "$SRC_DIR" != "$APP_DIR" ]; then
-    echo "      Sincronizando archivos de NexusVPS a $APP_DIR..."
+    echo "      Sincronizando archivos de Citadel a $APP_DIR..."
     $SUDO cp -r "$SRC_DIR"/* "$APP_DIR"/ 2>/dev/null || true
     $SUDO cp -r "$SRC_DIR"/.env.example "$APP_DIR"/.env.example 2>/dev/null || true
   fi
@@ -151,15 +151,15 @@ fi
 # 8. Configuración e inicio de servicio systemd
 echo "[7/8] Configurando servicio systemd..."
 if [ "$CHECK_ONLY" = false ] && [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$HAS_SUDO" = true ]; then
-  SERVICE_FILE="/etc/systemd/system/nexusvps.service"
-  $SUDO cp "$APP_DIR/scripts/nexusvps.service" "$SERVICE_FILE"
-  $SUDO sed -i "s|User=nexusvps|User=$RUN_USER|g" "$SERVICE_FILE"
-  $SUDO sed -i "s|Group=nexusvps|Group=$RUN_USER|g" "$SERVICE_FILE"
+  SERVICE_FILE="/etc/systemd/system/citadel.service"
+  $SUDO cp "$APP_DIR/scripts/citadel.service" "$SERVICE_FILE"
+  $SUDO sed -i "s|User=citadel|User=$RUN_USER|g" "$SERVICE_FILE"
+  $SUDO sed -i "s|Group=citadel|Group=$RUN_USER|g" "$SERVICE_FILE"
 
   $SUDO systemctl daemon-reload
-  $SUDO systemctl enable nexusvps.service
-  $SUDO systemctl restart nexusvps.service
-  echo "      Servicio nexusvps iniciado y habilitado en el arranque."
+  $SUDO systemctl enable citadel.service
+  $SUDO systemctl restart citadel.service
+  echo "      Servicio citadel iniciado y habilitado en el arranque."
 fi
 
 # 9. Verificación de salud
@@ -174,7 +174,7 @@ if [ "$CHECK_ONLY" = false ] && command -v curl >/dev/null 2>&1; then
 fi
 
 echo -e "\n${GREEN}=================================================================="
-echo "          Instalación de NexusVPS Completada con Éxito            "
+echo "          Instalación de Citadel Completada con Éxito             "
 echo "=================================================================="
 echo -e "${NC}"
 echo "  Panel de Acceso Local:  http://127.0.0.1:3000"

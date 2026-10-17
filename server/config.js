@@ -1,5 +1,5 @@
 /**
- * NexusVPS Server Configuration
+ * Citadel Server Configuration
  */
 const path = require('node:path');
 const fs = require('node:fs');
@@ -14,7 +14,7 @@ const HOST = process.env.HOST || '127.0.0.1'; // Listen on localhost by default 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT_DIR, 'data');
-const DATABASE_PATH = process.env.DATABASE_PATH || path.join(DATA_DIR, 'nexusvps.db');
+const DATABASE_PATH = process.env.DATABASE_PATH || path.join(DATA_DIR, 'citadel.db');
 const PROJECTS_DIR = process.env.PROJECTS_DIR || path.join(DATA_DIR, 'projects');
 const LOGS_DIR = process.env.LOGS_DIR || path.join(DATA_DIR, 'logs');
 const PLUGINS_DIR = process.env.PLUGINS_DIR || path.join(ROOT_DIR, 'plugins');

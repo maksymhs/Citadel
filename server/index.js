@@ -112,14 +112,14 @@ async function startServer() {
   const signals = ['SIGINT', 'SIGTERM'];
   for (const signal of signals) {
     process.on(signal, async () => {
-      console.log(`\n[NexusVPS] Received ${signal}. Shutting down gracefully...`);
+      console.log(`\n[Citadel] Received ${signal}. Shutting down gracefully...`);
       try {
         await fastify.close();
         closeDatabase();
-        console.log('[NexusVPS] Server and database closed cleanly.');
+        console.log('[Citadel] Server and database closed cleanly.');
         process.exit(0);
       } catch (err) {
-        console.error('[NexusVPS] Error during shutdown:', err);
+        console.error('[Citadel] Error during shutdown:', err);
         process.exit(1);
       }
     });
@@ -129,7 +129,7 @@ async function startServer() {
     await fastify.listen({ port: PORT, host: HOST });
     console.log(`
 ==================================================================
-  NexusVPS — Plataforma de Desarrollo y Agentes de IA
+  Citadel — Plataforma de Desarrollo y Agentes de IA
 ==================================================================
   Panel URL:     http://${HOST}:${PORT}
   Entorno:       ${NODE_ENV}
@@ -138,7 +138,7 @@ async function startServer() {
 ==================================================================
 `);
   } catch (err) {
-    console.error('[NexusVPS] Failed to start server:', err);
+    console.error('[Citadel] Failed to start server:', err);
     process.exit(1);
   }
 }

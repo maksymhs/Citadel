@@ -48,13 +48,13 @@ describe('Integrations & Optional Services Tests', () => {
       VALUES (?, 'Deploy Test', 'deploy-test', '/tmp', 'now', 'now')
     `).run(testProjectId);
 
-    const res = await proxyProvider.publishDomain(testProjectId, 'test.app.nexusvps.local', 8080);
+    const res = await proxyProvider.publishDomain(testProjectId, 'test.app.citadel.local', 8080);
     assert.ok(res.id);
-    assert.equal(res.domain, 'test.app.nexusvps.local');
+    assert.equal(res.domain, 'test.app.citadel.local');
     assert.equal(res.targetPort, 8080);
 
     // Unpublish
-    const unpub = await proxyProvider.unpublishDomain('test.app.nexusvps.local');
+    const unpub = await proxyProvider.unpublishDomain('test.app.citadel.local');
     assert.equal(unpub.success, true);
   });
 

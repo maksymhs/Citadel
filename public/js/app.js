@@ -136,7 +136,7 @@
     } catch (err) {
       document.getElementById('app-root').innerHTML = `
         <div style="padding: 40px; text-align: center; color: #f85149;">
-          <h2>Error al conectar con NexusVPS</h2>
+          <h2>Error al conectar con Citadel</h2>
           <p>${escapeHtml(err.message)}</p>
         </div>
       `;
@@ -150,8 +150,8 @@
       <div class="auth-page">
         <div class="auth-card">
           <div class="logo">
-            <div style="width:48px;height:48px;background:linear-gradient(135deg,#1f6feb,#8a2be2);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:bold;margin-bottom:12px;">N</div>
-            <h1>Configurar NexusVPS</h1>
+            <div style="width:48px;height:48px;background:linear-gradient(135deg,#1f6feb,#8a2be2);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:bold;margin-bottom:12px;">C</div>
+            <h1>Configurar Citadel</h1>
             <p>Crea la cuenta administradora inicial para proteger tu servidor</p>
           </div>
           <form id="setup-form">
@@ -164,7 +164,7 @@
               <input type="password" class="form-input" id="setup-password" placeholder="Mínimo 8 caracteres" required minlength="8">
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:10px;">
-              Inicializar NexusVPS
+              Inicializar Citadel
             </button>
           </form>
         </div>
@@ -197,8 +197,8 @@
       <div class="auth-page">
         <div class="auth-card">
           <div class="logo">
-            <div style="width:48px;height:48px;background:linear-gradient(135deg,#1f6feb,#8a2be2);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:bold;margin-bottom:12px;">N</div>
-            <h1>NexusVPS</h1>
+            <div style="width:48px;height:48px;background:linear-gradient(135deg,#1f6feb,#8a2be2);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:bold;margin-bottom:12px;">C</div>
+            <h1>Citadel</h1>
             <p>Acceso seguro al panel de control de tu VPS</p>
           </div>
           <form id="login-form">
@@ -245,8 +245,8 @@
         <!-- Sidebar Navigation -->
         <aside class="sidebar">
           <div class="sidebar-header">
-            <div class="logo-icon">N</div>
-            <span class="logo-text">NexusVPS</span>
+            <div class="logo-icon">C</div>
+            <span class="logo-text">Citadel</span>
             <span class="version-tag">v0.1.0</span>
           </div>
           <nav class="sidebar-nav">
@@ -614,7 +614,7 @@
           title: `Eliminar Proyecto "${name}"`,
           bodyHtml: `
             <p style="margin-bottom:12px;color:var(--text-secondary);">
-              ¿Deseas desvincular este proyecto de NexusVPS?
+              ¿Deseas desvincular este proyecto de Citadel?
             </p>
             <div style="background:var(--bg-tertiary);padding:12px;border-radius:6px;margin-bottom:12px;">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
@@ -1024,7 +1024,7 @@
       <div style="margin-bottom:24px;">
         <h2 style="font-size:18px;margin-bottom:6px;">Agentes de IA y Herramientas CLI</h2>
         <p style="color:var(--text-secondary);">
-          NexusVPS detecta y ejecuta herramientas CLI bajo tu cuenta autorizada sin exigir suscripciones API comerciales.
+          Citadel detecta y ejecuta herramientas CLI bajo tu cuenta autorizada sin exigir suscripciones API comerciales.
         </p>
       </div>
 
@@ -1384,7 +1384,7 @@
         <div style="margin-bottom:24px;">
           <h2 style="font-size:18px;margin-bottom:6px;">Plugins y Extensiones Modulares</h2>
           <p style="color:var(--text-secondary);">
-            NexusVPS carga plugins desde el directorio <code>plugins/</code> basados en el estándar <code>plugin.json</code>.
+            Citadel carga plugins desde el directorio <code>plugins/</code> basados en el estándar <code>plugin.json</code>.
           </p>
         </div>
 

@@ -1,6 +1,6 @@
-# NexusVPS
+# Citadel
 
-Plataforma web autohospedada, ultraligera, modular y segura para gestionar múltiples proyectos de software, terminales persistentes y agentes de programación CLI en uno o varios VPS.
+Plataforma web autohospedada, ultraligera, modular y segura para gestionar múltiples proyectos de software, terminales persistentes y agentes de programación CLI en tu VPS.
 
 ---
 
@@ -40,16 +40,16 @@ Plataforma web autohospedada, ultraligera, modular y segura para gestionar múlt
 Ejecuta el instalador idempotente:
 
 ```bash
-git clone https://github.com/tu-usuario/nexusvps.git /srv/nexusvps/app
-cd /srv/nexusvps/app
+git clone https://github.com/tu-usuario/citadel.git /srv/citadel/app
+cd /srv/citadel/app
 ./install.sh
 ```
 
 El instalador:
 1. Comprueba el sistema operativo, memoria y dependencias.
 2. Instala Node.js y compiladores si es necesario.
-3. Prepara la estructura en `/srv/nexusvps` (`app`, `data`, `projects`, `logs`).
-4. Configura el servicio `nexusvps.service` en systemd y lo arranca.
+3. Prepara la estructura en `/srv/citadel` (`app`, `data`, `projects`, `logs`).
+4. Configura el servicio `citadel.service` en systemd y lo arranca.
 
 ### Comprobación Previa (Dry-Run)
 
@@ -84,7 +84,7 @@ Abre tu navegador en `http://127.0.0.1:3000`.
 ## 5. Estructura del Repositorio
 
 ```
-nexusvps/
+citadel/
 ├── server/               # Backend en Node.js + Fastify
 │   ├── config.js         # Configuración y variables de entorno
 │   ├── index.js          # Arranque del servidor y middleware
@@ -102,7 +102,7 @@ nexusvps/
 │   ├── doctor.js         # Diagnóstico de salud y dependencias
 │   ├── update.sh         # Actualizador seguro (conserva datos y repos)
 │   ├── uninstall.sh      # Desinstalador controlado
-│   └── nexusvps.service  # Unidad systemd para Linux
+│   └── citadel.service   # Unidad systemd para Linux
 ├── tests/                # Pruebas automatizadas (32 pruebas, 8 suites)
 ├── docs/                 # Documentación de arquitectura y ADRs
 ├── install.sh            # Instalador principal

@@ -8,7 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 
 console.log('====================================================');
-console.log('       NexusVPS — Diagnóstico del Sistema           ');
+console.log('       Citadel — Diagnóstico del Sistema            ');
 console.log('====================================================\n');
 
 let passCount = 0;

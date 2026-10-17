@@ -47,12 +47,12 @@ describe('Terminal & Persistent Session Tests', () => {
     assert.ok(active.ptyProcess);
 
     // Send a command to PTY
-    active.ptyProcess.write('echo "TEST_NEXUSVPS_PTY_OK"\r');
+    active.ptyProcess.write('echo "TEST_CITADEL_PTY_OK"\r');
 
     // Wait 500ms for stdout to appear in buffer
     await new Promise((r) => setTimeout(r, 600));
 
-    assert.ok(active.buffer.includes('TEST_NEXUSVPS_PTY_OK'));
+    assert.ok(active.buffer.includes('TEST_CITADEL_PTY_OK'));
 
     // Kill session
     const res = terminalManager.killSession(session.sessionId);

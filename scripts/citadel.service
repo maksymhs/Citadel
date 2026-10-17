@@ -1,0 +1,30 @@
+[Unit]
+Description=Citadel — Plataforma de Desarrollo y Agentes de IA
+After=network.target
+
+[Service]
+Type=simple
+User=citadel
+Group=citadel
+WorkingDirectory=/srv/citadel/app
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Environment=DATABASE_PATH=/srv/citadel/data/citadel.db
+Environment=PROJECTS_DIR=/srv/citadel/projects
+Environment=LOGS_DIR=/srv/citadel/logs
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=citadel
+
+# Security sandbox
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/srv/citadel/data /srv/citadel/projects /srv/citadel/logs /tmp
+
+[Install]
+WantedBy=multi-user.target

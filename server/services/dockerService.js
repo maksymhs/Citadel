@@ -82,7 +82,7 @@ class DockerService {
       return {
         available: false,
         socketPath: this.socketPath,
-        message: 'Docker is not installed, socket is unavailable, or process has insufficient permissions. NexusVPS runs completely without Docker.',
+        message: 'Docker is not installed, socket is unavailable, or process has insufficient permissions. Citadel runs completely without Docker.',
       };
     }
 

@@ -128,7 +128,7 @@ class CaddyProxyProvider extends ProxyProvider {
     if (available) {
       // Build route definition for Caddy
       const route = {
-        '@id': `nvps_${domain.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+        '@id': `citadel_${domain.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
         match: [{ host: [domain] }],
         handle: [
           {
@@ -188,7 +188,7 @@ class CaddyProxyProvider extends ProxyProvider {
 
     if (await this.isAvailable()) {
       try {
-        const routeId = `nvps_${cleanDomain.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const routeId = `citadel_${cleanDomain.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
         await this._request('DELETE', `/id/${routeId}`);
       } catch {
         // Ignore route delete error if already removed

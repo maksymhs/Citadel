@@ -1,5 +1,5 @@
 {
-  "name": "nexusvps",
+  "name": "citadel",
   "version": "0.1.0",
   "description": "Plataforma web autohospedada, ultraligera y segura para gestionar proyectos, terminales persistentes y agentes CLI en VPS",
   "main": "server/index.js",
@@ -11,6 +11,7 @@
     "postinstall": "node scripts/copy-vendor.js"
   },
   "keywords": [
+    "citadel",
     "vps",
     "dashboard",
     "terminal",
@@ -21,7 +22,7 @@
     "codex",
     "opencode"
   ],
-  "author": "NexusVPS Contributors",
+  "author": "Citadel Contributors",
   "license": "Apache-2.0",
   "dependencies": {
     "@fastify/cookie": "^11.1.3",
