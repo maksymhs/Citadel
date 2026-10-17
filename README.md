@@ -89,6 +89,28 @@ sudo bash install.sh --enable-updater
 
 This installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. It is disabled by default; without it the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.
 
+### Kiosk display (opt-in)
+
+To turn a GUI-less machine into a dedicated full-screen panel, install with:
+
+```bash
+sudo bash install.sh --kiosk            # autologins the calling user on tty1
+sudo bash install.sh --kiosk=ubuntu     # or a specific OS user
+```
+
+This installs a minimal Wayland compositor (`cage`) and a browser, autologins the chosen user on `tty1`, autostarts the panel full-screen, and disables idle/suspend. `scripts/kiosk-setup.sh` is idempotent and also supports `--check` and `--remove`.
+
+### Synchronized updates across hosts
+
+To make one "Update" action roll out to several hosts, give each host the same secret and the list of its peers in `.env`:
+
+```
+CITADEL_PEERS=https://vps2.example.com
+CITADEL_PEER_TOKEN=<long-random-shared-secret>
+```
+
+When set, triggering an update also asks every peer to update itself. The peer endpoint is token-authenticated (constant-time) and never fans out again, so there are no update loops. Keep the token out of version control.
+
 ### Git credentials for terminals
 
 The installer also registers a git credential helper (`/usr/local/bin/citadel-git-credential`) system-wide. It lets plain `git fetch/pull/push` inside project terminals reuse the provider tokens you stored in **Repositories**, decrypting them on demand — tokens are never written to disk in clear text. It only resolves credentials for hosts that have a configured provider (GitHub/GitLab).
