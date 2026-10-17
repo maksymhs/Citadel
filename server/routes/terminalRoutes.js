@@ -13,8 +13,9 @@ async function terminalRoutes(fastify) {
   // List terminal sessions
   fastify.get('/api/terminals', async (request) => {
     const projectId = request.query?.projectId || null;
+    const globalOnly = request.query?.scope === 'global';
     return {
-      sessions: terminalManager.listSessions(projectId),
+      sessions: terminalManager.listSessions(projectId, globalOnly),
       tmuxAvailable: terminalManager.isTmuxAvailable(),
     };
   });

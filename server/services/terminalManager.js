@@ -87,7 +87,7 @@ class TerminalManager {
    */
   createSession({ projectId = null, name = 'Terminal', cwd = null, agentId = null, cols = 80, rows = 24 }) {
     const db = getDatabase();
-    let targetCwd = cwd || process.cwd();
+    let targetCwd = cwd || (projectId ? process.cwd() : os.homedir());
     let projectSlug = 'global';
 
     if (projectId) {
@@ -363,12 +363,16 @@ class TerminalManager {
   /**
    * List sessions, indicating live status
    */
-  listSessions(projectId = null) {
+  listSessions(projectId = null, globalOnly = false) {
     const db = getDatabase();
-    const query = projectId
-      ? 'SELECT * FROM term_sessions WHERE project_id = ? ORDER BY created_at DESC'
-      : 'SELECT * FROM term_sessions ORDER BY created_at DESC';
-    const rows = projectId ? db.prepare(query).all(projectId) : db.prepare(query).all();
+    let rows;
+    if (globalOnly) {
+      rows = db.prepare('SELECT * FROM term_sessions WHERE project_id IS NULL ORDER BY created_at DESC').all();
+    } else if (projectId) {
+      rows = db.prepare('SELECT * FROM term_sessions WHERE project_id = ? ORDER BY created_at DESC').all(projectId);
+    } else {
+      rows = db.prepare('SELECT * FROM term_sessions ORDER BY created_at DESC').all();
+    }
 
     return rows.map((r) => {
       const isPtyAlive = this.activePtySessions.has(r.id);
