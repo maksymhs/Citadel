@@ -805,8 +805,74 @@ body {
     gap: 12px;
   }
 
+  /* Data tables collapse into stacked cards so nothing needs horizontal
+     scrolling. Each cell shows its column name via the data-label attribute. */
+  .table-container {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    overflow: visible;
+  }
+
   .data-table {
-    min-width: 600px;
+    min-width: 0;
+  }
+
+  .data-table thead {
+    display: none;
+  }
+
+  .data-table tbody,
+  .data-table tr,
+  .data-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .data-table tr {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    padding: 2px 0;
+    overflow: hidden;
+  }
+
+  .data-table tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .data-table td {
+    padding: 9px 13px;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .data-table td:last-child {
+    border-bottom: 0;
+  }
+
+  .data-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 3px;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
+  .data-table td[colspan] {
+    text-align: center;
+    color: var(--text-muted);
+  }
+
+  .data-table td[colspan]::before {
+    display: none;
+  }
+
+  .data-table tr:hover td {
+    background-color: transparent;
   }
 
   .modal-content {
@@ -887,4 +953,74 @@ html.is-mobile-ui .sidebar-backdrop.open {
 
 html.is-mobile-ui .main-wrapper {
   width: 100%;
+}
+
+/* Same table-to-card conversion as the media query above, for phones/tablets
+   that request the desktop site and so match a wide viewport / fine pointer. */
+html.is-mobile-ui .table-container {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+
+html.is-mobile-ui .data-table {
+  min-width: 0;
+}
+
+html.is-mobile-ui .data-table thead {
+  display: none;
+}
+
+html.is-mobile-ui .data-table tbody,
+html.is-mobile-ui .data-table tr,
+html.is-mobile-ui .data-table td {
+  display: block;
+  width: 100%;
+}
+
+html.is-mobile-ui .data-table tr {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  padding: 2px 0;
+  overflow: hidden;
+}
+
+html.is-mobile-ui .data-table tr:last-child {
+  margin-bottom: 0;
+}
+
+html.is-mobile-ui .data-table td {
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+html.is-mobile-ui .data-table td:last-child {
+  border-bottom: 0;
+}
+
+html.is-mobile-ui .data-table td::before {
+  content: attr(data-label);
+  display: block;
+  margin-bottom: 3px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+html.is-mobile-ui .data-table td[colspan] {
+  text-align: center;
+  color: var(--text-muted);
+}
+
+html.is-mobile-ui .data-table td[colspan]::before {
+  display: none;
+}
+
+html.is-mobile-ui .data-table tr:hover td {
+  background-color: transparent;
 }

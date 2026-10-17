@@ -517,11 +517,11 @@
       } else {
         tbody.innerHTML = rows.map((p) => `
           <tr>
-            <td style="font-family:var(--font-mono);color:var(--text-secondary);">${p.pid}</td>
-            <td>${escapeHtml(p.name)}</td>
-            <td><span class="badge ${p.cpuPercent >= 50 ? 'badge-danger' : p.cpuPercent >= 10 ? 'badge-warning' : 'badge-muted'}">${p.cpuPercent.toFixed(1)}%</span></td>
-            <td style="font-family:var(--font-mono);">${formatMegabytes(p.rssBytes)}</td>
-            <td style="font-family:var(--font-mono);color:var(--text-secondary);">${p.memPercent.toFixed(1)}%</td>
+            <td data-label="PID" style="font-family:var(--font-mono);color:var(--text-secondary);">${p.pid}</td>
+            <td data-label="Process">${escapeHtml(p.name)}</td>
+            <td data-label="CPU"><span class="badge ${p.cpuPercent >= 50 ? 'badge-danger' : p.cpuPercent >= 10 ? 'badge-warning' : 'badge-muted'}">${p.cpuPercent.toFixed(1)}%</span></td>
+            <td data-label="Memory" style="font-family:var(--font-mono);">${formatMegabytes(p.rssBytes)}</td>
+            <td data-label="MEM %" style="font-family:var(--font-mono);color:var(--text-secondary);">${p.memPercent.toFixed(1)}%</td>
           </tr>
         `).join('');
       }
@@ -744,27 +744,27 @@
           <tbody>
             ${state.projects.map((p) => `
               <tr>
-                <td>
+                <td data-label="Name">
                   <strong style="color:var(--text-primary);">${escapeHtml(p.name)}</strong>
                   <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(p.description || '')}</div>
                 </td>
-                <td style="font-family:var(--font-mono);font-size:12px;">
+                <td data-label="Directory" style="font-family:var(--font-mono);font-size:12px;">
                   ${escapeHtml(p.path)}
                   ${p.existsOnDisk ? '' : '<span class="badge badge-danger" style="margin-left:6px;">Missing</span>'}
                 </td>
-                <td>
+                <td data-label="Git / Branch">
                   ${p.git_remote ? `
                     <div style="font-size:12px;color:var(--accent-color);">${escapeHtml(p.git_branch || 'main')}</div>
                     <div style="font-size:10px;color:var(--text-muted);">${escapeHtml(p.git_remote)}</div>
                   ` : '<span style="color:var(--text-muted);">No Git</span>'}
                 </td>
-                <td>
+                <td data-label="PTY Sessions">
                   <span class="badge ${p.active_sessions_count > 0 ? 'badge-success' : 'badge-muted'}">
                     ${p.active_sessions_count} active
                   </span>
                 </td>
-                <td>
-                  <div style="display:flex;gap:6px;">
+                <td data-label="Actions">
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;">
                     <button class="btn btn-primary btn-sm open-workspace-btn" data-project-id="${p.id}">Open Workspace</button>
                     <button class="btn btn-danger btn-sm delete-project-btn" data-project-id="${p.id}" data-project-name="${escapeHtml(p.name)}">Delete</button>
                   </div>
@@ -1065,13 +1065,13 @@
             <tbody>
               ${repos.map((r, i) => `
                 <tr>
-                  <td>
+                  <td data-label="Repository">
                     <strong>${escapeHtml(r.fullName)}</strong>
                     ${r.description ? `<div style="font-size:11px;color:var(--text-muted);">${escapeHtml(r.description)}</div>` : ''}
                   </td>
-                  <td><span class="badge ${r.private ? 'badge-muted' : 'badge-success'}">${r.private ? 'Private' : 'Public'}</span></td>
-                  <td style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(r.defaultBranch)}</td>
-                  <td><button class="btn btn-primary btn-sm repos-clone-btn" data-index="${i}">Clone</button></td>
+                  <td data-label="Visibility"><span class="badge ${r.private ? 'badge-muted' : 'badge-success'}">${r.private ? 'Private' : 'Public'}</span></td>
+                  <td data-label="Default Branch" style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(r.defaultBranch)}</td>
+                  <td data-label="Action"><button class="btn btn-primary btn-sm repos-clone-btn" data-index="${i}">Clone</button></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -1119,9 +1119,12 @@
   // containers into the new viewport and re-fits them, while the server keeps the
   // tmux/PTY session running, so nothing is lost.
   function createXterm() {
+    // Smaller font on phones/tablets so more columns and rows fit on screen.
+    const mobile = document.documentElement.classList.contains('is-mobile-ui');
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: mobile ? 11 : 13,
+      lineHeight: 1.0,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       theme: {
         background: '#000000',
@@ -1874,19 +1877,19 @@
               ${(depRes.deployments || []).length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No published domains</td></tr>' : ''}
               ${(depRes.deployments || []).map((d) => `
                 <tr>
-                  <td>
+                  <td data-label="Domain">
                     <a href="https://${escapeHtml(d.domain)}" target="_blank" style="color:var(--accent-color);font-weight:600;">
                       ${escapeHtml(d.domain)}
                     </a>
                   </td>
-                  <td>${escapeHtml(d.project_name || 'Unknown')}</td>
-                  <td style="font-family:var(--font-mono);">${d.target_port}</td>
-                  <td>
+                  <td data-label="Project">${escapeHtml(d.project_name || 'Unknown')}</td>
+                  <td data-label="Target Port" style="font-family:var(--font-mono);">${d.target_port}</td>
+                  <td data-label="Status">
                     <span class="badge ${d.status === 'active' ? 'badge-success' : 'badge-warning'}">
                       ${escapeHtml(d.status)}
                     </span>
                   </td>
-                  <td>
+                  <td data-label="Actions">
                     <button class="btn btn-danger btn-sm unpub-btn" data-domain="${escapeHtml(d.domain)}">Unpublish</button>
                   </td>
                 </tr>
@@ -1984,15 +1987,15 @@
               ${(containersRes.containers || []).length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No containers available or Docker is inactive</td></tr>' : ''}
               ${(containersRes.containers || []).map((c) => `
                 <tr>
-                  <td style="font-family:var(--font-mono);">${escapeHtml(c.id)}</td>
-                  <td><strong>${escapeHtml(c.names.join(', '))}</strong></td>
-                  <td style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(c.image)}</td>
-                  <td>
+                  <td data-label="ID" style="font-family:var(--font-mono);">${escapeHtml(c.id)}</td>
+                  <td data-label="Name"><strong>${escapeHtml(c.names.join(', '))}</strong></td>
+                  <td data-label="Image" style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(c.image)}</td>
+                  <td data-label="State">
                     <span class="badge ${c.state === 'running' ? 'badge-success' : 'badge-muted'}">
                       ${escapeHtml(c.status)}
                     </span>
                   </td>
-                  <td style="font-size:11px;font-family:var(--font-mono);">
+                  <td data-label="Ports" style="font-size:11px;font-family:var(--font-mono);">
                     ${c.ports.map((p) => `${p.publicPort ? `${p.publicPort}:` : ''}${p.privatePort}/${p.type}`).join(', ')}
                   </td>
                 </tr>
@@ -2084,13 +2087,13 @@
               ${logs.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No audit events recorded</td></tr>' : ''}
               ${logs.map((l) => `
                 <tr>
-                  <td style="font-size:11px;color:var(--text-muted);white-space:nowrap;">
+                  <td data-label="Date" style="font-size:11px;color:var(--text-muted);white-space:nowrap;">
                     ${new Date(l.created_at).toLocaleString()}
                   </td>
-                  <td><strong style="color:var(--accent-color);">${escapeHtml(l.action)}</strong></td>
-                  <td>${escapeHtml(l.user_id || 'system')}</td>
-                  <td>${escapeHtml(l.target_type || '-')} ${escapeHtml(l.target_id ? `(${l.target_id.slice(0, 8)})` : '')}</td>
-                  <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
+                  <td data-label="Action"><strong style="color:var(--accent-color);">${escapeHtml(l.action)}</strong></td>
+                  <td data-label="User">${escapeHtml(l.user_id || 'system')}</td>
+                  <td data-label="Target">${escapeHtml(l.target_type || '-')} ${escapeHtml(l.target_id ? `(${l.target_id.slice(0, 8)})` : '')}</td>
+                  <td data-label="Details" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
                     ${escapeHtml(typeof l.details === 'object' ? JSON.stringify(l.details) : (l.details || '-'))}
                   </td>
                 </tr>
@@ -2188,20 +2191,20 @@
               ${plugins.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No plugins installed</td></tr>' : ''}
               ${plugins.map((p) => `
                 <tr>
-                  <td>
+                  <td data-label="Name / ID">
                     <strong>${escapeHtml(p.name)}</strong>
                     <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(p.description)} (${escapeHtml(p.id)})</div>
                   </td>
-                  <td style="font-family:var(--font-mono);">v${escapeHtml(p.version)}</td>
-                  <td>
+                  <td data-label="Version" style="font-family:var(--font-mono);">v${escapeHtml(p.version)}</td>
+                  <td data-label="Capabilities">
                     ${(p.capabilities || []).map((c) => `<span class="badge badge-muted">${escapeHtml(c)}</span>`).join(' ')}
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <span class="badge ${p.status === 'active' ? 'badge-success' : (p.status === 'error' ? 'badge-danger' : 'badge-muted')}">
                       ${escapeHtml(p.status)}
                     </span>
                   </td>
-                  <td>
+                  <td data-label="Action">
                     <button class="btn btn-secondary btn-sm toggle-plugin-btn" data-id="${p.id}" data-enabled="${p.enabled ? '1' : '0'}">
                       ${p.enabled ? 'Disable' : 'Enable'}
                     </button>
