@@ -2169,7 +2169,7 @@
               statusEl.innerHTML = `Update available: <strong>${label}</strong>${u.releaseUrl ? ` — <a href="${escapeHtml(u.releaseUrl)}" target="_blank" rel="noopener" style="color:var(--accent-color);">view changes</a>` : ''}`;
             } else {
               statusEl.style.color = 'var(--success-color)';
-              statusEl.textContent = `You are running the latest version (v${u.latest}).`;
+              statusEl.textContent = `You are running the latest version (v${u.version}).`;
             }
           } catch (err) {
             statusEl.style.color = 'var(--danger-color)';
