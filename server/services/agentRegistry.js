@@ -1,5 +1,5 @@
 /**
- * NexusVPS CLI Agent Registry & Launcher
+ * Citadel CLI Agent Registry & Launcher
  */
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
@@ -8,6 +8,16 @@ const os = require('node:os');
 const { getDatabase } = require('../database/db');
 const terminalManager = require('./terminalManager');
 const projectService = require('./projectService');
+
+/**
+ * Quote a single value for safe inclusion in a POSIX shell command line.
+ * Prevents argument injection when writing a command into a PTY shell/tmux session.
+ */
+function shellQuote(value) {
+  const str = String(value);
+  if (str.length === 0) return "''";
+  return `'${str.replace(/'/g, "'\\''")}'`;
+}
 
 class AgentRegistry {
   constructor() {
@@ -175,11 +185,12 @@ class AgentRegistry {
       agentId: agent.id,
     });
 
-    // Write command into the terminal PTY with structured execution
+    // Write command into the terminal PTY with structured execution.
+    // Every argument is shell-quoted so user-supplied extraArgs cannot inject commands.
     const activeSession = terminalManager.activePtySessions.get(session.sessionId);
     if (activeSession) {
       // Send execution to the newly started shell/tmux
-      const fullCmd = [agent.path, ...commandArgs].join(' ');
+      const fullCmd = [agent.path, ...commandArgs].map(shellQuote).join(' ');
       activeSession.ptyProcess.write(`${fullCmd}\r`);
     }
 

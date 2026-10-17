@@ -1,5 +1,5 @@
 /**
- * NexusVPS SQLite Database Service
+ * Citadel SQLite Database Service
  */
 const Database = require('better-sqlite3');
 const path = require('node:path');

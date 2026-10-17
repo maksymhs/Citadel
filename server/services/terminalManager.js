@@ -1,5 +1,5 @@
 /**
- * NexusVPS Terminal & Session Manager
+ * Citadel Terminal & Session Manager
  * Backed by node-pty and tmux for persistent, reconnectable sessions
  */
 const pty = require('node-pty');

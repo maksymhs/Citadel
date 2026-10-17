@@ -1,5 +1,5 @@
 /**
- * NexusVPS Audit Logging Service
+ * Citadel Audit Logging Service
  */
 const { getDatabase } = require('../database/db');
 

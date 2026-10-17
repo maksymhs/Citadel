@@ -40,7 +40,7 @@ Plataforma web autohospedada, ultraligera, modular y segura para gestionar múlt
 Ejecuta el instalador idempotente:
 
 ```bash
-git clone https://github.com/tu-usuario/citadel.git /srv/citadel/app
+git clone https://github.com/maksymhs/Citadel.git /srv/citadel/app
 cd /srv/citadel/app
 ./install.sh
 ```
@@ -126,6 +126,27 @@ node scripts/doctor.js
 
 ---
 
-## 7. Licencia
+## 7. Seguridad, Aislamiento y Limitaciones
 
-Apache-2.0
+Citadel aplica varias capas de seguridad por defecto:
+
+- Escucha en `127.0.0.1` salvo que se configure otro `HOST`.
+- Autenticación obligatoria en el backend para todas las rutas de la API salvo el estado de configuración inicial.
+- Cookies de sesión `HttpOnly`, `SameSite=Strict` y `Secure` cuando se usa HTTPS.
+- Validación de origen en el handshake WebSocket y sesión válida obligatoria.
+- Cabeceras de seguridad (CSP, `X-Content-Type-Options`, etc.) y límite de peticiones.
+- Ejecución de procesos con argumentos estructurados (sin interpolación en shell) y validación de rutas contra el árbol gestionado.
+
+**Limitaciones importantes** (no prometemos una seguridad absoluta):
+
+- **Los proyectos no están aislados a nivel de sistema operativo.** Todos se ejecutan bajo el mismo usuario Linux que el servicio. La separación entre proyectos es lógica (directorios, sesiones y registros propios), no un sandbox.
+- Obtener una terminal equivale a obtener un shell con los privilegios de la cuenta que ejecuta Citadel. Esa cuenta **no es root** por defecto; no ejecutes el servicio como `root`.
+- La función de *importar proyecto* permite registrar a propósito un directorio arbitrario del host (requiere sesión de administrador).
+- La API administrativa de Caddy debe permanecer en `127.0.0.1`; Docker se consulta solo mediante el socket Unix local.
+- Con `HOST=0.0.0.0` el panel queda accesible desde la red: colócalo siempre detrás de un proxy inverso con HTTPS.
+
+---
+
+## 8. Licencia
+
+MIT. Consulta [LICENSE](LICENSE) para los términos completos.

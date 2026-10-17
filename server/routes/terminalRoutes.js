@@ -4,6 +4,8 @@
 const { requireAuth } = require('../security/auth');
 const terminalManager = require('../services/terminalManager');
 const auditService = require('../services/auditService');
+const { validateSafePath } = require('../security/guard');
+const { PROJECTS_DIR } = require('../config');
 
 async function terminalRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
@@ -20,11 +22,23 @@ async function terminalRoutes(fastify) {
   // Create new terminal session
   fastify.post('/api/terminals', async (request, reply) => {
     const { projectId, name, cwd, cols, rows } = request.body || {};
+
+    // Any ad-hoc cwd supplied by the client must stay inside the managed projects tree.
+    // When projectId is given, the project's own (admin-approved) path is used instead.
+    let safeCwd;
+    if (cwd && !projectId) {
+      try {
+        safeCwd = validateSafePath(cwd, PROJECTS_DIR);
+      } catch (err) {
+        return reply.status(400).send({ error: err.message });
+      }
+    }
+
     try {
       const session = terminalManager.createSession({
         projectId,
         name: name || 'Terminal',
-        cwd,
+        cwd: safeCwd,
         cols,
         rows,
       });

@@ -8,11 +8,19 @@ const { closeDatabase } = require('../server/database/db');
 
 describe('Security & Protection Tests', () => {
   let app;
+  let authCookie;
   const testDb = path.resolve(__dirname, '../data/test-security.db');
 
   before(async () => {
     if (fs.existsSync(testDb)) fs.unlinkSync(testDb);
     app = await buildServer({ customDbPath: testDb, logger: false });
+
+    const setupRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/setup',
+      payload: { username: 'secauditor', password: 'SuperPassword123!' },
+    });
+    authCookie = setupRes.cookies.find((c) => c.name === 'session_id').value;
   });
 
   after(async () => {
@@ -58,6 +66,19 @@ describe('Security & Protection Tests', () => {
     assert.equal(isAllowedOrigin('http://localhost:3000'), true);
     assert.equal(isAllowedOrigin('http://127.0.0.1:3000'), true);
     assert.equal(isAllowedOrigin('https://malicious-website.com'), false);
+  });
+
+  test('POST /api/terminals rejects a cwd outside the managed projects tree', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/terminals',
+      cookies: { session_id: authCookie },
+      payload: { name: 'Evil Terminal', cwd: '/etc' },
+    });
+
+    assert.equal(res.statusCode, 400);
+    const body = JSON.parse(res.payload);
+    assert.match(body.error, /Path traversal denied/i);
   });
 
   test('Security response headers (CSP, HSTS, X-Content-Type-Options)', async () => {

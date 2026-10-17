@@ -1,5 +1,5 @@
 /**
- * NexusVPS Node Abstraction Layer
+ * Citadel Node Abstraction Layer
  * Provides uniform node interface for local VPS (MVP) and future remote VPS nodes
  */
 const os = require('node:os');

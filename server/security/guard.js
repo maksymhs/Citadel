@@ -1,5 +1,5 @@
 /**
- * NexusVPS Security Guards & Path Traversal Protection
+ * Citadel Security Guards & Path Traversal Protection
  */
 const path = require('node:path');
 const fs = require('node:fs');

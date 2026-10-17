@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * NexusVPS System Doctor & Diagnostic Tool
+ * Citadel System Doctor & Diagnostic Tool
  */
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');

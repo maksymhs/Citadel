@@ -1,5 +1,5 @@
 /**
- * NexusVPS Plugin Loader & Manifest Engine
+ * Citadel Plugin Loader & Manifest Engine
  * Loads and isolates official/local plugins safely
  */
 const fs = require('node:fs');

@@ -1,5 +1,5 @@
 /**
- * NexusVPS Security & Authentication Module
+ * Citadel Security & Authentication Module
  */
 const crypto = require('node:crypto');
 const { getDatabase } = require('../database/db');

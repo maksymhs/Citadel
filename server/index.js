@@ -1,5 +1,5 @@
 /**
- * NexusVPS Server Main Entrypoint
+ * Citadel Server Main Entrypoint
  */
 const Fastify = require('fastify');
 const path = require('node:path');

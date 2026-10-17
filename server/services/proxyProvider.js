@@ -1,5 +1,5 @@
 /**
- * NexusVPS ProxyProvider Interface & Caddy Implementation
+ * Citadel ProxyProvider Interface & Caddy Implementation
  * Safe, non-blocking reverse proxy management via local admin API
  */
 const http = require('node:http');

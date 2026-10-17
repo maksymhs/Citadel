@@ -1,5 +1,5 @@
 /**
- * NexusVPS Optional Docker Service
+ * Citadel Optional Docker Service
  * Secure, read-controlled bridge to Docker Engine API via unix socket
  */
 const http = require('node:http');

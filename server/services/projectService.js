@@ -1,5 +1,5 @@
 /**
- * NexusVPS Project Management Service
+ * Citadel Project Management Service
  */
 const path = require('node:path');
 const fs = require('node:fs');

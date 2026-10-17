@@ -1,5 +1,5 @@
 /**
- * NexusVPS Client-Side Application
+ * Citadel Client-Side Application
  * Zero-framework, modular SPA for project, terminal, and AI agent management
  */
 

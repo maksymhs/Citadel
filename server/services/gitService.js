@@ -1,5 +1,5 @@
 /**
- * NexusVPS Controlled Git Service
+ * Citadel Controlled Git Service
  * Structured argument execution preventing shell injection
  */
 const { spawn } = require('node:child_process');
