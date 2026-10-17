@@ -35,12 +35,16 @@ fi
 
 cd "$APP_DIR"
 
-CURRENT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# safe.directory avoids git's "dubious ownership" refusal when this runs as root
+# on a working tree owned by the (non-root) service user.
+git_safe() { git -c safe.directory='*' "$@"; }
+
+CURRENT="$(git_safe rev-parse --short HEAD 2>/dev/null || echo unknown)"
 echo "[citadel-update] Current commit: $CURRENT"
 
 echo "[citadel-update] Fetching origin/$BRANCH..."
-git fetch --depth 1 origin "$BRANCH"
-TARGET="$(git rev-parse --short "origin/$BRANCH")"
+git_safe fetch --depth 1 origin "$BRANCH"
+TARGET="$(git_safe rev-parse --short "origin/$BRANCH")"
 echo "[citadel-update] Available commit: $TARGET"
 
 if [ "$CHECK_ONLY" = true ]; then
@@ -52,7 +56,7 @@ if [ "$CURRENT" = "$TARGET" ]; then
   echo "[citadel-update] Already up to date ($CURRENT)."
 else
   echo "[citadel-update] Updating $CURRENT -> $TARGET"
-  git reset --hard "origin/$BRANCH"
+  git_safe reset --hard "origin/$BRANCH"
 fi
 
 echo "[citadel-update] Installing dependencies..."

@@ -187,8 +187,10 @@ else
     $SUDO cp -r "$SRC_DIR"/.env.example "$APP_DIR"/.env.example 2>/dev/null || true
   elif $SUDO test -d "$APP_DIR/.git"; then
     echo "      Updating existing Citadel clone in $APP_DIR (branch $REPO_BRANCH)..."
-    $SUDO git -C "$APP_DIR" fetch --depth 1 origin "$REPO_BRANCH"
-    $SUDO git -C "$APP_DIR" reset --hard "origin/$REPO_BRANCH"
+    # safe.directory avoids git's "dubious ownership" refusal when root operates
+    # on a working tree owned by the (non-root) service user.
+    $SUDO git -c safe.directory='*' -C "$APP_DIR" fetch --depth 1 origin "$REPO_BRANCH"
+    $SUDO git -c safe.directory='*' -C "$APP_DIR" reset --hard "origin/$REPO_BRANCH"
   elif ! $SUDO test -f "$APP_DIR/package.json"; then
     echo "      Cloning Citadel ($REPO_BRANCH) from $REPO_URL..."
     if [ "$(id -u)" -eq 0 ]; then
