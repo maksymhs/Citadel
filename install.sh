@@ -159,8 +159,10 @@ else
 fi
 
 # 7. Dependency installation and local asset build
-echo "[6/8] Installing native dependencies and local assets (0 CDNs)..."
-if [ "$CHECK_ONLY" = false ]; then
+if [ "$CHECK_ONLY" = true ]; then
+  echo "[6/8] Native dependencies and local assets: skipped (check mode)."
+else
+  echo "[6/8] Installing native dependencies and local assets (0 CDNs)..."
   cd "$APP_DIR"
   npm install --omit=dev
   node scripts/copy-vendor.js
@@ -168,40 +170,66 @@ if [ "$CHECK_ONLY" = false ]; then
 fi
 
 # 8. systemd service configuration and startup
-echo "[7/8] Configuring systemd service..."
-if [ "$CHECK_ONLY" = false ] && [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$HAS_SUDO" = true ]; then
-  SERVICE_FILE="/etc/systemd/system/citadel.service"
-  $SUDO cp "$APP_DIR/scripts/citadel.service" "$SERVICE_FILE"
-  $SUDO sed -i "s|User=citadel|User=$RUN_USER|g" "$SERVICE_FILE"
-  $SUDO sed -i "s|Group=citadel|Group=$RUN_USER|g" "$SERVICE_FILE"
+if [ "$CHECK_ONLY" = true ]; then
+  echo "[7/8] systemd service configuration: skipped (check mode)."
+else
+  echo "[7/8] Configuring systemd service..."
+  if [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$HAS_SUDO" = true ]; then
+    SERVICE_FILE="/etc/systemd/system/citadel.service"
+    $SUDO cp "$APP_DIR/scripts/citadel.service" "$SERVICE_FILE"
+    $SUDO sed -i "s|User=citadel|User=$RUN_USER|g" "$SERVICE_FILE"
+    $SUDO sed -i "s|Group=citadel|Group=$RUN_USER|g" "$SERVICE_FILE"
 
-  $SUDO systemctl daemon-reload
-  $SUDO systemctl enable citadel.service
-  $SUDO systemctl restart citadel.service
-  echo "      citadel service started and enabled at boot."
-fi
-
-# 9. Health check
-echo "[8/8] Checking API health..."
-if [ "$CHECK_ONLY" = false ] && command -v curl >/dev/null 2>&1; then
-  sleep 2
-  if curl -s -f http://127.0.0.1:3000/api/auth/status >/dev/null 2>&1; then
-    echo -e "${GREEN}      API responding correctly (HTTP 200).${NC}"
-  else
-    echo -e "${YELLOW}      Warning: The service is still starting. Check with: curl http://127.0.0.1:3000/api/auth/status${NC}"
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable citadel.service
+    $SUDO systemctl restart citadel.service
+    echo "      citadel service started and enabled at boot."
   fi
 fi
 
-echo -e "\n${GREEN}=================================================================="
-echo "          Citadel Installation Completed Successfully             "
-echo "=================================================================="
-echo -e "${NC}"
-echo "  Local Access Panel:    http://127.0.0.1:3000"
-echo "  Data Directory:        $DATA_DIR"
-echo "  Projects Directory:    $PROJECTS_DIR"
-echo "  Diagnostics:           node $APP_DIR/scripts/doctor.js"
-echo ""
-echo "  Mandatory First Step:"
-echo "  Open http://127.0.0.1:3000 in your browser to set up your"
-echo "  initial administrator account and start working."
-echo "=================================================================="
+# 9. Health check
+if [ "$CHECK_ONLY" = true ]; then
+  echo "[8/8] API health check: skipped (check mode)."
+else
+  echo "[8/8] Checking API health..."
+  if command -v curl >/dev/null 2>&1; then
+    sleep 2
+    if curl -s -f http://127.0.0.1:3000/api/auth/status >/dev/null 2>&1; then
+      echo -e "${GREEN}      API responding correctly (HTTP 200).${NC}"
+    else
+      echo -e "${YELLOW}      Warning: The service is still starting. Check with: curl http://127.0.0.1:3000/api/auth/status${NC}"
+    fi
+  fi
+fi
+
+if [ "$CHECK_ONLY" = true ]; then
+  echo -e "\n${BLUE}=================================================================="
+  echo "          Citadel Check Complete — No Changes Applied            "
+  echo "=================================================================="
+  echo -e "${NC}"
+  echo "  This system is compatible with Citadel. A real install will:"
+  echo "    1. Install missing base packages and Node.js LTS."
+  echo "    2. Create /srv/citadel (app, data, projects, logs) and user 'citadel'."
+  echo "    3. Copy/clone the app and run npm install."
+  echo "    4. Register and start the systemd service."
+  echo ""
+  if [ "$NODE_INSTALLED" = false ]; then
+    echo -e "${YELLOW}  Prerequisite missing: Node.js >= 18 LTS (it will be installed automatically).${NC}"
+  fi
+  echo "  Run the installer without --check-only to perform the installation."
+  echo "=================================================================="
+else
+  echo -e "\n${GREEN}=================================================================="
+  echo "          Citadel Installation Completed Successfully             "
+  echo "=================================================================="
+  echo -e "${NC}"
+  echo "  Local Access Panel:    http://127.0.0.1:3000"
+  echo "  Data Directory:        $DATA_DIR"
+  echo "  Projects Directory:    $PROJECTS_DIR"
+  echo "  Diagnostics:           node $APP_DIR/scripts/doctor.js"
+  echo ""
+  echo "  Mandatory First Step:"
+  echo "  Open http://127.0.0.1:3000 in your browser to set up your"
+  echo "  initial administrator account and start working."
+  echo "=================================================================="
+fi
