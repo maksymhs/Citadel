@@ -1642,13 +1642,31 @@
       lastY = y;
       const rowHeight = cellHeight();
       const lines = Math.trunc(residual / rowHeight);
+      const item = getItem ? getItem() : null;
+      const wsOpen = !!(item && item.ws && item.ws.readyState === WebSocket.OPEN);
+      const useTmux = !!(wsOpen && state.tmuxAvailable);
       if (lines !== 0) {
         residual -= lines * rowHeight;
-        const item = getItem ? getItem() : null;
-        if (item && item.copyMode && item.ws && item.ws.readyState === WebSocket.OPEN) {
-          const seq = lines > 0 ? '\x1b[A' : '\x1b[B';
-          const count = Math.min(Math.abs(lines), 40);
-          item.ws.send(JSON.stringify({ type: 'input', data: seq.repeat(count) }));
+        if (item && item.copyMode && wsOpen) {
+          // Explicit tmux copy-mode: arrow keys move the viewport.
+          const seq = lines > 0 ? '\x1b[B' : '\x1b[A';
+          item.ws.send(JSON.stringify({ type: 'input', data: seq.repeat(Math.min(Math.abs(lines), 40)) }));
+        } else if (useTmux) {
+          // Everything runs inside tmux: xterm has no scrollback of its own, so
+          // scrollLines() is a no-op. Synthesize SGR mouse-wheel events (64 =
+          // up, 65 = down) at the finger position. tmux (mouse on) turns these
+          // into copy-mode scrolling for shells, or forwards them to the app
+          // for full-screen TUIs (opencode, vim, less…).
+          const dims = term._core?._renderService?.dimensions?.css?.cell;
+          const cw = dims?.width || 8;
+          const chh = dims?.height || 17;
+          const rect = element.getBoundingClientRect();
+          const t = e.touches[0];
+          const col = Math.max(1, Math.min(term.cols, Math.floor((t.clientX - rect.left) / cw) + 1));
+          const row = Math.max(1, Math.min(term.rows, Math.floor((t.clientY - rect.top) / chh) + 1));
+          const button = lines > 0 ? 65 : 64;
+          const seq = `\x1b[<${button};${col};${row}M`.repeat(Math.min(Math.abs(lines), 25));
+          item.ws.send(JSON.stringify({ type: 'input', data: seq }));
         } else {
           term.scrollLines(lines);
         }

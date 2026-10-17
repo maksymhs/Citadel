@@ -344,7 +344,37 @@ class TerminalManager {
     });
 
     this.activePtySessions.set(sessionId, sessionData);
+
+    // Enable tmux mouse support so wheel/touch events from the web UI are
+    // recognized by tmux and forwarded to the pane (or used for copy-mode
+    // scrolling). Without it, tmux passes raw mouse escape bytes to the app as
+    // literal text instead of scrolling. Applied shortly after spawn so the
+    // session exists; best-effort and idempotent.
+    if (useTmux) {
+      const timer = setTimeout(() => this._applyTmuxOptions(tmuxSessionName), 300);
+      if (typeof timer.unref === 'function') timer.unref();
+    }
+
     return sessionData;
+  }
+
+  /**
+   * Apply ergonomic tmux options to a session (best-effort).
+   */
+  _applyTmuxOptions(sessionName) {
+    if (!this.isTmuxAvailable()) return;
+    const tmuxBin = this.getTmuxPath();
+    try {
+      // Global option covers every session (existing and future) on this tmux
+      // server; the per-session option makes sure a stale server-level value
+      // can never win.
+      spawnSync(tmuxBin, ['set-option', '-g', 'mouse', 'on'], { stdio: 'ignore' });
+      if (sessionName) {
+        spawnSync(tmuxBin, ['set-option', '-t', sessionName, 'mouse', 'on'], { stdio: 'ignore' });
+      }
+    } catch {
+      // Best-effort; scrolling falls back to the application's own handling.
+    }
   }
 
   /**
@@ -395,6 +425,13 @@ class TerminalManager {
     }
 
     sessionData.clients.add(ws);
+
+    // Make sure tmux recognises wheel/touch input for this session even when it
+    // was created before mouse support was enabled (e.g. reattaching after a
+    // service restart).
+    if (sessionData.tmuxSession) {
+      this._applyTmuxOptions(sessionData.tmuxSession);
+    }
 
     // Send initial handshake and replay buffer
     ws.send(JSON.stringify({
