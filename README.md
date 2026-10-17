@@ -1,43 +1,55 @@
 # Citadel
 
-Plataforma web autohospedada, ultraligera, modular y segura para gestionar múltiples proyectos de software, terminales persistentes y agentes de programación CLI en tu VPS.
+A self-hosted, lightweight, modular and secure web platform to manage multiple software projects, persistent terminals and AI CLI coding agents on your VPS.
 
 ---
 
-## 1. Características Principales
+## 1. Key Features
 
-- **Gestión Unificada de Proyectos**: Registra, crea, importa y clona repositorios Git con verificación de estado y ramas en tiempo real.
-- **Terminales Persistentes con tmux**: Terminal web integrada con `xterm.js`, `node-pty` y `tmux`. Tus procesos y sesiones continúan ejecutándose aunque cierres el navegador o se reinicie el panel.
-- **Lanzador de Agentes CLI de IA**: Detección y ejecución directa de herramientas CLI de IA como **Claude Code**, **Codex CLI**, **OpenCode** y binarios personalizados bajo la cuenta Linux autorizada del servidor, sin requerir APIs comerciales ni exponer secretos.
-- **Bajo Consumo de Recursos**: Arquitectura optimizada con Fastify y SQLite en modo WAL (~57 MB RAM en reposo), apta para VPS desde 512 MB.
-- **Seguridad por Diseño**:
-  - Escucha local en `127.0.0.1` por defecto.
-  - Autenticación obligatoria con cookies `HttpOnly`, `SameSite=Strict`.
-  - Validación de origen en WebSockets y prevención estricta de Path Traversal.
-  - Registro de auditoría con enmascaramiento automático de credenciales.
-- **Publicación de Dominios (Opcional)**: Integración con Caddy mediante su API administrativa local para proxy reverso y HTTPS automático con Let's Encrypt.
-- **Monitorización Docker (Opcional)**: Inspección de contenedores mediante socket Unix protegido. El núcleo funciona al 100% sin Docker ni Caddy.
-- **Sistema de Plugins**: Manifiestos estandarizados `plugin.json` con aislamiento de fallos para que ningún plugin pueda colapsar el núcleo.
-- **Instalación Idempotente**: Instalador `install.sh` y unidad systemd para Debian/Ubuntu y entornos POSIX.
-
----
-
-## 2. Requisitos del Sistema
-
-- **Sistema Operativo**: Debian 11/12, Ubuntu 20.04/22.04/24.04 (o macOS para desarrollo local).
-- **Arquitectura**: `x86_64` o `arm64 / aarch64`.
-- **Node.js**: v18 LTS, v20 LTS, v22 LTS o superior.
-- **tmux**: Para persistencia completa de sesiones (opcional: PTY directo como fallback).
-- **Git**: CLI nativa instalada en el sistema.
-- **Memoria RAM**: Mínimo 512 MB (recomendado 1 GB para agentes de IA).
+- **Unified Project Management**: Register, create, import and clone Git repositories with live status and branch inspection.
+- **Persistent Terminals with tmux**: A web terminal built on `xterm.js`, `node-pty` and `tmux`. Your processes and sessions keep running even if you close the browser or restart the panel.
+- **AI CLI Agent Launcher**: Detects and runs CLI tools such as **Claude Code**, **Codex CLI**, **OpenCode** and custom binaries under the server's authorized Linux account, without requiring commercial APIs or exposing secrets.
+- **Low Resource Usage**: A lean architecture built on Fastify and SQLite in WAL mode, designed to run on VPS instances with as little as 512 MB of RAM.
+- **Secure by Design**:
+  - Listens on `127.0.0.1` by default.
+  - Mandatory authentication with `HttpOnly`, `SameSite=Strict` cookies.
+  - WebSocket origin validation and strict path-traversal prevention.
+  - Audit log with automatic credential redaction.
+- **Domain Publishing (Optional)**: Caddy integration through its local admin API for reverse proxying and automatic HTTPS via Let's Encrypt.
+- **Docker Monitoring (Optional)**: Container inspection over a protected Unix socket. The core works 100% without Docker or Caddy.
+- **Plugin System**: Standardized `plugin.json` manifests with fault isolation so no plugin can take down the core.
+- **Idempotent Installation**: An `install.sh` installer and a systemd unit for Debian/Ubuntu and POSIX environments.
 
 ---
 
-## 3. Instalación Rápida
+## 2. System Requirements
 
-### En un VPS (Debian / Ubuntu)
+- **Operating System**: Debian 11/12, Ubuntu 20.04/22.04/24.04 (or macOS for local development).
+- **Architecture**: `x86_64` or `arm64 / aarch64`.
+- **Node.js**: v18 LTS, v20 LTS, v22 LTS or later.
+- **tmux**: For full session persistence (optional: direct PTY fallback).
+- **Git**: Native CLI installed on the system.
+- **RAM**: Minimum 512 MB (1 GB recommended for AI agents).
 
-Ejecuta el instalador idempotente:
+---
+
+## 3. Quick Start
+
+### One-line install (Debian / Ubuntu)
+
+Run the installer directly from the repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash
+```
+
+Preview what it will do without changing the system:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash -s -- --check-only
+```
+
+### Install from a clone
 
 ```bash
 git clone https://github.com/maksymhs/Citadel.git /srv/citadel/app
@@ -45,108 +57,105 @@ cd /srv/citadel/app
 ./install.sh
 ```
 
-El instalador:
-1. Comprueba el sistema operativo, memoria y dependencias.
-2. Instala Node.js y compiladores si es necesario.
-3. Prepara la estructura en `/srv/citadel` (`app`, `data`, `projects`, `logs`).
-4. Configura el servicio `citadel.service` en systemd y lo arranca.
+Both methods are idempotent. The installer:
 
-### Comprobación Previa (Dry-Run)
+1. Checks the operating system, memory and dependencies.
+2. Installs Node.js and build tools if needed.
+3. Prepares the layout under `/srv/citadel` (`app`, `data`, `projects`, `logs`).
+4. Configures and starts the `citadel.service` systemd unit.
 
-```bash
-./install.sh --check-only
-```
+You can override the source repository or branch with the `CITADEL_REPO_URL` and `CITADEL_REPO_BRANCH` environment variables.
 
 ---
 
-## 4. Ejecución en Modo Desarrollo
+## 4. Local Development
 
 ```bash
-# 1. Instalar dependencias y copiar bundles locales de xterm
+# 1. Install dependencies and copy the local xterm bundles
 npm install
 
-# 2. Ejecutar diagnóstico de salud del sistema
+# 2. Run the system health check
 npm run doctor
 
-# 3. Ejecutar suite completa de pruebas automatizadas
+# 3. Run the full automated test suite
 npm test
 
-# 4. Iniciar servidor en modo desarrollo
+# 4. Start the server in development mode
 npm run dev
-# O en producción:
+# Or in production:
 npm start
 ```
 
-Abre tu navegador en `http://127.0.0.1:3000`.
+Then open `http://127.0.0.1:3000` in your browser.
 
 ---
 
-## 5. Estructura del Repositorio
+## 5. Repository Layout
 
 ```
 citadel/
-├── server/               # Backend en Node.js + Fastify
-│   ├── config.js         # Configuración y variables de entorno
-│   ├── index.js          # Arranque del servidor y middleware
-│   ├── database/         # SQLite embebido con WAL
-│   ├── security/         # Auth, sesiones, cookies, path traversal
-│   ├── services/         # Proyectos, terminales (tmux/pty), agentes, git, proxy, docker
-│   └── routes/           # Endpoints HTTP REST y WebSockets (/ws/terminal)
-├── public/               # Frontend SPA (HTML5, CSS responsive oscuro, JS modular)
-│   ├── css/app.css       # Estilos propios sin dependencias externas
-│   ├── js/app.js         # Lógica SPA, xterm, WebSockets, modales
-│   └── vendor/           # Bundles locales de xterm.js (0 CDNs)
-├── plugins/              # Plugins oficiales (plugin.json)
-├── scripts/              # Scripts de mantenimiento
-│   ├── copy-vendor.js    # Copia assets de xterm y asigna permisos +x
-│   ├── doctor.js         # Diagnóstico de salud y dependencias
-│   ├── update.sh         # Actualizador seguro (conserva datos y repos)
-│   ├── uninstall.sh      # Desinstalador controlado
-│   └── citadel.service   # Unidad systemd para Linux
-├── tests/                # Pruebas automatizadas (32 pruebas, 8 suites)
-├── docs/                 # Documentación de arquitectura y ADRs
-├── install.sh            # Instalador principal
+├── server/               # Node.js + Fastify backend
+│   ├── config.js         # Configuration and environment variables
+│   ├── index.js          # Server bootstrap and middleware
+│   ├── database/         # Embedded SQLite with WAL
+│   ├── security/         # Auth, sessions, cookies, path traversal
+│   ├── services/         # Projects, terminals (tmux/pty), agents, git, proxy, docker
+│   └── routes/           # HTTP REST endpoints and WebSockets (/ws/terminal)
+├── public/               # SPA frontend (HTML5, dark responsive CSS, modular JS)
+│   ├── css/app.css       # Self-contained styles, no external dependencies
+│   ├── js/app.js         # SPA logic, xterm, WebSockets, modals
+│   └── vendor/           # Local xterm.js bundles (0 CDNs)
+├── plugins/              # Official plugins (plugin.json)
+├── scripts/              # Maintenance scripts
+│   ├── copy-vendor.js    # Copies xterm assets and applies +x permissions
+│   ├── doctor.js         # Health and dependency diagnostics
+│   ├── update.sh         # Safe updater (preserves data and repos)
+│   ├── uninstall.sh      # Controlled uninstaller
+│   └── citadel.service   # systemd unit for Linux
+├── tests/                # Automated tests (33 tests across 8 suites)
+├── docs/                 # Architecture documentation and ADRs
+├── install.sh            # Main installer
 └── package.json
 ```
 
 ---
 
-## 6. Diagnóstico y Mantenimiento
+## 6. Diagnostics & Maintenance
 
 ```bash
-# Diagnóstico completo de componentes y dependencias
+# Full component and dependency diagnostics
 node scripts/doctor.js
 
-# Actualizar aplicación preservando datos y proyectos
+# Update the application while preserving data and projects
 ./scripts/update.sh
 
-# Desinstalar preservando datos por defecto
+# Uninstall while preserving data by default
 ./scripts/uninstall.sh
 ```
 
 ---
 
-## 7. Seguridad, Aislamiento y Limitaciones
+## 7. Security, Isolation & Limitations
 
-Citadel aplica varias capas de seguridad por defecto:
+Citadel applies several security layers by default:
 
-- Escucha en `127.0.0.1` salvo que se configure otro `HOST`.
-- Autenticación obligatoria en el backend para todas las rutas de la API salvo el estado de configuración inicial.
-- Cookies de sesión `HttpOnly`, `SameSite=Strict` y `Secure` cuando se usa HTTPS.
-- Validación de origen en el handshake WebSocket y sesión válida obligatoria.
-- Cabeceras de seguridad (CSP, `X-Content-Type-Options`, etc.) y límite de peticiones.
-- Ejecución de procesos con argumentos estructurados (sin interpolación en shell) y validación de rutas contra el árbol gestionado.
+- Listens on `127.0.0.1` unless another `HOST` is configured.
+- Backend authentication is required for every API route except the initial setup status endpoint.
+- Session cookies are `HttpOnly`, `SameSite=Strict` and `Secure` when HTTPS is used.
+- WebSocket handshake origin validation plus a mandatory valid session.
+- Security headers (CSP, `X-Content-Type-Options`, etc.) and request rate limiting.
+- Process execution with structured arguments (no shell interpolation) and path validation against the managed tree.
 
-**Limitaciones importantes** (no prometemos una seguridad absoluta):
+**Important limitations** (we do not promise absolute security):
 
-- **Los proyectos no están aislados a nivel de sistema operativo.** Todos se ejecutan bajo el mismo usuario Linux que el servicio. La separación entre proyectos es lógica (directorios, sesiones y registros propios), no un sandbox.
-- Obtener una terminal equivale a obtener un shell con los privilegios de la cuenta que ejecuta Citadel. Esa cuenta **no es root** por defecto; no ejecutes el servicio como `root`.
-- La función de *importar proyecto* permite registrar a propósito un directorio arbitrario del host (requiere sesión de administrador).
-- La API administrativa de Caddy debe permanecer en `127.0.0.1`; Docker se consulta solo mediante el socket Unix local.
-- Con `HOST=0.0.0.0` el panel queda accesible desde la red: colócalo siempre detrás de un proxy inverso con HTTPS.
+- **Projects are not isolated at the operating-system level.** They all run under the same Linux user as the service. Separation between projects is logical (own directories, sessions and records), not a sandbox.
+- Getting a terminal is equivalent to getting a shell with the privileges of the account running Citadel. That account is **not root** by default; do not run the service as `root`.
+- The *import project* feature intentionally lets an administrator register an arbitrary host directory (requires an admin session).
+- The Caddy admin API must stay on `127.0.0.1`; Docker is only queried through the local Unix socket.
+- With `HOST=0.0.0.0` the panel becomes reachable from the network: always place it behind a reverse proxy with HTTPS.
 
 ---
 
-## 8. Licencia
+## 8. License
 
-MIT. Consulta [LICENSE](LICENSE) para los términos completos.
+MIT. See [LICENSE](LICENSE) for the full terms.

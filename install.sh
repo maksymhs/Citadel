@@ -24,6 +24,16 @@ if [ "${1:-}" = "--check-only" ] || [ "${1:-}" = "--dry-run" ]; then
   echo -e "${YELLOW}[MODO COMPROBACIÓN] No se aplicarán cambios al sistema.${NC}\n"
 fi
 
+# Repositorio oficial de Citadel (permite instalación en una línea vía curl | bash)
+REPO_URL="${CITADEL_REPO_URL:-https://github.com/maksymhs/Citadel.git}"
+REPO_BRANCH="${CITADEL_REPO_BRANCH:-main}"
+
+# Detectar si el instalador se ejecuta desde un checkout local del repositorio
+SRC_DIR=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]:-}" ]; then
+  SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
 # 1. Comprobación de Privilegios
 HAS_SUDO=false
 if [ "$(id -u)" -eq 0 ]; then
@@ -125,12 +135,21 @@ else
 
   $SUDO mkdir -p "$APP_DIR" "$DATA_DIR" "$PROJECTS_DIR" "$LOGS_DIR"
 
-  # Copiar código fuente actual al directorio de instalación
-  SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [ "$SRC_DIR" != "$APP_DIR" ]; then
-    echo "      Sincronizando archivos de Citadel a $APP_DIR..."
+  # Obtener el código fuente: desde un checkout local o clonando el repositorio oficial.
+  # Esto permite tanto `./install.sh` como `curl -fsSL .../install.sh | bash`.
+  if [ -n "$SRC_DIR" ] && [ -f "$SRC_DIR/package.json" ] && [ -f "$SRC_DIR/server/index.js" ] && [ "$SRC_DIR" != "$APP_DIR" ]; then
+    echo "      Sincronizando archivos locales de Citadel a $APP_DIR..."
     $SUDO cp -r "$SRC_DIR"/* "$APP_DIR"/ 2>/dev/null || true
     $SUDO cp -r "$SRC_DIR"/.env.example "$APP_DIR"/.env.example 2>/dev/null || true
+  elif [ ! -f "$APP_DIR/package.json" ]; then
+    echo "      Clonando Citadel ($REPO_BRANCH) desde $REPO_URL..."
+    if [ "$(id -u)" -eq 0 ]; then
+      git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$APP_DIR"
+    else
+      $SUDO git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$APP_DIR"
+    fi
+  else
+    echo "      Código ya presente en $APP_DIR (se omite la descarga)."
   fi
 
   # Permisos
