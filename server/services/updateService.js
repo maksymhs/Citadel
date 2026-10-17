@@ -74,29 +74,48 @@ async function checkForUpdates({ force = false } = {}) {
 
   const headers = { 'User-Agent': 'Citadel', Accept: 'application/vnd.github+json' };
   try {
-    let latest = null;
+    // GitHub's /releases/latest only returns the single release flagged as
+    // "latest", which goes stale whenever newer versions are published as plain
+    // tags (as this repo does). Read every tag, keep the ones that look like a
+    // version, and pick the highest one instead.
+    let candidates = [];
 
-    const releaseRes = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, { headers });
-    if (releaseRes.ok) {
-      const rel = await releaseRes.json();
-      latest = {
-        version: stripV(rel.tag_name),
-        name: rel.name || rel.tag_name,
-        url: rel.html_url,
-        publishedAt: rel.published_at || null,
-      };
-    } else {
-      const tagRes = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/tags?per_page=1`, { headers });
-      if (tagRes.ok) {
-        const tags = await tagRes.json();
-        if (Array.isArray(tags) && tags.length > 0) {
-          latest = {
-            version: stripV(tags[0].name),
-            name: tags[0].name,
-            url: `https://github.com/${UPDATE_REPO}/releases/tag/${tags[0].name}`,
+    const tagsRes = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/tags?per_page=100`, { headers });
+    if (tagsRes.ok) {
+      const tags = await tagsRes.json();
+      if (Array.isArray(tags)) {
+        candidates = tags
+          .map((t) => (t ? t.name : null))
+          .filter((name) => /^v?\d+\.\d+/.test(String(name || '')))
+          .map((name) => ({
+            version: stripV(name),
+            name,
+            url: `https://github.com/${UPDATE_REPO}/releases/tag/${encodeURIComponent(name)}`,
             publishedAt: null,
-          };
+          }));
+      }
+    }
+
+    // Fall back to the published release if no usable tags were found.
+    if (candidates.length === 0) {
+      const releaseRes = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, { headers });
+      if (releaseRes.ok) {
+        const rel = await releaseRes.json();
+        if (rel && rel.tag_name) {
+          candidates.push({
+            version: stripV(rel.tag_name),
+            name: rel.name || rel.tag_name,
+            url: rel.html_url,
+            publishedAt: rel.published_at || null,
+          });
         }
+      }
+    }
+
+    let latest = null;
+    for (const candidate of candidates) {
+      if (!latest || compareVersions(candidate.version, latest.version) > 0) {
+        latest = candidate;
       }
     }
 
