@@ -1274,13 +1274,37 @@
     }
   }
 
-  // Re-fit the currently visible terminals when the window is resized.
-  window.addEventListener('resize', () => {
+  // Re-fit the currently visible terminals when the window changes size.
+  function refitActiveTerminals() {
     const activeProject = state.terminals.get(state.activeTerminalId);
     if (activeProject && activeProject.containerEl.isConnected) fitTerminalItem(activeProject);
     const activeSys = state.sysTerminals.get(state.activeSysTerminalId);
     if (activeSys && activeSys.containerEl.isConnected) fitTerminalItem(activeSys);
-  });
+  }
+
+  // Mirror the *visible* viewport (window.visualViewport) into CSS variables.
+  // Mobile browsers do not shrink the layout viewport (100dvh) when the on-screen
+  // keyboard opens, so without this the keyboard covers the terminal input line.
+  function setupVisualViewport() {
+    const vv = window.visualViewport;
+    const root = document.documentElement;
+    const apply = () => {
+      if (!vv) return;
+      root.style.setProperty('--app-height', `${Math.round(vv.height)}px`);
+      root.style.setProperty('--app-top', `${Math.round(vv.offsetTop)}px`);
+    };
+    apply();
+    if (vv) {
+      vv.addEventListener('resize', () => {
+        apply();
+        refitActiveTerminals();
+      });
+      vv.addEventListener('scroll', apply);
+    }
+  }
+
+  window.addEventListener('resize', refitActiveTerminals);
+  setupVisualViewport();
 
   // --- System (host) Terminal View ---
   async function renderTerminalView() {

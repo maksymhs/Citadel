@@ -63,8 +63,19 @@ body {
   display: flex;
   height: 100vh;
   height: 100dvh;
+  height: var(--app-height, 100dvh);
   width: 100vw;
   overflow: hidden;
+}
+
+/* Keep the app anchored to the visible viewport so the mobile keyboard never
+   hides the bottom of the UI (e.g. the terminal input line). */
+html.is-mobile-ui #app-container {
+  position: fixed;
+  top: var(--app-top, 0);
+  right: 0;
+  left: 0;
+  height: var(--app-height, 100dvh);
 }
 
 /* Sidebar */
