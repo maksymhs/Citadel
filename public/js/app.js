@@ -29,14 +29,10 @@
 
   // API helper with cookie credentials
   async function api(path, options = {}) {
-    const opts = {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      ...options,
-    };
+    const opts = { ...options, headers: { ...(options.headers || {}) } };
     if (opts.body && typeof opts.body === 'object') {
       opts.body = JSON.stringify(opts.body);
+      opts.headers['Content-Type'] = 'application/json';
     }
     const res = await fetch(path, opts);
     const data = await res.json().catch(() => ({}));

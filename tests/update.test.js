@@ -111,6 +111,18 @@ describe('Version, updater and migrations', () => {
       }
     });
 
+    test('POST /api/system/update tolerates an empty JSON body', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/system/update',
+        cookies: { session_id: authCookie },
+        headers: { 'content-type': 'application/json' },
+        payload: '',
+      });
+      assert.equal(res.statusCode, 400);
+      assert.match(JSON.parse(res.payload).error, /not installed/i);
+    });
+
     test('POST /api/system/update fails cleanly when the updater is absent', async () => {
       const original = process.env.CITADEL_UPDATER_PATH;
       process.env.CITADEL_UPDATER_PATH = '/nonexistent/citadel-update';

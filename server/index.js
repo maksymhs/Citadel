@@ -41,6 +41,20 @@ async function buildServer(options = {}) {
     secret: SESSION_SECRET || require('node:crypto').randomBytes(32).toString('hex'),
   });
 
+  // 2b. Tolerate empty JSON bodies (POST/PUT with no payload).
+  fastify.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    if (body === '' || body === undefined || body === null) {
+      done(null, {});
+      return;
+    }
+    try {
+      done(null, JSON.parse(body));
+    } catch (err) {
+      err.statusCode = 400;
+      done(err, undefined);
+    }
+  });
+
   // 3. Security Headers (Helmet)
   await fastify.register(require('@fastify/helmet'), {
     contentSecurityPolicy: {
