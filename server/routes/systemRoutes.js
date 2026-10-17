@@ -74,7 +74,7 @@ async function systemRoutes(fastify) {
   // Trigger the privileged updater helper (opt-in; requires --enable-updater)
   fastify.post('/api/system/update', async (request, reply) => {
     try {
-      const res = updateService.triggerUpdate();
+      const res = await updateService.triggerUpdate();
       auditService.logAction({
         userId: request.user.id,
         action: 'system_update_triggered',

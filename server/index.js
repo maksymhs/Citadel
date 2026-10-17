@@ -23,6 +23,7 @@ const gitRoutes = require('./routes/gitRoutes');
 const agentRoutes = require('./routes/agentRoutes');
 const terminalRoutes = require('./routes/terminalRoutes');
 const systemRoutes = require('./routes/systemRoutes');
+const peerRoutes = require('./routes/peerRoutes');
 const proxyRoutes = require('./routes/proxyRoutes');
 const dockerRoutes = require('./routes/dockerRoutes');
 const pluginRoutes = require('./routes/pluginRoutes');
@@ -105,6 +106,7 @@ async function buildServer(options = {}) {
   await fastify.register(agentRoutes);
   await fastify.register(terminalRoutes);
   await fastify.register(systemRoutes);
+  await fastify.register(peerRoutes);
   await fastify.register(proxyRoutes);
   await fastify.register(dockerRoutes);
   await fastify.register(pluginRoutes);

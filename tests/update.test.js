@@ -135,7 +135,7 @@ describe('Version, updater and migrations', () => {
       delete require.cache[require.resolve('../server/services/updateService')];
       delete require.cache[require.resolve('../server/config')];
       const svc = require('../server/services/updateService');
-      assert.throws(() => svc.triggerUpdate(), /not installed/i);
+      await assert.rejects(() => svc.triggerUpdate(), /not installed/i);
       if (original === undefined) delete process.env.CITADEL_UPDATER_PATH;
       else process.env.CITADEL_UPDATER_PATH = original;
     });

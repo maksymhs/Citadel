@@ -53,6 +53,16 @@ const UPDATE_BRANCH = process.env.CITADEL_REPO_BRANCH || 'main';
 const UPDATER_PATH = process.env.CITADEL_UPDATER_PATH || '/usr/local/sbin/citadel-update';
 const SERVICE_NAME = process.env.CITADEL_SERVICE || 'citadel';
 
+// Synchronized updates across hosts. CITADEL_PEERS is a comma-separated list of
+// peer base URLs (e.g. https://vps2.example.com). When CITADEL_PEER_TOKEN is
+// set, triggering an update on this host also asks every peer to update itself;
+// the peer authenticates that request with the X-Citadel-Peer-Token header.
+const PEER_TOKEN = process.env.CITADEL_PEER_TOKEN || null;
+const PEER_URLS = (process.env.CITADEL_PEERS || '')
+  .split(',')
+  .map((u) => u.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
 // Tool and integration paths
 const TMUX_PATH = process.env.TMUX_PATH || 'tmux';
 const CADDY_ADMIN_API = process.env.CADDY_ADMIN_API || 'http://127.0.0.1:2019';
@@ -88,6 +98,8 @@ module.exports = {
   UPDATE_BRANCH,
   UPDATER_PATH,
   SERVICE_NAME,
+  PEER_TOKEN,
+  PEER_URLS,
   TMUX_PATH,
   CADDY_ADMIN_API,
   DOCKER_SOCKET,

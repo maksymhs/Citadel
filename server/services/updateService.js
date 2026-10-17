@@ -12,6 +12,8 @@ const {
   UPDATE_BRANCH,
   UPDATER_PATH,
   SERVICE_NAME,
+  PEER_TOKEN,
+  PEER_URLS,
 } = require('../config');
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -53,6 +55,8 @@ function getVersionInfo() {
     service: SERVICE_NAME,
     updaterAvailable: updaterInstalled,
     updaterPath: updaterInstalled ? UPDATER_PATH : null,
+    peers: PEER_URLS,
+    peerSync: Boolean(PEER_TOKEN && PEER_URLS.length > 0),
   };
 }
 
@@ -179,10 +183,39 @@ async function checkForUpdates({ force = false } = {}) {
 }
 
 /**
- * Launch the root-owned updater helper in the background. The helper restarts
- * the service (--no-block), so the current process will be replaced.
+ * Ask every configured peer host to run its own updater, so one "Update" action
+ * rolls out across the fleet. Best-effort: a peer that is unreachable is logged
+ * but never blocks this host's update.
  */
-function triggerUpdate() {
+async function notifyPeers() {
+  if (!PEER_TOKEN || PEER_URLS.length === 0) return [];
+  const results = await Promise.allSettled(PEER_URLS.map(async (base) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch(`${base}/api/system/peer-update`, {
+        method: 'POST',
+        headers: {
+          'X-Citadel-Peer-Token': PEER_TOKEN,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+        signal: controller.signal,
+      });
+      return { url: base, ok: res.ok, status: res.status };
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
+  return results.map((r) => (r.status === 'fulfilled' ? r.value : { ok: false, error: String(r.reason) }));
+}
+
+/**
+ * Launch the root-owned updater helper in the background. The helper restarts
+ * the service, so the current process will be replaced. When `fanout` is true
+ * (default) and peers are configured, also ask each peer to update.
+ */
+async function triggerUpdate({ fanout = true } = {}) {
   if (!fs.existsSync(UPDATER_PATH)) {
     throw new Error('Updater is not installed on this host. Re-run install.sh with --enable-updater.');
   }
@@ -195,7 +228,16 @@ function triggerUpdate() {
 
   const child = spawn('sudo', ['-n', UPDATER_PATH], { detached: true, stdio: 'ignore' });
   child.unref();
-  return { started: true };
+
+  let peers = [];
+  if (fanout) {
+    try {
+      peers = await notifyPeers();
+    } catch (err) {
+      peers = [{ ok: false, error: err.message }];
+    }
+  }
+  return { started: true, peers };
 }
 
 module.exports = {
