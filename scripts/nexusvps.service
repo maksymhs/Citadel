@@ -1,0 +1,30 @@
+[Unit]
+Description=NexusVPS — Plataforma de Desarrollo y Agentes de IA
+After=network.target
+
+[Service]
+Type=simple
+User=nexusvps
+Group=nexusvps
+WorkingDirectory=/srv/nexusvps/app
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Environment=DATABASE_PATH=/srv/nexusvps/data/nexusvps.db
+Environment=PROJECTS_DIR=/srv/nexusvps/projects
+Environment=LOGS_DIR=/srv/nexusvps/logs
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nexusvps
+
+# Security sandbox
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/srv/nexusvps/data /srv/nexusvps/projects /srv/nexusvps/logs /tmp
+
+[Install]
+WantedBy=multi-user.target

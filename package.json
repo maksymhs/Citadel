@@ -1,0 +1,39 @@
+{
+  "name": "nexusvps",
+  "version": "0.1.0",
+  "description": "Plataforma web autohospedada, ultraligera y segura para gestionar proyectos, terminales persistentes y agentes CLI en VPS",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test tests/**/*.test.js",
+    "doctor": "node scripts/doctor.js",
+    "postinstall": "node scripts/copy-vendor.js"
+  },
+  "keywords": [
+    "vps",
+    "dashboard",
+    "terminal",
+    "pty",
+    "tmux",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "opencode"
+  ],
+  "author": "NexusVPS Contributors",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@fastify/cookie": "^11.1.3",
+    "@fastify/helmet": "^13.2.0",
+    "@fastify/rate-limit": "^11.2.1",
+    "@fastify/static": "^10.1.6",
+    "@fastify/websocket": "^11.3.4",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "better-sqlite3": "^13.0.3",
+    "fastify": "^5.12.7",
+    "node-pty": "^1.1.0"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "hello-stats",
+  "name": "System Stats Widget",
+  "version": "1.0.0",
+  "minCoreVersion": "0.1.0",
+  "description": "Muestra métricas ligeras en tiempo real y estadísticas del sistema.",
+  "author": "NexusVPS Team",
+  "entryPoint": "index.js",
+  "capabilities": [
+    "system-metrics"
+  ],
+  "config": {
+    "sampleInterval": 5000
+  }
+}
