@@ -714,8 +714,10 @@ body {
   }
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
+/* Responsive adjustments. The coarse-pointer clause keeps the sidebar
+   off-canvas on phones/tablets even when they request the desktop site (which
+   widens the layout viewport past the 768px breakpoint). */
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
   .hamburger-btn {
     display: inline-flex;
   }
@@ -851,4 +853,38 @@ body {
     align-items: flex-start;
     padding-top: max(48px, env(safe-area-inset-top));
   }
+}
+
+/* JS-driven mobile layout (html.is-mobile-ui, set in app.js). This mirrors the
+   responsive block above but is not gated by a media query, so it also applies
+   when a phone/tablet requests the desktop site and reports a wide viewport or
+   a fine pointer. */
+html.is-mobile-ui .hamburger-btn {
+  display: inline-flex;
+}
+
+html.is-mobile-ui .sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(78vw, 280px);
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  z-index: 60;
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.6);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+html.is-mobile-ui .sidebar.open {
+  transform: translateX(0);
+}
+
+html.is-mobile-ui .sidebar-backdrop.open {
+  display: block;
+}
+
+html.is-mobile-ui .main-wrapper {
+  width: 100%;
 }

@@ -377,9 +377,20 @@
     loadAgents();
     loadVersionTag();
 
-    window.addEventListener('resize', () => {
-      if (window.innerWidth > 768) closeSidebar();
-    });
+    // Force the mobile (off-canvas) layout for any touch/narrow device, even
+    // when the browser requests the desktop site and reports a wide viewport.
+    // The `is-mobile-ui` class drives the CSS, so it does not rely on media
+    // queries matching.
+    const applyDeviceMode = () => {
+      const isMobile = window.matchMedia('(pointer: coarse)').matches
+        || (navigator.maxTouchPoints || 0) > 0
+        || window.innerWidth <= 768;
+      document.documentElement.classList.toggle('is-mobile-ui', isMobile);
+      if (!isMobile) closeSidebar();
+    };
+    applyDeviceMode();
+    window.addEventListener('resize', applyDeviceMode);
+    window.addEventListener('orientationchange', applyDeviceMode);
   }
 
   async function loadVersionTag() {
