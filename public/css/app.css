@@ -1155,3 +1155,56 @@ html.is-mobile-ui .data-table tr:hover td {
 .file-editor.preview {
   margin: 0;
 }
+
+/* File Explorer cards on mobile: just the folder/file name as a tappable row. */
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
+  .files-table tr {
+    display: block;
+    padding: 0;
+  }
+
+  .files-table td {
+    padding: 12px 14px;
+    border-bottom: 0;
+    text-align: left;
+  }
+
+  .files-table td:not(:first-child) {
+    display: none;
+  }
+
+  .files-table td:first-child::before {
+    display: none;
+  }
+
+  .files-table .file-name {
+    display: block;
+    padding: 2px 0;
+    font-size: 15px;
+  }
+}
+
+html.is-mobile-ui .files-table tr {
+  display: block;
+  padding: 0;
+}
+
+html.is-mobile-ui .files-table td {
+  padding: 12px 14px;
+  border-bottom: 0;
+  text-align: left;
+}
+
+html.is-mobile-ui .files-table td:not(:first-child) {
+  display: none;
+}
+
+html.is-mobile-ui .files-table td:first-child::before {
+  display: none;
+}
+
+html.is-mobile-ui .files-table .file-name {
+  display: block;
+  padding: 2px 0;
+  font-size: 15px;
+}

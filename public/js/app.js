@@ -1428,7 +1428,7 @@
           <nav class="file-breadcrumb">${buildBreadcrumb(listing.path)}</nav>
         </div>
         <div class="table-container" style="border:0;border-radius:0;margin:0;">
-          <table class="data-table">
+          <table class="data-table files-table">
             <thead>
               <tr><th>Name</th><th style="width:90px;">Size</th><th style="width:150px;">Modified</th><th style="width:180px;">Actions</th></tr>
             </thead>
