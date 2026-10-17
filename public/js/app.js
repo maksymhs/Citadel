@@ -28,13 +28,14 @@
     dashboardTimer: null,
     dashboardPaused: false,
     tmuxAvailable: false,
+    filesPath: '/',
   };
 
   // Persist lightweight UI state so a page reload returns to the same view,
   // project and active terminal instead of always resetting to the dashboard.
   const UI_STATE_KEY = 'citadel.uiState';
   const KNOWN_VIEWS = [
-    'dashboard', 'projects', 'repos', 'workspace', 'terminal',
+    'dashboard', 'projects', 'repos', 'files', 'workspace', 'terminal',
     'agents', 'deployments', 'docker', 'plugins', 'system',
   ];
 
@@ -321,6 +322,10 @@
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
               <span>Repositories</span>
             </a>
+            <a class="nav-item" data-view="files">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6"/></svg>
+              <span>Files</span>
+            </a>
             <a class="nav-item" data-view="workspace">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
               <span>Workspace & PTY</span>
@@ -498,6 +503,9 @@
     } else if (view === 'repos') {
       titleEl.textContent = 'Git Repositories';
       renderReposView();
+    } else if (view === 'files') {
+      titleEl.textContent = 'File Explorer';
+      renderFilesView();
     } else if (view === 'workspace') {
       titleEl.textContent = 'Workspace & Persistent Terminals';
       renderWorkspaceView();
@@ -551,6 +559,19 @@
 
   function formatMegabytes(bytes) {
     return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+  }
+
+  function formatBytes(bytes) {
+    if (bytes === null || bytes === undefined) return '—';
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let value = bytes / 1024;
+    let i = 0;
+    while (value >= 1024 && i < units.length - 1) {
+      value /= 1024;
+      i += 1;
+    }
+    return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`;
   }
 
   // Refresh only the process table body so the rest of the dashboard stays still.
@@ -1372,6 +1393,181 @@
 
   window.addEventListener('resize', refitActiveTerminals);
   setupVisualViewport();
+
+  // --- File Explorer View ---
+  async function renderFilesView() {
+    const content = document.getElementById('main-content');
+    const actions = document.getElementById('top-bar-actions');
+    const current = state.filesPath || '/';
+
+    actions.innerHTML = `
+      <button class="btn btn-secondary btn-sm" id="files-new-file">+ File</button>
+      <button class="btn btn-secondary btn-sm" id="files-new-folder">+ Folder</button>
+      <button class="btn btn-secondary btn-sm" id="files-refresh">Refresh</button>
+    `;
+    document.getElementById('files-new-file').onclick = () => promptNewEntry('file');
+    document.getElementById('files-new-folder').onclick = () => promptNewEntry('dir');
+    document.getElementById('files-refresh').onclick = () => renderFilesView();
+
+    content.innerHTML = '<div class="card" style="color:var(--text-muted);">Loading...</div>';
+
+    let listing;
+    try {
+      listing = (await api(`/api/files?path=${encodeURIComponent(current)}`)).listing;
+    } catch (err) {
+      content.innerHTML = `<div class="card" style="color:var(--danger-color);">${escapeHtml(err.message)}</div>`;
+      return;
+    }
+
+    state.filesPath = listing.path;
+    const rows = listing.items.map((item) => fileRow(item)).join('');
+    content.innerHTML = `
+      <div class="card" style="padding:0;overflow:hidden;">
+        <div class="file-toolbar">
+          <button class="btn btn-secondary btn-sm" id="files-up" ${listing.parent === listing.path ? 'disabled' : ''}>↑ Up</button>
+          <nav class="file-breadcrumb">${buildBreadcrumb(listing.path)}</nav>
+        </div>
+        <div class="table-container" style="border:0;border-radius:0;margin:0;">
+          <table class="data-table">
+            <thead>
+              <tr><th>Name</th><th style="width:90px;">Size</th><th style="width:150px;">Modified</th><th style="width:180px;">Actions</th></tr>
+            </thead>
+            <tbody>${rows || '<tr><td colspan="4" style="color:var(--text-muted);text-align:center;padding:20px;">Empty directory</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    const upBtn = document.getElementById('files-up');
+    if (upBtn) upBtn.onclick = () => { state.filesPath = listing.parent; renderFilesView(); };
+
+    content.querySelectorAll('.file-crumb').forEach((el) => {
+      el.onclick = () => { state.filesPath = el.getAttribute('data-path'); renderFilesView(); };
+    });
+    content.querySelectorAll('[data-open]').forEach((el) => {
+      el.onclick = () => openEntry(el.getAttribute('data-open'), el.getAttribute('data-type'));
+    });
+    content.querySelectorAll('[data-download]').forEach((el) => {
+      el.onclick = () => { window.location.href = `/api/files/download?path=${encodeURIComponent(el.getAttribute('data-download'))}`; };
+    });
+    content.querySelectorAll('[data-del]').forEach((el) => {
+      el.onclick = () => removeEntry(el.getAttribute('data-del'));
+    });
+  }
+
+  function fileRow(item) {
+    const isDir = item.type === 'dir' || item.type === 'symlink-dir';
+    const icon = isDir ? '📁' : (item.type.includes('symlink') ? '🔗' : '📄');
+    const size = isDir ? '—' : formatBytes(item.size);
+    const mtime = item.mtime ? new Date(item.mtime).toLocaleString() : '—';
+    const type = isDir ? 'dir' : 'file';
+    return `
+      <tr>
+        <td data-label="Name">
+          <span class="file-name" data-open="${escapeHtml(item.path)}" data-type="${type}">
+            ${icon} ${escapeHtml(item.name)}${item.target ? ` <span style="color:var(--text-muted);">→ ${escapeHtml(item.target)}</span>` : ''}
+          </span>
+        </td>
+        <td data-label="Size" style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);">${size}</td>
+        <td data-label="Modified" style="font-size:12px;color:var(--text-secondary);">${mtime}</td>
+        <td data-label="Actions">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" data-open="${escapeHtml(item.path)}" data-type="${type}">${isDir ? 'Open' : 'Edit'}</button>
+            ${isDir ? '' : `<button class="btn btn-secondary btn-sm" data-download="${escapeHtml(item.path)}">Download</button>`}
+            <button class="btn btn-danger btn-sm" data-del="${escapeHtml(item.path)}">Delete</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function buildBreadcrumb(targetPath) {
+    const parts = targetPath.split('/').filter(Boolean);
+    const nodes = ['<span class="file-crumb" data-path="/">root</span>'];
+    let acc = '';
+    for (const part of parts) {
+      acc += `/${part}`;
+      nodes.push(`<span class="file-crumb" data-path="${escapeHtml(acc)}">${escapeHtml(part)}</span>`);
+    }
+    return nodes.join('<span class="file-crumb-sep">/</span>');
+  }
+
+  function openEntry(targetPath, type) {
+    if (type === 'dir') {
+      state.filesPath = targetPath;
+      renderFilesView();
+    } else {
+      openFileEditor(targetPath);
+    }
+  }
+
+  async function openFileEditor(filePath) {
+    let file;
+    try {
+      file = (await api(`/api/files/read?path=${encodeURIComponent(filePath)}`)).file;
+    } catch (err) {
+      showToast(err.message, 'error');
+      return;
+    }
+
+    const editable = !file.binary && !file.truncated;
+    const meta = `${formatBytes(file.size)} · mode ${file.mode}${file.truncated ? ' · showing first 1 MB' : ''}${file.binary ? ' · binary (read-only)' : ''}`;
+    const bodyHtml = editable
+      ? `<div class="file-editor-meta">${escapeHtml(meta)}</div><textarea id="files-editor" class="file-editor" spellcheck="false">${escapeHtml(file.content)}</textarea>`
+      : `<div class="file-editor-meta">${escapeHtml(meta)}</div><pre class="file-editor preview">${escapeHtml(file.binary ? '[binary content]' : file.content)}</pre>`;
+
+    openModal({
+      title: filePath,
+      confirmText: editable ? 'Save' : 'Close',
+      bodyHtml,
+      onConfirm: editable ? async () => {
+        const value = document.getElementById('files-editor').value;
+        await api('/api/files/write', { method: 'PUT', body: { path: filePath, content: value } });
+        showToast('File saved.', 'success');
+        renderFilesView();
+      } : null,
+    });
+  }
+
+  function promptNewEntry(kind) {
+    const base = state.filesPath || '/';
+    openModal({
+      title: kind === 'dir' ? 'New Folder' : 'New File',
+      confirmText: 'Create',
+      bodyHtml: `
+        <div class="form-group">
+          <label class="form-label">Name</label>
+          <input type="text" class="form-input" id="files-new-name" placeholder="${kind === 'dir' ? 'folder' : 'file.txt'}">
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);">Created in <code>${escapeHtml(base)}</code></p>
+      `,
+      onConfirm: async () => {
+        const name = (document.getElementById('files-new-name').value || '').trim();
+        if (!name || name.includes('/')) throw new Error('Enter a simple file name (no slashes).');
+        const target = base === '/' ? `/${name}` : `${base}/${name}`;
+        if (kind === 'dir') {
+          await api('/api/files/mkdir', { method: 'POST', body: { path: target } });
+        } else {
+          await api('/api/files/write', { method: 'PUT', body: { path: target, content: '' } });
+        }
+        showToast(kind === 'dir' ? 'Folder created.' : 'File created.', 'success');
+        renderFilesView();
+      },
+    });
+  }
+
+  function removeEntry(targetPath) {
+    openModal({
+      title: 'Delete',
+      confirmText: 'Delete',
+      bodyHtml: `<p>Delete <strong>${escapeHtml(targetPath)}</strong>? This cannot be undone.</p>`,
+      onConfirm: async () => {
+        await api(`/api/files?path=${encodeURIComponent(targetPath)}`, { method: 'DELETE' });
+        showToast('Deleted.', 'success');
+        renderFilesView();
+      },
+    });
+  }
 
   // --- System (host) Terminal View ---
   async function renderTerminalView() {
