@@ -25,6 +25,9 @@
     plugins: [],
     docker: null,
     containers: [],
+    dashboardTimer: null,
+    dashboardPaused: false,
+    tmuxAvailable: false,
   };
 
   // Persist lightweight UI state so a page reload returns to the same view,
@@ -261,8 +264,9 @@
     const root = document.getElementById('app-root');
     root.innerHTML = `
       <div id="app-container">
+        <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
         <!-- Sidebar Navigation -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="app-sidebar">
           <div class="sidebar-header">
             <div class="logo-icon">C</div>
             <span class="logo-text">Citadel</span>
@@ -328,6 +332,9 @@
         <!-- Main Wrapper -->
         <div class="main-wrapper">
           <header class="top-bar">
+            <button class="hamburger-btn" id="mobile-menu-btn" aria-label="Toggle navigation">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
             <div class="top-bar-title" id="top-bar-title">Dashboard</div>
             <div class="top-bar-actions" id="top-bar-actions"></div>
           </header>
@@ -336,12 +343,26 @@
       </div>
     `;
 
+    const sidebarEl = document.getElementById('app-sidebar');
+    const backdropEl = document.getElementById('sidebar-backdrop');
+    const closeSidebar = () => {
+      sidebarEl.classList.remove('open');
+      backdropEl.classList.remove('open');
+    };
+
+    document.getElementById('mobile-menu-btn').onclick = () => {
+      sidebarEl.classList.toggle('open');
+      backdropEl.classList.toggle('open');
+    };
+    backdropEl.onclick = closeSidebar;
+
     // Bind sidebar clicks
     document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
       item.onclick = (e) => {
         e.preventDefault();
         const view = item.getAttribute('data-view');
         navigateTo(view);
+        closeSidebar();
       };
     });
 
@@ -355,6 +376,10 @@
     loadProjects();
     loadAgents();
     loadVersionTag();
+
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 768) closeSidebar();
+    });
   }
 
   async function loadVersionTag() {
@@ -384,6 +409,11 @@
   function navigateTo(view) {
     state.currentView = view;
     saveUiState({ currentView: view });
+    if (state.dashboardTimer) {
+      clearInterval(state.dashboardTimer);
+      state.dashboardTimer = null;
+    }
+    state.dashboardPaused = false;
     document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
       if (item.getAttribute('data-view') === view) {
         item.classList.add('active');
@@ -395,6 +425,8 @@
     const titleEl = document.getElementById('top-bar-title');
     const actionsEl = document.getElementById('top-bar-actions');
     actionsEl.innerHTML = '';
+    const contentEl = document.getElementById('main-content');
+    if (contentEl) contentEl.style.padding = '';
 
     if (view === 'dashboard') {
       titleEl.textContent = 'Dashboard';
@@ -456,6 +488,40 @@
 
   // --- Views Implementation ---
 
+  function formatMegabytes(bytes) {
+    return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+  }
+
+  // Refresh only the process table body so the rest of the dashboard stays still.
+  async function refreshProcessTable() {
+    const tbody = document.getElementById('process-table-body');
+    if (!tbody) return;
+    try {
+      const res = await api('/api/system/processes?limit=15');
+      const data = res.processes || {};
+      const rows = data.processes || [];
+
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-muted);">No process data available on this platform.</td></tr>';
+      } else {
+        tbody.innerHTML = rows.map((p) => `
+          <tr>
+            <td style="font-family:var(--font-mono);color:var(--text-secondary);">${p.pid}</td>
+            <td>${escapeHtml(p.name)}</td>
+            <td><span class="badge ${p.cpuPercent >= 50 ? 'badge-danger' : p.cpuPercent >= 10 ? 'badge-warning' : 'badge-muted'}">${p.cpuPercent.toFixed(1)}%</span></td>
+            <td style="font-family:var(--font-mono);">${formatMegabytes(p.rssBytes)}</td>
+            <td style="font-family:var(--font-mono);color:var(--text-secondary);">${p.memPercent.toFixed(1)}%</td>
+          </tr>
+        `).join('');
+      }
+
+      const updatedEl = document.getElementById('process-updated');
+      if (updatedEl) updatedEl.textContent = `${rows.length} of ${data.total} · ${new Date(data.timestamp).toLocaleTimeString()}`;
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="5" style="color:var(--danger-color);">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
   // 1. Dashboard View
   async function renderDashboardView() {
     const content = document.getElementById('main-content');
@@ -496,7 +562,7 @@
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
+        <div class="dash-grid-2">
           <!-- Integrations status -->
           <div class="card">
             <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">Platform Integrations</h3>
@@ -561,10 +627,51 @@
             </div>
           </div>
         </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;">
+            <div>
+              <h3 style="font-size:14px;font-weight:600;">Top Processes</h3>
+              <div id="process-summary" style="font-size:12px;color:var(--text-muted);margin-top:2px;">Live CPU &amp; memory per process</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span class="badge badge-muted" id="process-updated">—</span>
+              <button class="btn btn-secondary btn-sm" id="process-pause-btn">Pause</button>
+            </div>
+          </div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width:90px;">PID</th>
+                  <th>Process</th>
+                  <th style="width:100px;">CPU</th>
+                  <th style="width:120px;">Memory</th>
+                  <th style="width:100px;">MEM %</th>
+                </tr>
+              </thead>
+              <tbody id="process-table-body">
+                <tr><td colspan="5" style="color:var(--text-muted);">Loading processes...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       `;
 
       document.getElementById('dash-new-project-btn')?.addEventListener('click', showCreateProjectModal);
       document.getElementById('dash-clone-btn')?.addEventListener('click', showCloneProjectModal);
+
+      const pauseBtn = document.getElementById('process-pause-btn');
+      pauseBtn?.addEventListener('click', () => {
+        state.dashboardPaused = !state.dashboardPaused;
+        pauseBtn.textContent = state.dashboardPaused ? 'Resume' : 'Pause';
+      });
+
+      await refreshProcessTable();
+      state.dashboardTimer = setInterval(() => {
+        if (state.dashboardPaused || document.hidden) return;
+        refreshProcessTable();
+      }, 5000);
 
       document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
         btn.onclick = () => {
@@ -1035,12 +1142,38 @@
     const { term, fitAddon } = createXterm();
     term.open(containerEl);
 
+    const item = {
+      sessionId, name, projectId, kind, term, fitAddon,
+      ws: null, containerEl, copyMode: false, disposed: false,
+      reconnectStopped: false, reconnectTimer: null, reconnectDelay: 1000,
+    };
+
+    term.onData((data) => {
+      if (item.ws && item.ws.readyState === WebSocket.OPEN) {
+        item.ws.send(JSON.stringify({ type: 'input', data }));
+      }
+    });
+
+    term.onResize((size) => {
+      if (item.ws && item.ws.readyState === WebSocket.OPEN) {
+        item.ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+      }
+    });
+
+    enableTouchScroll(containerEl, term, () => item);
+    connectTerminalSocket(item);
+    return item;
+  }
+
+  function connectTerminalSocket(item) {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${sessionId}`);
+    const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${item.sessionId}`);
+    item.ws = ws;
 
     ws.onopen = () => {
+      item.reconnectDelay = 1000;
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+        ws.send(JSON.stringify({ type: 'resize', cols: item.term.cols, rows: item.term.rows }));
       }
     };
 
@@ -1048,34 +1181,40 @@
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'output' && msg.data) {
-          term.write(msg.data);
+          item.term.write(msg.data);
         } else if (msg.type === 'exit') {
-          term.write('\r\n\x1b[33m[Terminal process finished]\x1b[0m\r\n');
+          item.term.write('\r\n\x1b[33m[Terminal process finished]\x1b[0m\r\n');
         } else if (msg.type === 'error') {
-          term.write(`\r\n\x1b[31m[Error]: ${msg.message}\x1b[0m\r\n`);
+          item.term.write(`\r\n\x1b[31m[Error]: ${msg.message}\x1b[0m\r\n`);
+          if (/not found|unauthoriz|forbidden/i.test(msg.message || '')) {
+            item.reconnectStopped = true;
+          }
         }
       } catch {
-        term.write(event.data);
+        item.term.write(event.data);
       }
     };
 
     ws.onclose = () => {
-      term.write('\r\n\x1b[90m[Connection closed — the shell keeps running; reopen the tab to reconnect]\x1b[0m\r\n');
+      if (!item.disposed && !item.reconnectStopped) scheduleTerminalReconnect(item);
     };
+  }
 
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }));
+  function scheduleTerminalReconnect(item) {
+    if (item.disposed || item.reconnectStopped || item.reconnectTimer) return;
+    const delay = item.reconnectDelay;
+    item.reconnectDelay = Math.min(item.reconnectDelay * 2, 15000);
+    item.term.write('\r\n\x1b[90m[Connection lost — reconnecting…]\x1b[0m\r\n');
+    item.reconnectTimer = setTimeout(() => {
+      item.reconnectTimer = null;
+      if (item.disposed) return;
+      try {
+        item.term.reset();
+      } catch {
+        // Ignore
       }
-    });
-
-    term.onResize((size) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
-      }
-    });
-
-    return { sessionId, name, projectId, kind, term, fitAddon, ws, containerEl };
+      connectTerminalSocket(item);
+    }, delay);
   }
 
   // Re-attach existing containers to a freshly rendered viewport and show only
@@ -1107,6 +1246,11 @@
 
   function disposeTerminalItem(item) {
     if (!item) return;
+    item.disposed = true;
+    if (item.reconnectTimer) {
+      clearTimeout(item.reconnectTimer);
+      item.reconnectTimer = null;
+    }
     try {
       if (item.ws) item.ws.close();
       if (item.term) item.term.dispose();
@@ -1132,8 +1276,12 @@
     content.innerHTML = `
       <div class="workspace-container">
         <div class="terminal-tabs-bar" id="sys-terminal-tabs-container">
-          <button class="btn btn-secondary btn-sm" id="sys-tab-new-terminal-btn" style="margin-left:auto;">
-            + New Terminal
+          <button class="btn btn-secondary btn-sm copy-mode-btn" id="sys-copy-mode-btn" style="margin-left:auto;" title="Browse scrollback (tmux copy-mode)" disabled>
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span class="copy-mode-label">History</span>
+          </button>
+          <button class="btn btn-secondary btn-sm" id="sys-tab-new-terminal-btn">
+            +<span class="new-term-label"> New Terminal</span>
           </button>
         </div>
         <div class="terminal-view-wrapper" id="sys-terminal-viewport"></div>
@@ -1141,11 +1289,15 @@
     `;
 
     document.getElementById('sys-tab-new-terminal-btn').onclick = () => spawnSysTerminal();
+    document.getElementById('sys-copy-mode-btn').onclick = () => {
+      toggleCopyMode(() => state.sysTerminals.get(state.activeSysTerminalId), 'sys-copy-mode-btn');
+    };
 
     const viewport = document.getElementById('sys-terminal-viewport');
 
     try {
       const termRes = await api('/api/terminals?scope=global');
+      state.tmuxAvailable = !!termRes.tmuxAvailable;
       const actions = document.getElementById('top-bar-actions');
       actions.innerHTML = `<span style="font-size:12px;color:var(--text-muted);">Host shell${termRes.runAsUser ? ` (as ${escapeHtml(termRes.runAsUser)})` : ''}</span>`;
 
@@ -1209,6 +1361,7 @@
 
     mountTerminalItems(viewport, state.sysTerminals, sessionId);
     renderSysTerminalTabs();
+    updateCopyModeButton(document.getElementById('sys-copy-mode-btn'), item);
     setTimeout(() => fitTerminalItem(item), 30);
   }
 
@@ -1217,6 +1370,7 @@
     if (!tabsContainer) return;
 
     const existingNewBtn = document.getElementById('sys-tab-new-terminal-btn');
+    const tabAnchor = document.getElementById('sys-copy-mode-btn') || existingNewBtn;
     tabsContainer.querySelectorAll('.terminal-tab').forEach((el) => el.remove());
 
     for (const [id, item] of state.sysTerminals.entries()) {
@@ -1238,7 +1392,7 @@
         await closeSysTerminal(id);
       };
 
-      tabsContainer.insertBefore(tab, existingNewBtn);
+      tabsContainer.insertBefore(tab, tabAnchor);
     }
   }
 
@@ -1283,14 +1437,14 @@
     // Top action bar
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
-      <select class="form-input" id="ws-project-selector" style="padding:4px 8px;font-size:12px;width:180px;">
+      <select class="form-input ws-project-selector" id="ws-project-selector">
         ${state.projects.map((p) => `
           <option value="${p.id}" ${p.id === currentProject.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>
         `).join('')}
       </select>
       <button class="btn btn-primary btn-sm" id="ws-launch-agent-btn">
         <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        <span>Launch AI Agent</span>
+        <span class="launch-agent-label">Launch AI Agent</span>
       </button>
     `;
 
@@ -1307,8 +1461,12 @@
       <div class="workspace-container">
         <!-- Tabs bar -->
         <div class="terminal-tabs-bar" id="terminal-tabs-container">
-          <button class="btn btn-secondary btn-sm" id="tab-new-terminal-btn" style="margin-left:auto;">
-            + New Terminal
+          <button class="btn btn-secondary btn-sm copy-mode-btn" id="ws-copy-mode-btn" style="margin-left:auto;" title="Browse scrollback (tmux copy-mode)" disabled>
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span class="copy-mode-label">History</span>
+          </button>
+          <button class="btn btn-secondary btn-sm" id="tab-new-terminal-btn">
+            +<span class="new-term-label"> New Terminal</span>
           </button>
         </div>
         <!-- Terminal Body -->
@@ -1319,6 +1477,9 @@
     document.getElementById('tab-new-terminal-btn').onclick = async () => {
       await spawnNewTerminal(currentProject.id);
     };
+    document.getElementById('ws-copy-mode-btn').onclick = () => {
+      toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
+    };
 
     const viewport = document.getElementById('terminal-viewport');
 
@@ -1326,6 +1487,7 @@
     // them running server-side), then attach/mount them as tabs.
     try {
       const termRes = await api(`/api/terminals?projectId=${currentProject.id}`);
+      state.tmuxAvailable = !!termRes.tmuxAvailable;
       const alive = (termRes.sessions || []).filter((s) => s.isAlive);
 
       // Drop client-side terminals whose server session no longer exists.
@@ -1389,6 +1551,7 @@
 
     mountTerminalItems(viewport, state.terminals, sessionId, (it) => it.projectId === state.activeProjectId);
     renderTerminalTabs();
+    updateCopyModeButton(document.getElementById('ws-copy-mode-btn'), item);
     setTimeout(() => fitTerminalItem(item), 30);
   }
 
@@ -1397,6 +1560,7 @@
     if (!tabsContainer) return;
 
     const existingNewBtn = document.getElementById('tab-new-terminal-btn');
+    const tabAnchor = document.getElementById('ws-copy-mode-btn') || existingNewBtn;
 
     // Remove old tabs
     tabsContainer.querySelectorAll('.terminal-tab').forEach((el) => el.remove());
@@ -1421,7 +1585,7 @@
         await closeTerminalSession(id);
       };
 
-      tabsContainer.insertBefore(tab, existingNewBtn);
+      tabsContainer.insertBefore(tab, tabAnchor);
     }
   }
 
@@ -1443,6 +1607,88 @@
       activateTerminalSession(nextId, nextItem.name);
     } else {
       renderTerminalTabs();
+    }
+  }
+
+  function enableTouchScroll(element, term, getItem) {
+    let lastY = null;
+    let residual = 0;
+    const cellHeight = () => term._core?._renderService?.dimensions?.css?.cell?.height || 17;
+
+    element.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) {
+        lastY = null;
+        return;
+      }
+      lastY = e.touches[0].clientY;
+      residual = 0;
+    }, { passive: true });
+
+    element.addEventListener('touchmove', (e) => {
+      if (lastY === null || e.touches.length !== 1) return;
+      const y = e.touches[0].clientY;
+      residual += lastY - y;
+      lastY = y;
+      const rowHeight = cellHeight();
+      const lines = Math.trunc(residual / rowHeight);
+      if (lines !== 0) {
+        residual -= lines * rowHeight;
+        const item = getItem ? getItem() : null;
+        if (item && item.copyMode && item.ws && item.ws.readyState === WebSocket.OPEN) {
+          const seq = lines > 0 ? '\x1b[A' : '\x1b[B';
+          const count = Math.min(Math.abs(lines), 40);
+          item.ws.send(JSON.stringify({ type: 'input', data: seq.repeat(count) }));
+        } else {
+          term.scrollLines(lines);
+        }
+      }
+      e.preventDefault();
+    }, { passive: false });
+
+    const reset = () => {
+      lastY = null;
+      residual = 0;
+    };
+    element.addEventListener('touchend', reset);
+    element.addEventListener('touchcancel', reset);
+  }
+
+  function updateCopyModeButton(buttonEl, item) {
+    if (!buttonEl) return;
+    const active = !!(item && item.copyMode);
+    buttonEl.classList.toggle('active', active);
+    buttonEl.disabled = !state.tmuxAvailable;
+    const label = buttonEl.querySelector('.copy-mode-label');
+    if (label) label.textContent = active ? 'Exit history' : 'History';
+  }
+
+  async function toggleCopyMode(getItem, buttonId) {
+    const item = getItem ? getItem() : null;
+    if (!item) return;
+    const buttonEl = document.getElementById(buttonId);
+
+    if (item.copyMode) {
+      item.copyMode = false;
+      updateCopyModeButton(buttonEl, item);
+      item.term.focus();
+      await api(`/api/terminals/${item.sessionId}/copy-mode`, {
+        method: 'POST',
+        body: { action: 'exit' },
+      }).catch(() => {});
+      showToast('History scroll off.', 'info');
+      return;
+    }
+
+    try {
+      await api(`/api/terminals/${item.sessionId}/copy-mode`, {
+        method: 'POST',
+        body: { action: 'enter' },
+      });
+      item.copyMode = true;
+      updateCopyModeButton(buttonEl, item);
+      showToast('History scroll on. Swipe up/down to browse output.', 'info');
+    } catch (err) {
+      showToast(err.message, 'error');
     }
   }
 

@@ -27,6 +27,14 @@ async function systemRoutes(fastify) {
     };
   });
 
+  // Top running processes by CPU and memory usage
+  fastify.get('/api/system/processes', async (request) => {
+    const limit = request.query?.limit;
+    return {
+      processes: await nodeService.getProcesses({ limit }),
+    };
+  });
+
   // Integrations diagnostic check (tmux, git, caddy, docker)
   fastify.get('/api/system/integrations', async () => {
     const tmux = terminalManager.isTmuxAvailable();

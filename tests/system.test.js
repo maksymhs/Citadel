@@ -45,6 +45,36 @@ describe('System, Metrics & Audit Trail Tests', () => {
     assert.ok(body.node.memory.totalBytes > 0);
   });
 
+  test('GET /api/system/processes returns a limited, well-formed process list', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/system/processes?limit=5',
+      cookies: { session_id: authCookie },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    const data = body.processes;
+    assert.ok(data);
+    assert.ok(Array.isArray(data.processes));
+    assert.ok(data.processes.length <= 5);
+    assert.ok(data.total >= data.processes.length);
+    assert.ok(data.totalMemBytes > 0);
+
+    for (const proc of data.processes) {
+      assert.equal(typeof proc.pid, 'number');
+      assert.equal(typeof proc.name, 'string');
+      assert.equal(typeof proc.cpuPercent, 'number');
+      assert.equal(typeof proc.memPercent, 'number');
+      assert.equal(typeof proc.rssBytes, 'number');
+    }
+
+    // Results must be ordered by descending CPU usage.
+    const cpus = data.processes.map((p) => p.cpuPercent);
+    const sorted = [...cpus].sort((a, b) => b - a);
+    assert.deepEqual(cpus, sorted);
+  });
+
   test('GET /api/system/integrations reports availability of platform dependencies', async () => {
     const res = await app.inject({
       method: 'GET',

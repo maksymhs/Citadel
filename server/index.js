@@ -14,6 +14,7 @@ const {
 
 const { initDatabase, closeDatabase } = require('./database/db');
 const pluginLoader = require('./services/pluginLoader');
+const terminalManager = require('./services/terminalManager');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -123,6 +124,17 @@ async function buildServer(options = {}) {
 
 async function startServer() {
   const fastify = await buildServer();
+
+  // Mark sessions whose tmux/PTY did not survive the restart as closed so the
+  // UI reattaches to live terminals instead of resurrecting dead ones.
+  try {
+    const { reconciled } = terminalManager.reconcileStaleSessions();
+    if (reconciled > 0) {
+      fastify.log.info(`[Citadel] Reconciled ${reconciled} stale terminal session(s).`);
+    }
+  } catch {
+    // Non-fatal: reconciliation is best-effort.
+  }
 
   // Graceful shutdown
   const signals = ['SIGINT', 'SIGTERM'];

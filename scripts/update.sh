@@ -89,6 +89,20 @@ else
   DATA_DIR="$DIAG_DATA_DIR" node scripts/doctor.js || true
 fi
 
+# Refresh the installed systemd unit from the repo so unit changes (e.g.
+# KillMode=process, which keeps tmux terminals alive across restarts) take
+# effect on update. Local overrides belong in a *.service.d drop-in, which this
+# does not touch.
+UNIT_SRC="$APP_DIR/scripts/citadel.service"
+UNIT_DST="/etc/systemd/system/${SERVICE}.service"
+if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1 \
+   && [ -f "$UNIT_SRC" ] && [ -f "$UNIT_DST" ] \
+   && ! cmp -s "$UNIT_SRC" "$UNIT_DST"; then
+  echo "[citadel-update] Refreshing ${SERVICE}.service unit..."
+  install -m 0644 "$UNIT_SRC" "$UNIT_DST"
+  systemctl daemon-reload
+fi
+
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
   echo "[citadel-update] Restarting $SERVICE..."
   systemctl restart --no-block "$SERVICE"

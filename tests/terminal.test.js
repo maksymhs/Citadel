@@ -95,4 +95,25 @@ describe('Terminal & Persistent Session Tests', () => {
     // No admin user configured means no privilege escalation.
     assert.equal(terminalManager._buildRunAs(null, null), null);
   });
+
+  test('tmuxCopyMode reports a clear error for unknown sessions', () => {
+    const res = terminalManager.tmuxCopyMode('missing-session-id', 'enter');
+    assert.equal(res.success, false);
+    assert.ok(res.error);
+  });
+
+  test('tmuxCopyMode enter/exit works on a tmux-backed session', async () => {
+    if (!terminalManager.isTmuxAvailable()) return;
+
+    const session = terminalManager.createSession({ name: 'Copy Mode Terminal', cwd: projectDir1 });
+    await new Promise((r) => setTimeout(r, 300));
+
+    const enter = terminalManager.tmuxCopyMode(session.sessionId, 'enter');
+    assert.equal(enter.success, true);
+
+    const exit = terminalManager.tmuxCopyMode(session.sessionId, 'exit');
+    assert.equal(exit.success, true);
+
+    terminalManager.killSession(session.sessionId);
+  });
 });

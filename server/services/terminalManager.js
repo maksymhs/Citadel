@@ -122,6 +122,49 @@ class TerminalManager {
   }
 
   /**
+   * Resolve the tmux session name backing a Citadel session id.
+   */
+  _resolveTmuxSessionName(sessionId) {
+    const active = this.activePtySessions.get(sessionId);
+    if (active) return active.tmuxSession;
+    try {
+      const db = getDatabase();
+      const row = db.prepare('SELECT tmux_session FROM term_sessions WHERE id = ?').get(sessionId);
+      return row ? row.tmux_session : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Enter or leave tmux copy-mode for a session, enabling scrollback browsing.
+   */
+  tmuxCopyMode(sessionId, action = 'enter') {
+    if (!this.isTmuxAvailable()) {
+      return { success: false, error: 'tmux is not available on this host.' };
+    }
+    const target = this._resolveTmuxSessionName(sessionId);
+    if (!target || !this.hasTmuxSession(target)) {
+      return { success: false, error: 'This session is not backed by an active tmux session.' };
+    }
+
+    const args = action === 'exit'
+      ? ['send-keys', '-t', target, '-X', 'cancel']
+      : ['copy-mode', '-t', target];
+
+    try {
+      const res = spawnSync(this.getTmuxPath(), args, { stdio: 'pipe' });
+      if (res.status !== 0) {
+        const stderr = (res.stderr || '').toString().trim();
+        return { success: false, error: stderr || 'tmux command failed.' };
+      }
+      return { success: true, action, tmuxSession: target };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Get or create a terminal session for a project
    */
   createSession({ projectId = null, name = 'Terminal', cwd = null, agentId = null, cols = 80, rows = 24 }) {
@@ -341,6 +384,14 @@ class TerminalManager {
         command: runAs ? runAs.command : null,
         args: runAs ? runAs.args : [],
       });
+
+      // Reattaching revives the record even if it had been marked closed.
+      try {
+        db.prepare("UPDATE term_sessions SET status = 'active', last_active = ? WHERE id = ?")
+          .run(new Date().toISOString(), sessionRow.id);
+      } catch {
+        // Ignore DB errors; the PTY is already attached.
+      }
     }
 
     sessionData.clients.add(ws);
@@ -413,6 +464,32 @@ class TerminalManager {
     db.prepare("UPDATE term_sessions SET status = 'closed' WHERE id = ?").run(sessionId);
 
     return { success: true, sessionId };
+  }
+
+  /**
+   * Reconcile persisted sessions on startup. A session marked active whose
+   * in-memory PTY and backing tmux session are both gone can no longer be
+   * resumed; mark it closed so the UI does not resurrect a dead terminal as an
+   * empty shell after a service restart.
+   */
+  reconcileStaleSessions() {
+    const db = getDatabase();
+    let rows;
+    try {
+      rows = db.prepare("SELECT id, tmux_session FROM term_sessions WHERE status = 'active'").all();
+    } catch {
+      return { reconciled: 0 };
+    }
+
+    const closeStmt = db.prepare("UPDATE term_sessions SET status = 'closed' WHERE id = ?");
+    let reconciled = 0;
+    for (const row of rows) {
+      if (this.activePtySessions.has(row.id)) continue;
+      if (this.hasTmuxSession(row.tmux_session)) continue;
+      closeStmt.run(row.id);
+      reconciled += 1;
+    }
+    return { reconciled };
   }
 
   /**

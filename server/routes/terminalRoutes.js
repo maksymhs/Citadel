@@ -60,6 +60,28 @@ async function terminalRoutes(fastify) {
     }
   });
 
+  // Toggle tmux copy-mode (scrollback browsing) for a session
+  fastify.post('/api/terminals/:id/copy-mode', async (request, reply) => {
+    const sessionId = request.params.id;
+    const action = request.body?.action === 'exit' ? 'exit' : 'enter';
+
+    const result = terminalManager.tmuxCopyMode(sessionId, action);
+    if (!result.success) {
+      return reply.status(400).send({ error: result.error });
+    }
+
+    auditService.logAction({
+      userId: request.user.id,
+      action: action === 'exit' ? 'terminal_copy_mode_exit' : 'terminal_copy_mode_enter',
+      targetType: 'terminal',
+      targetId: sessionId,
+      details: { tmuxSession: result.tmuxSession },
+      ip: request.ip,
+    });
+
+    return result;
+  });
+
   // Kill terminal session
   fastify.delete('/api/terminals/:id', async (request, reply) => {
     const sessionId = request.params.id;

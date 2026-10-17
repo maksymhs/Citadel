@@ -28,9 +28,39 @@ function wsTerminalRoutes(fastify) {
     }
 
     // 3. Attach client to the terminal manager
+    startHeartbeat(socket);
     const terminalSessionId = req.params.sessionId;
     terminalManager.attachClient(terminalSessionId, socket);
   });
+}
+
+function startHeartbeat(socket, intervalMs = 30000) {
+  socket.isAlive = true;
+  socket.on('pong', () => {
+    socket.isAlive = true;
+  });
+
+  const timer = setInterval(() => {
+    if (socket.isAlive === false) {
+      clearInterval(timer);
+      try {
+        socket.terminate();
+      } catch {
+        // Ignore
+      }
+      return;
+    }
+    socket.isAlive = false;
+    try {
+      socket.ping();
+    } catch {
+      // Ignore
+    }
+  }, intervalMs);
+
+  if (typeof timer.unref === 'function') timer.unref();
+
+  socket.on('close', () => clearInterval(timer));
 }
 
 module.exports = wsTerminalRoutes;

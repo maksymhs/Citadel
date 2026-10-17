@@ -17,6 +17,10 @@ Environment=LOGS_DIR=/srv/citadel/logs
 ExecStart=/usr/bin/node server/index.js
 Restart=always
 RestartSec=5
+# Keep detached tmux terminals alive across service restarts/updates: signal
+# only the main node process, leaving the tmux server (and its shells) running
+# so the UI can reattach instead of losing every session on each restart.
+KillMode=process
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=citadel
