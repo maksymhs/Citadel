@@ -46,6 +46,23 @@ else
   SUDO=""
 fi
 
+# Helper: run a shell command as the Citadel service user (RUN_USER), used once
+# that user exists. Falls back gracefully depending on how we obtained privileges.
+run_as_service_user() {
+  local cmd="$1"
+  if [ "$(id -u)" -eq 0 ]; then
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u "$RUN_USER" -- bash -c "$cmd"
+    else
+      su -s /bin/bash "$RUN_USER" -c "$cmd"
+    fi
+  elif [ "$HAS_SUDO" = true ]; then
+    $SUDO -u "$RUN_USER" bash -c "$cmd"
+  else
+    bash -c "$cmd"
+  fi
+}
+
 # 2. Operating System and Architecture Check
 ARCH=$(uname -m)
 OS=$(uname -s)
@@ -163,10 +180,14 @@ if [ "$CHECK_ONLY" = true ]; then
   echo "[6/8] Native dependencies and local assets: skipped (check mode)."
 else
   echo "[6/8] Installing native dependencies and local assets (0 CDNs)..."
-  cd "$APP_DIR"
-  npm install --omit=dev
-  node scripts/copy-vendor.js
-  node scripts/doctor.js
+  # Run as the service user so node_modules/vendor files are owned by the same
+  # account that systemd runs the server as, and so the working directory is
+  # accessible even when its parent is not world-traversable.
+  run_as_service_user "cd '$APP_DIR' && npm install --omit=dev && node scripts/copy-vendor.js && node scripts/doctor.js"
+  # Re-assert ownership in case anything above was created with different perms.
+  if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
+    $SUDO chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
+  fi
 fi
 
 # 8. systemd service configuration and startup
