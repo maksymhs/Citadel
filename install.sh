@@ -158,7 +158,11 @@ else
     echo "      Syncing local Citadel files to $APP_DIR..."
     $SUDO cp -r "$SRC_DIR"/* "$APP_DIR"/ 2>/dev/null || true
     $SUDO cp -r "$SRC_DIR"/.env.example "$APP_DIR"/.env.example 2>/dev/null || true
-  elif [ ! -f "$APP_DIR/package.json" ]; then
+  elif $SUDO test -d "$APP_DIR/.git"; then
+    echo "      Updating existing Citadel clone in $APP_DIR (branch $REPO_BRANCH)..."
+    $SUDO git -C "$APP_DIR" fetch --depth 1 origin "$REPO_BRANCH"
+    $SUDO git -C "$APP_DIR" reset --hard "origin/$REPO_BRANCH"
+  elif ! $SUDO test -f "$APP_DIR/package.json"; then
     echo "      Cloning Citadel ($REPO_BRANCH) from $REPO_URL..."
     if [ "$(id -u)" -eq 0 ]; then
       git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$APP_DIR"
