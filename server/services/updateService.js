@@ -56,6 +56,79 @@ function getVersionInfo() {
   };
 }
 
+// What the updater actually deploys: the head of the tracked branch and the
+// version declared in its package.json. This is authoritative — a tag that is
+// not reachable from the branch would be irrelevant to the self-updater.
+async function fetchRemoteBranch(headers) {
+  const [commitRes, pkgRes] = await Promise.all([
+    fetch(`https://api.github.com/repos/${UPDATE_REPO}/commits/${encodeURIComponent(UPDATE_BRANCH)}`, { headers }),
+    fetch(`https://raw.githubusercontent.com/${UPDATE_REPO}/${encodeURIComponent(UPDATE_BRANCH)}/package.json`, { headers }),
+  ]);
+  let commit = null;
+  let url = null;
+  let date = null;
+  let version = null;
+  if (commitRes.ok) {
+    const c = await commitRes.json();
+    if (c && c.sha) {
+      commit = c.sha;
+      url = c.html_url || `https://github.com/${UPDATE_REPO}/commit/${commit}`;
+      date = c.commit && c.commit.committer ? c.commit.committer.date : null;
+    }
+  }
+  if (pkgRes.ok) {
+    try {
+      const pkg = await pkgRes.json();
+      if (pkg && pkg.version) version = stripV(pkg.version);
+    } catch {
+      // Ignore malformed package.json response.
+    }
+  }
+  return { commit, url, date, version };
+}
+
+// Fallback when the branch is unreachable: pick the highest version-like tag
+// (or the flagged release if there are no tags).
+async function fetchLatestTag(headers) {
+  let candidates = [];
+  const tagsRes = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/tags?per_page=100`, { headers });
+  if (tagsRes.ok) {
+    const tags = await tagsRes.json();
+    if (Array.isArray(tags)) {
+      candidates = tags
+        .map((t) => (t ? t.name : null))
+        .filter((name) => /^v?\d+\.\d+/.test(String(name || '')))
+        .map((name) => ({
+          version: stripV(name),
+          name,
+          url: `https://github.com/${UPDATE_REPO}/releases/tag/${encodeURIComponent(name)}`,
+          publishedAt: null,
+        }));
+    }
+  }
+  if (candidates.length === 0) {
+    const releaseRes = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, { headers });
+    if (releaseRes.ok) {
+      const rel = await releaseRes.json();
+      if (rel && rel.tag_name) {
+        candidates.push({
+          version: stripV(rel.tag_name),
+          name: rel.name || rel.tag_name,
+          url: rel.html_url,
+          publishedAt: rel.published_at || null,
+        });
+      }
+    }
+  }
+  let latest = null;
+  for (const candidate of candidates) {
+    if (!latest || compareVersions(candidate.version, latest.version) > 0) {
+      latest = candidate;
+    }
+  }
+  return latest;
+}
+
 async function checkForUpdates({ force = false } = {}) {
   const now = Date.now();
   if (!force && cache.data && now - cache.at < CACHE_TTL_MS) {
@@ -64,7 +137,9 @@ async function checkForUpdates({ force = false } = {}) {
 
   const result = {
     version: APP_VERSION,
+    commit: getCurrentCommit(),
     latest: null,
+    latestCommit: null,
     releaseName: null,
     releaseUrl: null,
     publishedAt: null,
@@ -74,57 +149,26 @@ async function checkForUpdates({ force = false } = {}) {
 
   const headers = { 'User-Agent': 'Citadel', Accept: 'application/vnd.github+json' };
   try {
-    // GitHub's /releases/latest only returns the single release flagged as
-    // "latest", which goes stale whenever newer versions are published as plain
-    // tags (as this repo does). Read every tag, keep the ones that look like a
-    // version, and pick the highest one instead.
-    let candidates = [];
-
-    const tagsRes = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/tags?per_page=100`, { headers });
-    if (tagsRes.ok) {
-      const tags = await tagsRes.json();
-      if (Array.isArray(tags)) {
-        candidates = tags
-          .map((t) => (t ? t.name : null))
-          .filter((name) => /^v?\d+\.\d+/.test(String(name || '')))
-          .map((name) => ({
-            version: stripV(name),
-            name,
-            url: `https://github.com/${UPDATE_REPO}/releases/tag/${encodeURIComponent(name)}`,
-            publishedAt: null,
-          }));
+    const remote = await fetchRemoteBranch(headers);
+    if (remote.version || remote.commit) {
+      result.latest = remote.version || APP_VERSION;
+      result.latestCommit = remote.commit ? remote.commit.slice(0, 7) : null;
+      result.releaseName = remote.version ? `v${remote.version}` : result.latestCommit;
+      result.releaseUrl = remote.url;
+      result.publishedAt = remote.date;
+      const localCommit = result.commit;
+      const commitDiffers = Boolean(remote.commit && localCommit && !remote.commit.startsWith(localCommit));
+      const versionNewer = Boolean(remote.version && compareVersions(remote.version, APP_VERSION) > 0);
+      result.updateAvailable = versionNewer || commitDiffers;
+    } else {
+      const latest = await fetchLatestTag(headers);
+      if (latest) {
+        result.latest = latest.version;
+        result.releaseName = latest.name;
+        result.releaseUrl = latest.url;
+        result.publishedAt = latest.publishedAt;
+        result.updateAvailable = compareVersions(latest.version, APP_VERSION) > 0;
       }
-    }
-
-    // Fall back to the published release if no usable tags were found.
-    if (candidates.length === 0) {
-      const releaseRes = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, { headers });
-      if (releaseRes.ok) {
-        const rel = await releaseRes.json();
-        if (rel && rel.tag_name) {
-          candidates.push({
-            version: stripV(rel.tag_name),
-            name: rel.name || rel.tag_name,
-            url: rel.html_url,
-            publishedAt: rel.published_at || null,
-          });
-        }
-      }
-    }
-
-    let latest = null;
-    for (const candidate of candidates) {
-      if (!latest || compareVersions(candidate.version, latest.version) > 0) {
-        latest = candidate;
-      }
-    }
-
-    if (latest) {
-      result.latest = latest.version;
-      result.releaseName = latest.name;
-      result.releaseUrl = latest.url;
-      result.publishedAt = latest.publishedAt;
-      result.updateAvailable = compareVersions(latest.version, APP_VERSION) > 0;
     }
   } catch (err) {
     result.error = err.message;

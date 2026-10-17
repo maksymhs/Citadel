@@ -2145,7 +2145,10 @@
               statusEl.textContent = 'No published releases or tags found yet.';
             } else if (u.updateAvailable) {
               statusEl.style.color = 'var(--warning-color)';
-              statusEl.innerHTML = `Update available: <strong>v${escapeHtml(u.latest)}</strong>${u.releaseUrl ? ` — <a href="${escapeHtml(u.releaseUrl)}" target="_blank" rel="noopener" style="color:var(--accent-color);">release notes</a>` : ''}`;
+              const label = (u.latest && u.latest !== u.version)
+                ? `v${escapeHtml(u.latest)}`
+                : `commit ${escapeHtml(u.latestCommit || u.latest || '')}`;
+              statusEl.innerHTML = `Update available: <strong>${label}</strong>${u.releaseUrl ? ` — <a href="${escapeHtml(u.releaseUrl)}" target="_blank" rel="noopener" style="color:var(--accent-color);">view changes</a>` : ''}`;
             } else {
               statusEl.style.color = 'var(--success-color)';
               statusEl.textContent = `You are running the latest version (v${u.latest}).`;
