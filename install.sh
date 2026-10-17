@@ -21,6 +21,7 @@ echo -e "${NC}"
 CHECK_ONLY=false
 ADMIN_TERMINAL_USER=""
 ENABLE_UPDATER=false
+KIOSK_USER=""
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
@@ -34,6 +35,12 @@ for arg in "$@"; do
       ;;
     --enable-updater)
       ENABLE_UPDATER=true
+      ;;
+    --kiosk)
+      KIOSK_USER="${KIOSK_USER:-${SUDO_USER:-ubuntu}}"
+      ;;
+    --kiosk=*)
+      KIOSK_USER="${arg#*=}"
       ;;
   esac
 done
@@ -49,6 +56,10 @@ fi
 
 if [ "$ENABLE_UPDATER" = true ]; then
   echo -e "${YELLOW}[UPDATER] Installing the privileged in-panel updater (root-owned helper).${NC}\n"
+fi
+
+if [ -n "$KIOSK_USER" ]; then
+  echo -e "${YELLOW}[KIOSK] Configuring a full-screen panel on this machine's display for user '$KIOSK_USER'.${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)
@@ -324,6 +335,18 @@ EOF
     $SUDO chmod 0755 /usr/local/bin/citadel-git-credential
     $SUDO git config --system credential.helper /usr/local/bin/citadel-git-credential
   fi
+
+  # Optional: dedicated full-screen kiosk panel (opt-in via --kiosk). Installs a
+  # minimal Wayland compositor + browser and autostarts the panel on tty1.
+  if [ -n "$KIOSK_USER" ]; then
+    echo "      Configuring kiosk display for '$KIOSK_USER'..."
+    if [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/kiosk-setup.sh" ]; then
+      $SUDO bash "$APP_DIR/scripts/kiosk-setup.sh" --user "$KIOSK_USER" \
+        || echo -e "${YELLOW}      Kiosk setup skipped (see errors above).${NC}"
+    else
+      echo -e "${YELLOW}      Skipping kiosk setup (requires Linux + systemd + scripts/kiosk-setup.sh).${NC}"
+    fi
+  fi
 fi
 
 # 9. Health check
@@ -371,6 +394,9 @@ else
   fi
   if [ "$ENABLE_UPDATER" = true ]; then
     echo "  In-panel Updater:      enabled (System view → Update)"
+  fi
+  if [ -n "$KIOSK_USER" ]; then
+    echo "  Kiosk Display:         enabled for '$KIOSK_USER' (reboot to show the panel)"
   fi
   echo ""
   echo "  Mandatory First Step:"
