@@ -68,6 +68,22 @@ Both methods are idempotent. The installer:
 
 You can override the source repository or branch with the `CITADEL_REPO_URL` and `CITADEL_REPO_BRANCH` environment variables.
 
+### Managing Citadel (`citadel` CLI)
+
+Once installed, a small `citadel` command is available system-wide:
+
+```bash
+citadel status     # service, version, panel URL and health
+citadel url        # print the panel URL
+citadel qr         # scannable QR code for the panel URL
+citadel logs       # follow the service logs
+citadel restart    # restart the service
+citadel update     # update to the latest version
+citadel kiosk      # set up the full-screen kiosk (add --remove to undo)
+```
+
+`citadel update` and `citadel kiosk` need root and re-invoke `sudo` automatically.
+
 ### Privileged System Terminal (opt-in)
 
 By default every terminal in the panel runs as the unprivileged service user. To let the **System Terminal** run as a privileged account (so you can administer the whole VPS from the panel):
@@ -99,6 +115,17 @@ sudo bash install.sh --kiosk=ubuntu     # or a specific OS user
 ```
 
 This installs a minimal Wayland compositor (`cage`) and a browser, autologins the chosen user on `tty1`, autostarts the panel full-screen, and disables idle/suspend. `scripts/kiosk-setup.sh` is idempotent and also supports `--check` and `--remove`.
+
+### Local network access (opt-in)
+
+By default the panel listens on `127.0.0.1` only, so other devices cannot reach it. To expose it on the local network (e.g. a phone on the same Wi-Fi):
+
+```bash
+sudo bash install.sh --lan                 # bind all interfaces + open the firewall
+sudo bash install.sh --host=192.168.1.10   # or bind a specific address
+```
+
+This sets `HOST`, whitelists the LAN origin in `ALLOWED_ORIGINS` (required by the terminal WebSocket) and opens the port in `ufw` when active. For access from **any** network without exposing the host, prefer Tailscale (see *Access from your phone* below).
 
 ### Synchronized updates across hosts
 

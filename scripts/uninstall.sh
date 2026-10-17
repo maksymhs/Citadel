@@ -51,6 +51,7 @@ $SUDO rm -f /etc/sudoers.d/citadel-terminal /etc/sudoers.d/citadel-updater
 echo "Removing helper scripts..."
 $SUDO rm -f /usr/local/sbin/citadel-update /usr/local/sbin/.citadel-update.new
 $SUDO rm -f /usr/local/bin/citadel-git-credential
+$SUDO rm -f /usr/local/bin/citadel
 
 if command -v git >/dev/null 2>&1; then
   HELPER="$($SUDO git config --system --get credential.helper 2>/dev/null || true)"

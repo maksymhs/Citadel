@@ -22,6 +22,9 @@ CHECK_ONLY=false
 ADMIN_TERMINAL_USER=""
 ENABLE_UPDATER=false
 KIOSK_USER=""
+LAN_ACCESS=false
+HOST_ADDR=""
+PANEL_PORT=3000
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
@@ -42,6 +45,13 @@ for arg in "$@"; do
     --kiosk=*)
       KIOSK_USER="${arg#*=}"
       ;;
+    --lan)
+      LAN_ACCESS=true
+      ;;
+    --host=*)
+      HOST_ADDR="${arg#*=}"
+      LAN_ACCESS=true
+      ;;
   esac
 done
 
@@ -60,6 +70,11 @@ fi
 
 if [ -n "$KIOSK_USER" ]; then
   echo -e "${YELLOW}[KIOSK] Configuring a full-screen panel on this machine's display for user '$KIOSK_USER'.${NC}\n"
+fi
+
+if [ "$LAN_ACCESS" = true ]; then
+  echo -e "${YELLOW}[LAN] Exposing the panel on the local network (${HOST_ADDR:-0.0.0.0}:$PANEL_PORT)."
+  echo -e "      Other devices on the same network will be able to reach it.${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)
@@ -219,6 +234,38 @@ else
     $SUDO cp "$APP_DIR/.env.example" "$APP_DIR/.env" 2>/dev/null || true
   fi
 
+  # Optional: expose the panel on the local network (opt-in via --lan/--host).
+  # Binds all interfaces and whitelists the LAN origin so the terminal WebSocket
+  # accepts connections from other devices (phones) on the same network.
+  if [ "$LAN_ACCESS" = true ] && $SUDO test -f "$APP_DIR/.env"; then
+    BIND_ADDR="${HOST_ADDR:-0.0.0.0}"
+    if $SUDO grep -q '^HOST=' "$APP_DIR/.env"; then
+      $SUDO sed -i "s|^HOST=.*|HOST=$BIND_ADDR|" "$APP_DIR/.env"
+    else
+      echo "HOST=$BIND_ADDR" | $SUDO tee -a "$APP_DIR/.env" >/dev/null
+    fi
+    LAN_IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    if [ -n "$LAN_IP_ADDR" ]; then
+      LAN_ORIGIN="http://$LAN_IP_ADDR:$PANEL_PORT"
+      CURRENT_ORIGINS="$($SUDO grep '^ALLOWED_ORIGINS=' "$APP_DIR/.env" | head -n1 | cut -d= -f2- || true)"
+      case ",$CURRENT_ORIGINS," in
+        *",$LAN_ORIGIN,"*) : ;;
+        *)
+          if [ -n "$CURRENT_ORIGINS" ]; then
+            $SUDO sed -i "s|^ALLOWED_ORIGINS=.*|ALLOWED_ORIGINS=$CURRENT_ORIGINS,$LAN_ORIGIN|" "$APP_DIR/.env"
+          else
+            echo "ALLOWED_ORIGINS=http://localhost:$PANEL_PORT,http://127.0.0.1:$PANEL_PORT,$LAN_ORIGIN" | $SUDO tee -a "$APP_DIR/.env" >/dev/null
+          fi
+          ;;
+      esac
+    fi
+    if command -v ufw >/dev/null 2>&1 && $SUDO ufw status 2>/dev/null | grep -qi 'Status: active'; then
+      $SUDO ufw allow "$PANEL_PORT/tcp" >/dev/null 2>&1 || true
+      echo "      Opened firewall port $PANEL_PORT/tcp (ufw)."
+    fi
+    echo "      Local network access enabled (http://${LAN_IP_ADDR:-<lan-ip>}:$PANEL_PORT)."
+  fi
+
   # Permissions
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
     $SUDO chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
@@ -334,6 +381,18 @@ DATA_DIR="$DATA_DIR" DATABASE_PATH="$DATA_DIR/citadel.db" exec node "$APP_DIR/sc
 EOF
     $SUDO chmod 0755 /usr/local/bin/citadel-git-credential
     $SUDO git config --system credential.helper /usr/local/bin/citadel-git-credential
+  fi
+
+  # Friendly management CLI: `citadel status|url|qr|logs|restart|update|kiosk`.
+  # A thin launcher so repository updates to scripts/citadel take effect at once.
+  if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/citadel" ]; then
+    $SUDO tee /usr/local/bin/citadel >/dev/null <<EOF
+#!/bin/sh
+# Citadel CLI launcher (managed by install.sh)
+exec bash "$APP_DIR/scripts/citadel" "\$@"
+EOF
+    $SUDO chmod 0755 /usr/local/bin/citadel
+    echo "      Management CLI installed: citadel status | url | qr | kiosk | update"
   fi
 
   # Optional: dedicated full-screen kiosk panel (opt-in via --kiosk). Installs a

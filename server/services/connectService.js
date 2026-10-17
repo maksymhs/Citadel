@@ -2,7 +2,7 @@ const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const qrcode = require('qrcode-generator');
 
-const { PUBLIC_URL, PORT } = require('../config');
+const { PUBLIC_URL, PORT, HOST } = require('../config');
 
 const CACHE_TTL_MS = 60 * 1000;
 let cache = null;
@@ -43,6 +43,10 @@ function detectLanIp() {
   return privateIp || candidates[0] || null;
 }
 
+function isLoopbackHost(host) {
+  return !host || host === '127.0.0.1' || host === '::1' || host === 'localhost';
+}
+
 function resolve() {
   const now = Date.now();
   if (cache && now - cacheAt < CACHE_TTL_MS) return cache;
@@ -53,11 +57,16 @@ function resolve() {
     result = { url: configured, source: 'configured' };
   } else {
     result = detectTailscale();
+    if (!result && !isLoopbackHost(HOST)) {
+      if (HOST !== '0.0.0.0' && HOST !== '::') {
+        result = { url: `http://${HOST}:${PORT}`, source: 'lan' };
+      } else {
+        const ip = detectLanIp();
+        result = ip ? { url: `http://${ip}:${PORT}`, source: 'lan' } : null;
+      }
+    }
     if (!result) {
-      const ip = detectLanIp();
-      result = ip
-        ? { url: `http://${ip}:${PORT}`, source: 'lan' }
-        : { url: `http://127.0.0.1:${PORT}`, source: 'localhost' };
+      result = { url: `http://127.0.0.1:${PORT}`, source: 'localhost' };
     }
   }
 

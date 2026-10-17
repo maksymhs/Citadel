@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Citadel — friendly management CLI
+#   citadel status | url | qr | logs | restart | update | kiosk | help
+# Installed as /usr/local/bin/citadel (a thin launcher for this file).
+# ==============================================================================
+set -euo pipefail
+
+APP_DIR="${CITADEL_APP_DIR:-/srv/citadel/app}"
+SERVICE="${CITADEL_SERVICE:-citadel}"
+UPDATER="${CITADEL_UPDATER_PATH:-/usr/local/sbin/citadel-update}"
+PORT="${PORT:-3000}"
+
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    echo "ERROR: this action needs root (run with sudo)." >&2
+    exit 1
+  fi
+}
+
+usage() {
+  cat <<EOF
+Citadel CLI
+
+  citadel status         Service, version, URL and health
+  citadel url            Print the panel URL
+  citadel qr             Print a scannable QR code for the panel URL
+  citadel logs           Follow the service logs (journalctl -f)
+  citadel restart        Restart the service
+  citadel update         Update to the latest version
+  citadel kiosk          Set up the full-screen kiosk (add --remove to undo)
+  citadel help           Show this help
+
+Environment overrides: CITADEL_APP_DIR, CITADEL_SERVICE, CITADEL_UPDATER_PATH, PORT
+EOF
+}
+
+panel_url() {
+  if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/server/services/connectService.js" ]; then
+    (cd "$APP_DIR" && node -e "try{process.stdout.write(require('./server/services/connectService').getConnectInfo().url)}catch(e){process.stdout.write('http://127.0.0.1:'+process.env.PORT)}" 2>/dev/null) \
+      || echo "http://127.0.0.1:$PORT"
+  else
+    echo "http://127.0.0.1:$PORT"
+  fi
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  status)
+    active="$(systemctl is-active "$SERVICE" 2>/dev/null || echo unknown)"
+    version="$(node -e "process.stdout.write(require('$APP_DIR/package.json').version)" 2>/dev/null || echo '?')"
+    health="not checked"
+    if command -v curl >/dev/null 2>&1; then
+      if curl -fsS --max-time 3 "http://127.0.0.1:$PORT/api/auth/status" >/dev/null 2>&1; then
+        health="OK"
+      else
+        health="not responding"
+      fi
+    fi
+    echo "Citadel"
+    echo "  Service:  $active"
+    echo "  Version:  v$version"
+    echo "  URL:      $(panel_url)"
+    echo "  Health:   $health"
+    ;;
+
+  url)
+    panel_url
+    ;;
+
+  qr)
+    url="$(panel_url)"
+    echo "Panel URL: $url"
+    (cd "$APP_DIR" && node scripts/print-qr.js "$url")
+    ;;
+
+  logs)
+    as_root journalctl -u "$SERVICE" -f
+    ;;
+
+  restart)
+    as_root systemctl restart "$SERVICE"
+    echo "Restarted $SERVICE."
+    ;;
+
+  update)
+    as_root "$UPDATER" "$@"
+    ;;
+
+  kiosk)
+    as_root bash "$APP_DIR/scripts/kiosk-setup.sh" "$@"
+    ;;
+
+  help|--help|-h|"")
+    usage
+    ;;
+
+  *)
+    echo "Unknown command: $cmd" >&2
+    echo "" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
