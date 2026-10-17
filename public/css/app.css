@@ -1208,3 +1208,32 @@ html.is-mobile-ui .files-table .file-name {
   padding: 2px 0;
   font-size: 15px;
 }
+
+/* --- Connect from your phone (QR) --- */
+.connect-grid {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.connect-qr {
+  flex-shrink: 0;
+  line-height: 0;
+  background: #ffffff;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.connect-qr svg {
+  width: 148px;
+  height: 148px;
+  display: block;
+}
+
+@media (max-width: 768px) {
+  .connect-grid {
+    flex-direction: column;
+  }
+}

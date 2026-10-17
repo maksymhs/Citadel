@@ -9,6 +9,7 @@ const proxyProvider = require('../services/proxyProvider');
 const dockerService = require('../services/dockerService');
 const updateService = require('../services/updateService');
 const auditService = require('../services/auditService');
+const connectService = require('../services/connectService');
 
 async function systemRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
@@ -63,6 +64,11 @@ async function systemRoutes(fastify) {
   // Running application version and updater availability
   fastify.get('/api/system/version', async () => {
     return { version: updateService.getVersionInfo() };
+  });
+
+  // Remote-access URL + QR code so a phone can open the panel
+  fastify.get('/api/system/connect', async () => {
+    return { connect: connectService.getConnectInfo() };
   });
 
   // Check GitHub for a newer release/tag

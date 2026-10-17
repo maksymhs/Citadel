@@ -2302,15 +2302,24 @@
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading diagnostics and audit logs...</div>';
 
     try {
-      const [nodeRes, auditRes, versionRes] = await Promise.all([
+      const [nodeRes, auditRes, versionRes, connectRes] = await Promise.all([
         api('/api/system/node'),
         api('/api/audit?limit=25'),
         api('/api/system/version'),
+        api('/api/system/connect'),
       ]);
 
       const node = nodeRes.node;
       const logs = auditRes.logs || [];
       const ver = versionRes.version || {};
+      const connect = connectRes.connect || {};
+
+      const connectNote = {
+        configured: 'Using the public URL configured via <code>CITADEL_PUBLIC_URL</code>.',
+        tailscale: 'Reachable from anywhere over your Tailscale network. Install Tailscale on the phone and sign in to the same account.',
+        lan: '<span style="color:var(--warning-color);">This is a LAN address — it only works on the same Wi-Fi.</span> For access from anywhere, set up Tailscale (<code>tailscale serve</code>) or define <code>CITADEL_PUBLIC_URL</code>.',
+        localhost: '<span style="color:var(--warning-color);">Only reachable on this machine.</span> Set up Tailscale or define <code>CITADEL_PUBLIC_URL</code> for remote access.',
+      }[connect.source] || '';
 
       content.innerHTML = `
         <div class="card" style="margin-bottom:24px;">
@@ -2332,6 +2341,25 @@
             <div style="display:flex;gap:8px;flex-shrink:0;">
               <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
               ${ver.updaterAvailable ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <h3 style="font-size:16px;font-weight:600;">Connect from your phone</h3>
+          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
+            Scan this code with a phone to open the panel on another device.
+          </p>
+          <div class="connect-grid">
+            <div class="connect-qr">${connect.qrSvg || ''}</div>
+            <div style="min-width:0;flex:1;">
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Address</div>
+              <a href="${escapeHtml(connect.url || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(connect.url || '')}</a>
+              <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-secondary btn-sm" id="copy-connect-url">Copy link</button>
+                ${connect.source === 'lan' || connect.source === 'localhost' ? '<button class="btn btn-secondary btn-sm" id="connect-help-btn">Remote access help</button>' : ''}
+              </div>
+              <div style="margin-top:10px;font-size:12px;color:var(--text-secondary);line-height:1.5;">${connectNote}</div>
             </div>
           </div>
         </div>
@@ -2442,6 +2470,39 @@
             statusEl.style.color = 'var(--danger-color)';
             statusEl.textContent = `Error: ${err.message}`;
           }
+        };
+      }
+
+      const copyBtn = document.getElementById('copy-connect-url');
+      if (copyBtn) {
+        copyBtn.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(connect.url || '');
+            showToast('Link copied.', 'success');
+          } catch {
+            showToast('Could not copy the link.', 'error');
+          }
+        };
+      }
+
+      const connectHelpBtn = document.getElementById('connect-help-btn');
+      if (connectHelpBtn) {
+        connectHelpBtn.onclick = () => {
+          openModal({
+            title: 'Access from anywhere',
+            confirmText: 'Got it',
+            bodyHtml: `
+              <p style="font-size:13px;line-height:1.6;color:var(--text-secondary);">
+                This address only works on your local network. To reach the panel from any
+                network without a domain, use <strong>Tailscale</strong>:
+              </p>
+              <ol style="font-size:13px;line-height:1.7;color:var(--text-secondary);padding-left:18px;margin-top:10px;">
+                <li>Install Tailscale on this host and on your phone, signing in to the same account.</li>
+                <li>On the host run: <code>tailscale serve https / http://127.0.0.1:3000</code></li>
+                <li>Reload this page — the QR will point to your <code>*.ts.net</code> address and work anywhere.</li>
+              </ol>
+            `,
+          });
         };
       }
     } catch (err) {

@@ -115,6 +115,18 @@ When set, triggering an update also asks every peer to update itself. The peer e
 
 The **Files** view browses the host filesystem: navigate directories, read and edit text files, create folders/files, rename, delete and download. When the panel is configured with an admin user (`--admin-terminal`), it can reach the **whole host** (the operations run as that user through the existing scoped `sudo` rule, with paths passed as data — never interpolated into a shell). Without an admin user it is limited to what the service user can access. Write operations are recorded in the audit log.
 
+### Access from your phone (no domain needed)
+
+The installer prints a scannable QR code pointing at the panel, and the **System** view has a **"Connect from your phone"** card with the same code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
+
+To reach the panel from **any network without owning a domain**, use Tailscale:
+
+1. Install Tailscale on the host and on your phone, signing in to the same account.
+2. On the host, proxy the panel onto your tailnet: `tailscale serve https / http://127.0.0.1:3000`.
+3. Reload the panel — the QR now points at `https://<host>.<tailnet>.ts.net` and works everywhere, without exposing anything to the public Internet.
+
+Set `CITADEL_PUBLIC_URL` in `.env` to pin any other address (e.g. a named Cloudflare tunnel). A Cloudflare Quick Tunnel also works with no domain, but its URL changes on every restart, so the QR would expire.
+
 ### Git credentials for terminals
 
 The installer also registers a git credential helper (`/usr/local/bin/citadel-git-credential`) system-wide. It lets plain `git fetch/pull/push` inside project terminals reuse the provider tokens you stored in **Repositories**, decrypting them on demand — tokens are never written to disk in clear text. It only resolves credentials for hosts that have a configured provider (GitHub/GitLab).

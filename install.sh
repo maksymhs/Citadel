@@ -385,7 +385,21 @@ else
   echo "          Citadel Installation Completed Successfully             "
   echo "=================================================================="
   echo -e "${NC}"
+
+  # Best URL for a phone: explicit public URL > Tailscale (*.ts.net) > LAN IP.
+  ACCESS_URL="${CITADEL_PUBLIC_URL:-}"
+  if [ -z "$ACCESS_URL" ] && command -v tailscale >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+    TS_DNS=$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write((j.Self&&j.Self.DNSName)||"")}catch(e){}})' 2>/dev/null)
+    [ -n "$TS_DNS" ] && ACCESS_URL="https://${TS_DNS%.}"
+  fi
+  if [ -z "$ACCESS_URL" ] && command -v hostname >/dev/null 2>&1; then
+    LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [ -n "$LAN_IP" ] && ACCESS_URL="http://${LAN_IP}:3000"
+  fi
+  [ -z "$ACCESS_URL" ] && ACCESS_URL="http://127.0.0.1:3000"
+
   echo "  Local Access Panel:    http://127.0.0.1:3000"
+  echo "  Phone / Remote Access: $ACCESS_URL"
   echo "  Data Directory:        $DATA_DIR"
   echo "  Projects Directory:    $PROJECTS_DIR"
   echo "  Diagnostics:           node $APP_DIR/scripts/doctor.js"
@@ -402,5 +416,23 @@ else
   echo "  Mandatory First Step:"
   echo "  Open http://127.0.0.1:3000 in your browser to set up your"
   echo "  initial administrator account and start working."
+  echo "=================================================================="
+
+  # Show a scannable QR code so a phone can open the panel (install qrencode
+  # best-effort if missing).
+  if ! command -v qrencode >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qrencode >/dev/null 2>&1 || true
+  fi
+  echo ""
+  if command -v qrencode >/dev/null 2>&1; then
+    echo -e "${BLUE}  Scan to open the panel on your phone:${NC}"
+    echo ""
+    qrencode -t ANSIUTF8 -m 2 "$ACCESS_URL" || true
+    echo ""
+  else
+    echo "  Open this URL on your phone: $ACCESS_URL"
+  fi
+  echo "  Tip: from any network without a domain, use Tailscale—see the panel's"
+  echo "  \"Connect from your phone\" card (System view)."
   echo "=================================================================="
 fi

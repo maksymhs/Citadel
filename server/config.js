@@ -63,6 +63,11 @@ const PEER_URLS = (process.env.CITADEL_PEERS || '')
   .map((u) => u.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
+// Public URL shown as a QR code so a phone can open the panel remotely. When
+// empty, the server auto-detects a Tailscale (*.ts.net) address, then the LAN
+// IP. Set it explicitly (e.g. https://vps2.example.com) to pin it.
+const PUBLIC_URL = process.env.CITADEL_PUBLIC_URL || null;
+
 // Tool and integration paths
 const TMUX_PATH = process.env.TMUX_PATH || 'tmux';
 const CADDY_ADMIN_API = process.env.CADDY_ADMIN_API || 'http://127.0.0.1:2019';
@@ -100,6 +105,7 @@ module.exports = {
   SERVICE_NAME,
   PEER_TOKEN,
   PEER_URLS,
+  PUBLIC_URL,
   TMUX_PATH,
   CADDY_ADMIN_API,
   DOCKER_SOCKET,
