@@ -137,6 +137,28 @@ if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ] && [ "$ARCH" != "arm64" ]
   exit 1
 fi
 
+# Standard layout (created in a later step). Defined early so the CLI launcher
+# below can reference it.
+TARGET_DIR="/srv/citadel"
+APP_DIR="$TARGET_DIR/app"
+DATA_DIR="$TARGET_DIR/data"
+PROJECTS_DIR="$TARGET_DIR/projects"
+LOGS_DIR="$TARGET_DIR/logs"
+
+# Install the friendly `citadel` launcher as early as possible so that
+# `citadel status|url|qr|kiosk|...` works right after this run. It is a thin
+# shim pointing at the repository script (so code updates take effect at once).
+if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ "$CHECK_ONLY" = false ] \
+   && [ -f "$APP_DIR/scripts/citadel" ]; then
+  LAUNCHER_TMP="$(mktemp)"
+  printf '#!/bin/sh\n# Citadel CLI launcher (managed by the installer/updater)\nexec bash "%s/scripts/citadel" "$@"\n' "$APP_DIR" > "$LAUNCHER_TMP"
+  if ! $SUDO cmp -s "$LAUNCHER_TMP" /usr/local/bin/citadel 2>/dev/null; then
+    $SUDO install -m 0755 "$LAUNCHER_TMP" /usr/local/bin/citadel
+    echo "      Installed the 'citadel' CLI launcher."
+  fi
+  rm -f "$LAUNCHER_TMP"
+fi
+
 # 3. Resource Check (Memory and Disk Space)
 echo "[2/8] Checking VPS resources..."
 if [ "$OS" = "Linux" ]; then
@@ -187,12 +209,6 @@ if [ "$NODE_INSTALLED" = false ]; then
 fi
 
 # 6. Directory and User Setup
-TARGET_DIR="/srv/citadel"
-APP_DIR="$TARGET_DIR/app"
-DATA_DIR="$TARGET_DIR/data"
-PROJECTS_DIR="$TARGET_DIR/projects"
-LOGS_DIR="$TARGET_DIR/logs"
-
 echo "[5/8] Preparing directory structure and permissions..."
 if [ "$CHECK_ONLY" = true ]; then
   echo "      Directories to check: $TARGET_DIR (app, data, projects, logs)"
