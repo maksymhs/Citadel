@@ -320,16 +320,19 @@ class TerminalManager {
         return;
       }
 
-      let cwd = process.cwd();
+      let cwd = os.homedir();
+      const runAs = this._buildRunAs(sessionRow.project_id);
       if (sessionRow.project_id) {
         const project = db.prepare('SELECT path FROM projects WHERE id = ?').get(sessionRow.project_id);
         if (project && fs.existsSync(project.path)) {
           cwd = project.path;
         }
+      } else if (runAs) {
+        const adminHome = this._homeForUser(runAs.user);
+        if (adminHome) cwd = adminHome;
       }
 
       // Re-spawn PTY attached to existing or new tmux session
-      const runAs = this._buildRunAs(sessionRow.project_id);
       sessionData = this._spawnPty({
         sessionId: sessionRow.id,
         projectId: sessionRow.project_id,

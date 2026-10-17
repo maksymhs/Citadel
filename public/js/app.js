@@ -963,22 +963,139 @@
     });
   }
 
+  // --- Shared terminal client helpers (xterm + WebSocket) ---
+  // Terminal instances are kept alive across view changes: navigating away only
+  // detaches their DOM containers. Returning to the view re-mounts the existing
+  // containers into the new viewport and re-fits them, while the server keeps the
+  // tmux/PTY session running, so nothing is lost.
+  function createXterm() {
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      theme: {
+        background: '#000000',
+        foreground: '#f0f6fc',
+        cursor: '#58a6ff',
+        selectionBackground: 'rgba(88, 166, 255, 0.3)',
+        black: '#161b22',
+        red: '#f85149',
+        green: '#3fb950',
+        yellow: '#d29922',
+        blue: '#58a6ff',
+        magenta: '#bc8cff',
+        cyan: '#39c5cf',
+        white: '#b1bac4',
+      },
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.loadAddon(new WebLinksAddon.WebLinksAddon());
+    return { term, fitAddon };
+  }
+
+  function createTerminalItem({ sessionId, name, projectId = null, kind = 'project', viewport = null }) {
+    const containerEl = document.createElement('div');
+    containerEl.className = 'terminal-element';
+    containerEl.style.display = 'none';
+    if (viewport) viewport.appendChild(containerEl);
+
+    const { term, fitAddon } = createXterm();
+    term.open(containerEl);
+
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${sessionId}`);
+
+    ws.onopen = () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'output' && msg.data) {
+          term.write(msg.data);
+        } else if (msg.type === 'exit') {
+          term.write('\r\n\x1b[33m[Terminal process finished]\x1b[0m\r\n');
+        } else if (msg.type === 'error') {
+          term.write(`\r\n\x1b[31m[Error]: ${msg.message}\x1b[0m\r\n`);
+        }
+      } catch {
+        term.write(event.data);
+      }
+    };
+
+    ws.onclose = () => {
+      term.write('\r\n\x1b[90m[Connection closed — the shell keeps running; reopen the tab to reconnect]\x1b[0m\r\n');
+    };
+
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data }));
+      }
+    });
+
+    term.onResize((size) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+      }
+    });
+
+    return { sessionId, name, projectId, kind, term, fitAddon, ws, containerEl };
+  }
+
+  // Re-attach existing containers to a freshly rendered viewport and show only
+  // the active one. Containers survive innerHTML replacement because we move the
+  // same DOM node back into the new viewport.
+  function mountTerminalItems(viewport, items, activeId, filterFn = null) {
+    for (const [id, item] of items.entries()) {
+      if (filterFn && !filterFn(item)) continue;
+      if (item.containerEl.parentElement !== viewport) {
+        viewport.appendChild(item.containerEl);
+      }
+      item.containerEl.style.display = (id === activeId) ? 'block' : 'none';
+    }
+  }
+
+  function fitTerminalItem(item) {
+    if (!item) return;
+    requestAnimationFrame(() => {
+      try {
+        if (item.containerEl.style.display !== 'none') {
+          item.fitAddon.fit();
+          item.term.focus();
+        }
+      } catch {
+        // Ignore fit errors on detached/hidden elements.
+      }
+    });
+  }
+
+  function disposeTerminalItem(item) {
+    if (!item) return;
+    try {
+      if (item.ws) item.ws.close();
+      if (item.term) item.term.dispose();
+      if (item.containerEl) item.containerEl.remove();
+    } catch {
+      // Ignore
+    }
+  }
+
+  // Re-fit the currently visible terminals when the window is resized.
+  window.addEventListener('resize', () => {
+    const activeProject = state.terminals.get(state.activeTerminalId);
+    if (activeProject && activeProject.containerEl.isConnected) fitTerminalItem(activeProject);
+    const activeSys = state.sysTerminals.get(state.activeSysTerminalId);
+    if (activeSys && activeSys.containerEl.isConnected) fitTerminalItem(activeSys);
+  });
+
   // --- System (host) Terminal View ---
   async function renderTerminalView() {
     const content = document.getElementById('main-content');
     content.style.padding = '0'; // Terminal takes full viewport
-
-    // Tear down any existing client sockets; tmux keeps the real shell alive.
-    for (const item of state.sysTerminals.values()) {
-      try {
-        if (item.ws) item.ws.close();
-        if (item.term) item.term.dispose();
-      } catch {
-        // Ignore
-      }
-    }
-    state.sysTerminals.clear();
-    state.activeSysTerminalId = null;
 
     content.innerHTML = `
       <div class="workspace-container">
@@ -993,17 +1110,40 @@
 
     document.getElementById('sys-tab-new-terminal-btn').onclick = () => spawnSysTerminal();
 
+    const viewport = document.getElementById('sys-terminal-viewport');
+
     try {
       const termRes = await api('/api/terminals?scope=global');
       const actions = document.getElementById('top-bar-actions');
       actions.innerHTML = `<span style="font-size:12px;color:var(--text-muted);">Host shell${termRes.runAsUser ? ` (as ${escapeHtml(termRes.runAsUser)})` : ''}</span>`;
 
-      const sessions = termRes.sessions || [];
-      if (sessions.length > 0) {
-        await activateSysTerminal(sessions[0].id, sessions[0].name);
-      } else {
-        await spawnSysTerminal();
+      const alive = (termRes.sessions || []).filter((s) => s.isAlive);
+
+      // Drop client-side terminals whose server session no longer exists.
+      for (const [id, item] of state.sysTerminals.entries()) {
+        if (!alive.some((s) => s.id === id)) {
+          disposeTerminalItem(item);
+          state.sysTerminals.delete(id);
+        }
       }
+
+      if (alive.length === 0) {
+        await spawnSysTerminal();
+        return;
+      }
+
+      for (const s of alive) {
+        if (!state.sysTerminals.has(s.id)) {
+          state.sysTerminals.set(s.id, createTerminalItem({
+            sessionId: s.id, name: s.name, kind: 'system', viewport,
+          }));
+        }
+      }
+
+      const keepActive = state.activeSysTerminalId && alive.some((s) => s.id === state.activeSysTerminalId);
+      const activeId = keepActive ? state.activeSysTerminalId : alive[0].id;
+      const activeName = (alive.find((s) => s.id === activeId) || {}).name || 'Terminal';
+      await activateSysTerminal(activeId, activeName);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -1022,102 +1162,21 @@
   }
 
   async function activateSysTerminal(sessionId, name = 'Terminal') {
-    state.activeSysTerminalId = sessionId;
     const viewport = document.getElementById('sys-terminal-viewport');
     if (!viewport) return;
 
-    for (const [id, item] of state.sysTerminals.entries()) {
-      if (item.containerEl) {
-        item.containerEl.style.display = (id === sessionId) ? 'block' : 'none';
-      }
-    }
-
+    state.activeSysTerminalId = sessionId;
     let item = state.sysTerminals.get(sessionId);
-
     if (!item) {
-      const termDiv = document.createElement('div');
-      termDiv.className = 'terminal-element';
-      viewport.appendChild(termDiv);
-
-      const term = new Terminal({
-        cursorBlink: true,
-        fontSize: 13,
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-        theme: {
-          background: '#000000',
-          foreground: '#f0f6fc',
-          cursor: '#58a6ff',
-          selectionBackground: 'rgba(88, 166, 255, 0.3)',
-          black: '#161b22',
-          red: '#f85149',
-          green: '#3fb950',
-          yellow: '#d29922',
-          blue: '#58a6ff',
-          magenta: '#bc8cff',
-          cyan: '#39c5cf',
-          white: '#b1bac4',
-        },
+      item = createTerminalItem({
+        sessionId, name, kind: 'system', viewport,
       });
-
-      const fitAddon = new FitAddon.FitAddon();
-      term.loadAddon(fitAddon);
-      term.loadAddon(new WebLinksAddon.WebLinksAddon());
-      term.open(termDiv);
-      fitAddon.fit();
-
-      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${sessionId}`);
-
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'output' && msg.data) {
-            term.write(msg.data);
-          } else if (msg.type === 'exit') {
-            term.write(`\r\n\x1b[33m[Terminal process finished]\x1b[0m\r\n`);
-          } else if (msg.type === 'error') {
-            term.write(`\r\n\x1b[31m[Error]: ${msg.message}\x1b[0m\r\n`);
-          }
-        } catch {
-          term.write(event.data);
-        }
-      };
-
-      ws.onclose = () => {
-        term.write(`\r\n\x1b[90m[WebSocket connection closed]\x1b[0m\r\n`);
-      };
-
-      term.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data }));
-        }
-      });
-
-      term.onResize((size) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
-        }
-      });
-
-      item = { sessionId, name, term, fitAddon, ws, containerEl: termDiv };
       state.sysTerminals.set(sessionId, item);
-
-      window.addEventListener('resize', () => {
-        if (state.activeSysTerminalId === sessionId) {
-          fitAddon.fit();
-        }
-      });
     }
 
+    mountTerminalItems(viewport, state.sysTerminals, sessionId);
     renderSysTerminalTabs();
-    setTimeout(() => {
-      item.fitAddon.fit();
-      item.term.focus();
-    }, 50);
+    setTimeout(() => fitTerminalItem(item), 30);
   }
 
   function renderSysTerminalTabs() {
@@ -1153,13 +1212,7 @@
   async function closeSysTerminal(sessionId) {
     const item = state.sysTerminals.get(sessionId);
     if (item) {
-      try {
-        if (item.ws) item.ws.close();
-        if (item.term) item.term.dispose();
-        if (item.containerEl) item.containerEl.remove();
-      } catch {
-        // Ignore
-      }
+      disposeTerminalItem(item);
       state.sysTerminals.delete(sessionId);
       await api(`/api/terminals/${sessionId}`, { method: 'DELETE' }).catch(() => {});
     }
@@ -1233,19 +1286,39 @@
       await spawnNewTerminal(currentProject.id);
     };
 
-    // Load active sessions for this project from backend
+    const viewport = document.getElementById('terminal-viewport');
+
+    // Restore all live sessions for this project from the backend (tmux keeps
+    // them running server-side), then attach/mount them as tabs.
     try {
       const termRes = await api(`/api/terminals?projectId=${currentProject.id}`);
-      const sessions = termRes.sessions || [];
+      const alive = (termRes.sessions || []).filter((s) => s.isAlive);
 
-      if (sessions.length > 0) {
-        // Attach to the first active session
-        const first = sessions[0];
-        await activateTerminalSession(first.id, first.name);
-      } else {
-        // Automatically spawn an initial terminal for this project
-        await spawnNewTerminal(currentProject.id);
+      // Drop client-side terminals whose server session no longer exists.
+      for (const [id, item] of state.terminals.entries()) {
+        if (item.projectId === currentProject.id && !alive.some((s) => s.id === id)) {
+          disposeTerminalItem(item);
+          state.terminals.delete(id);
+        }
       }
+
+      if (alive.length === 0) {
+        await spawnNewTerminal(currentProject.id);
+        return;
+      }
+
+      for (const s of alive) {
+        if (!state.terminals.has(s.id)) {
+          state.terminals.set(s.id, createTerminalItem({
+            sessionId: s.id, name: s.name, projectId: currentProject.id, viewport,
+          }));
+        }
+      }
+
+      const keepActive = state.activeTerminalId && alive.some((s) => s.id === state.activeTerminalId);
+      const activeId = keepActive ? state.activeTerminalId : alive[0].id;
+      const activeName = (alive.find((s) => s.id === activeId) || {}).name || 'Terminal';
+      await activateTerminalSession(activeId, activeName);
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -1267,126 +1340,21 @@
   }
 
   async function activateTerminalSession(sessionId, name = 'Terminal') {
-    state.activeTerminalId = sessionId;
     const viewport = document.getElementById('terminal-viewport');
     if (!viewport) return;
 
-    // Hide all existing terminal containers
-    for (const [id, item] of state.terminals.entries()) {
-      if (item.containerEl) {
-        item.containerEl.style.display = (id === sessionId) ? 'block' : 'none';
-      }
-    }
-
-    // Check if xterm instance already initialized
+    state.activeTerminalId = sessionId;
     let item = state.terminals.get(sessionId);
-
     if (!item) {
-      // Create new DOM container for xterm
-      const termDiv = document.createElement('div');
-      termDiv.className = 'terminal-element';
-      viewport.appendChild(termDiv);
-
-      // Initialize xterm.js
-      const term = new Terminal({
-        cursorBlink: true,
-        fontSize: 13,
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-        theme: {
-          background: '#000000',
-          foreground: '#f0f6fc',
-          cursor: '#58a6ff',
-          selectionBackground: 'rgba(88, 166, 255, 0.3)',
-          black: '#161b22',
-          red: '#f85149',
-          green: '#3fb950',
-          yellow: '#d29922',
-          blue: '#58a6ff',
-          magenta: '#bc8cff',
-          cyan: '#39c5cf',
-          white: '#b1bac4',
-        },
+      item = createTerminalItem({
+        sessionId, name, projectId: state.activeProjectId, viewport,
       });
-
-      const fitAddon = new FitAddon.FitAddon();
-      term.loadAddon(fitAddon);
-      term.loadAddon(new WebLinksAddon.WebLinksAddon());
-
-      term.open(termDiv);
-      fitAddon.fit();
-
-      // Establish WebSocket
-      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${location.host}/ws/terminal/${sessionId}`;
-      const ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        // Send initial dimensions
-        ws.send(JSON.stringify({
-          type: 'resize',
-          cols: term.cols,
-          rows: term.rows,
-        }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'output' && msg.data) {
-            term.write(msg.data);
-          } else if (msg.type === 'exit') {
-            term.write(`\r\n\x1b[33m[Terminal process finished]\x1b[0m\r\n`);
-          } else if (msg.type === 'error') {
-            term.write(`\r\n\x1b[31m[Error]: ${msg.message}\x1b[0m\r\n`);
-          }
-        } catch {
-          term.write(event.data);
-        }
-      };
-
-      ws.onclose = () => {
-        term.write(`\r\n\x1b[90m[WebSocket connection closed]\x1b[0m\r\n`);
-      };
-
-      // Client input to WS
-      term.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data }));
-        }
-      });
-
-      // Terminal resize handler
-      term.onResize((size) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
-        }
-      });
-
-      item = {
-        sessionId,
-        name,
-        term,
-        fitAddon,
-        ws,
-        containerEl: termDiv,
-      };
-
       state.terminals.set(sessionId, item);
-
-      // Auto fit on window resize
-      window.addEventListener('resize', () => {
-        if (state.activeTerminalId === sessionId) {
-          fitAddon.fit();
-        }
-      });
     }
 
-    // Update UI tabs
+    mountTerminalItems(viewport, state.terminals, sessionId, (it) => it.projectId === state.activeProjectId);
     renderTerminalTabs();
-    setTimeout(() => {
-      item.fitAddon.fit();
-      item.term.focus();
-    }, 50);
+    setTimeout(() => fitTerminalItem(item), 30);
   }
 
   function renderTerminalTabs() {
@@ -1399,6 +1367,7 @@
     tabsContainer.querySelectorAll('.terminal-tab').forEach((el) => el.remove());
 
     for (const [id, item] of state.terminals.entries()) {
+      if (item.projectId !== state.activeProjectId) continue;
       const tab = document.createElement('div');
       tab.className = `terminal-tab ${id === state.activeTerminalId ? 'active' : ''}`;
       tab.innerHTML = `
@@ -1424,22 +1393,18 @@
   async function closeTerminalSession(sessionId) {
     const item = state.terminals.get(sessionId);
     if (item) {
-      try {
-        if (item.ws) item.ws.close();
-        if (item.term) item.term.dispose();
-        if (item.containerEl) item.containerEl.remove();
-      } catch {
-        // Ignore
-      }
+      disposeTerminalItem(item);
       state.terminals.delete(sessionId);
 
       // Tell backend to kill PTY / tmux
       await api(`/api/terminals/${sessionId}`, { method: 'DELETE' }).catch(() => {});
     }
 
-    if (state.terminals.size > 0) {
-      const nextId = Array.from(state.terminals.keys())[0];
-      const nextItem = state.terminals.get(nextId);
+    const remaining = Array.from(state.terminals.entries())
+      .filter(([, it]) => it.projectId === state.activeProjectId);
+
+    if (remaining.length > 0) {
+      const [nextId, nextItem] = remaining[0];
       activateTerminalSession(nextId, nextItem.name);
     } else {
       renderTerminalTabs();
