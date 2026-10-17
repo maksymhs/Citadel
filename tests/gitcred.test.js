@@ -36,6 +36,17 @@ describe('Git credential helper', () => {
     assert.equal(fields.host, 'github.com');
   });
 
+  test('resolveDataEnv derives absolute paths from DATA_DIR', () => {
+    const out = helper.resolveDataEnv({
+      DATA_DIR: '/srv/citadel/data',
+      PROJECTS_DIR: './data/projects',
+      LOGS_DIR: './data/logs',
+    });
+    assert.equal(out.DATABASE_PATH, '/srv/citadel/data/citadel.db');
+    assert.equal(out.PROJECTS_DIR, '/srv/citadel/projects');
+    assert.equal(out.LOGS_DIR, '/srv/citadel/logs');
+  });
+
   test('returns stored credentials for a known host', () => {
     initDatabase();
     gitCredentialsService.saveCredential({ provider: 'github', token: 'ghp_helperTestToken123', username: 'octocat' });

@@ -36,6 +36,18 @@ function resolveDataEnv(env = process.env) {
   if (!out.DATABASE_PATH && out.DATA_DIR) {
     out.DATABASE_PATH = path.join(out.DATA_DIR, 'citadel.db');
   }
+  // `.env` may carry repo-relative paths (e.g. ./data/projects) that only make
+  // sense for local development. Outside systemd, derive absolute paths from
+  // DATA_DIR so config does not try to create directories relative to cwd.
+  if (out.DATA_DIR) {
+    const parent = path.dirname(out.DATA_DIR);
+    if (!out.PROJECTS_DIR || !path.isAbsolute(out.PROJECTS_DIR)) {
+      out.PROJECTS_DIR = path.join(parent, 'projects');
+    }
+    if (!out.LOGS_DIR || !path.isAbsolute(out.LOGS_DIR)) {
+      out.LOGS_DIR = path.join(parent, 'logs');
+    }
+  }
   return out;
 }
 
@@ -45,8 +57,9 @@ function getCredentialsForHost(host, env = process.env) {
 
   // Apply derived data paths before loading config-dependent modules.
   const resolved = resolveDataEnv(env);
-  if (resolved.DATA_DIR) process.env.DATA_DIR = resolved.DATA_DIR;
-  if (resolved.DATABASE_PATH) process.env.DATABASE_PATH = resolved.DATABASE_PATH;
+  for (const key of ['DATA_DIR', 'DATABASE_PATH', 'PROJECTS_DIR', 'LOGS_DIR']) {
+    if (resolved[key]) process.env[key] = resolved[key];
+  }
 
   const { initDatabase } = require('../server/database/db');
   const gitCredentialsService = require('../server/services/gitCredentialsService');
@@ -94,4 +107,4 @@ if (require.main === module) {
     .catch(() => process.exit(0));
 }
 
-module.exports = { parseCredentialInput, getCredentialsForHost };
+module.exports = { parseCredentialInput, resolveDataEnv, getCredentialsForHost };
