@@ -114,7 +114,7 @@ try {
 }
 
 // 8. Check Directories & DB Write Integrity
-const dataDir = path.resolve(__dirname, '../data');
+const dataDir = process.env.DATA_DIR || path.resolve(__dirname, '../data');
 try {
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });

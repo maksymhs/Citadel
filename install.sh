@@ -193,7 +193,8 @@ else
   # Run as the service user so node_modules/vendor files are owned by the same
   # account that systemd runs the server as, and so the working directory is
   # accessible even when its parent is not world-traversable.
-  run_as_service_user "cd '$APP_DIR' && npm install --omit=dev && node scripts/copy-vendor.js && node scripts/doctor.js"
+  # npm install runs the postinstall (copy-vendor) itself, so it is not repeated here.
+  run_as_service_user "cd '$APP_DIR' && npm install --omit=dev && DATA_DIR='$DATA_DIR' node scripts/doctor.js"
   # Re-assert ownership in case anything above was created with different perms.
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
     $SUDO chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"

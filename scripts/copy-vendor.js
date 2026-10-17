@@ -36,19 +36,25 @@ for (const item of copies) {
   }
 }
 
-// Ensure node-pty spawn-helper binaries have executable permissions (+x) on macOS/Linux
+// Ensure node-pty spawn-helper binaries have executable permissions (+x).
+// Linux installs compile into build/Release; packaged installs ship prebuilds.
+const rootDir = path.resolve(__dirname, '..');
+const spawnHelpers = [
+  path.resolve(rootDir, 'node_modules/node-pty/build/Release/spawn-helper'),
+];
 try {
-  const ptyPrebuilds = path.resolve(__dirname, '../node_modules/node-pty/prebuilds');
+  const ptyPrebuilds = path.resolve(rootDir, 'node_modules/node-pty/prebuilds');
   if (fs.existsSync(ptyPrebuilds)) {
-    const entries = fs.readdirSync(ptyPrebuilds, { recursive: true });
-    for (const entry of entries) {
+    for (const entry of fs.readdirSync(ptyPrebuilds, { recursive: true })) {
       if (entry.includes('spawn-helper')) {
-        const fullPath = path.join(ptyPrebuilds, entry);
-        if (fs.existsSync(fullPath)) {
-          fs.chmodSync(fullPath, 0o755);
-          console.log(`Ensured executable permissions on: ${entry}`);
-        }
+        spawnHelpers.push(path.join(ptyPrebuilds, entry));
       }
+    }
+  }
+  for (const helper of spawnHelpers) {
+    if (fs.existsSync(helper)) {
+      fs.chmodSync(helper, 0o755);
+      console.log(`Ensured executable permissions on: ${path.relative(rootDir, helper)}`);
     }
   }
 } catch (err) {
