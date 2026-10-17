@@ -129,11 +129,11 @@ async function startServer() {
     await fastify.listen({ port: PORT, host: HOST });
     console.log(`
 ==================================================================
-  Citadel — Plataforma de Desarrollo y Agentes de IA
+  Citadel — Development Platform & AI Agents
 ==================================================================
   Panel URL:     http://${HOST}:${PORT}
-  Entorno:       ${NODE_ENV}
-  Host Linux:    ${require('node:os').hostname()}
+  Environment:   ${NODE_ENV}
+  Host:          ${require('node:os').hostname()}
   Node.js:       ${process.version}
 ==================================================================
 `);

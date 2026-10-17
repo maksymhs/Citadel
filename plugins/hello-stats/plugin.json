@@ -3,7 +3,7 @@
   "name": "System Stats Widget",
   "version": "1.0.0",
   "minCoreVersion": "0.1.0",
-  "description": "Muestra métricas ligeras en tiempo real y estadísticas del sistema.",
+  "description": "Displays lightweight real-time metrics and system statistics.",
   "author": "Citadel Team",
   "entryPoint": "index.js",
   "capabilities": [

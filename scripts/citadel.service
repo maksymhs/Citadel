@@ -1,5 +1,5 @@
 [Unit]
-Description=Citadel — Plataforma de Desarrollo y Agentes de IA
+Description=Citadel — Development Platform & AI Agents
 After=network.target
 
 [Service]

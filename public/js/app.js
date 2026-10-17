@@ -69,7 +69,7 @@
   }
 
   // Generic modal helper
-  function openModal({ title, bodyHtml, confirmText = 'Confirmar', onConfirm }) {
+  function openModal({ title, bodyHtml, confirmText = 'Confirm', onConfirm }) {
     const root = document.getElementById('modal-root');
     root.innerHTML = `
       <div class="modal-overlay" id="active-modal-overlay">
@@ -82,7 +82,7 @@
             ${bodyHtml}
           </div>
           <div class="modal-footer">
-            <button class="btn btn-secondary" id="modal-cancel-btn">Cancelar</button>
+            <button class="btn btn-secondary" id="modal-cancel-btn">Cancel</button>
             <button class="btn btn-primary" id="modal-confirm-btn">${escapeHtml(confirmText)}</button>
           </div>
         </div>
@@ -98,7 +98,7 @@
       if (onConfirm) {
         const btn = document.getElementById('modal-confirm-btn');
         btn.disabled = true;
-        btn.textContent = 'Procesando...';
+        btn.textContent = 'Processing...';
         try {
           await onConfirm();
           close();
@@ -136,7 +136,7 @@
     } catch (err) {
       document.getElementById('app-root').innerHTML = `
         <div style="padding: 40px; text-align: center; color: #f85149;">
-          <h2>Error al conectar con Citadel</h2>
+          <h2>Failed to connect to Citadel</h2>
           <p>${escapeHtml(err.message)}</p>
         </div>
       `;
@@ -151,20 +151,20 @@
         <div class="auth-card">
           <div class="logo">
             <div style="width:48px;height:48px;background:linear-gradient(135deg,#1f6feb,#8a2be2);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:bold;margin-bottom:12px;">C</div>
-            <h1>Configurar Citadel</h1>
-            <p>Crea la cuenta administradora inicial para proteger tu servidor</p>
+            <h1>Set up Citadel</h1>
+            <p>Create the initial admin account to protect your server</p>
           </div>
           <form id="setup-form">
             <div class="form-group">
-              <label class="form-label">Usuario Administrador</label>
+              <label class="form-label">Admin Username</label>
               <input type="text" class="form-input" id="setup-username" placeholder="admin" required minlength="3">
             </div>
             <div class="form-group">
-              <label class="form-label">Contraseña Maestra</label>
-              <input type="password" class="form-input" id="setup-password" placeholder="Mínimo 8 caracteres" required minlength="8">
+              <label class="form-label">Master Password</label>
+              <input type="password" class="form-input" id="setup-password" placeholder="Minimum 8 characters" required minlength="8">
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:10px;">
-              Inicializar Citadel
+              Initialize Citadel
             </button>
           </form>
         </div>
@@ -182,7 +182,7 @@
         });
         state.user = res.user;
         state.setupComplete = true;
-        showToast('Cuenta de administrador creada exitosamente.', 'success');
+        showToast('Admin account created successfully.', 'success');
         renderAppShell();
         navigateTo('dashboard');
       } catch (err) {
@@ -199,19 +199,19 @@
           <div class="logo">
             <div style="width:48px;height:48px;background:linear-gradient(135deg,#1f6feb,#8a2be2);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:bold;margin-bottom:12px;">C</div>
             <h1>Citadel</h1>
-            <p>Acceso seguro al panel de control de tu VPS</p>
+            <p>Secure access to your VPS control panel</p>
           </div>
           <form id="login-form">
             <div class="form-group">
-              <label class="form-label">Usuario</label>
+              <label class="form-label">Username</label>
               <input type="text" class="form-input" id="login-username" required autocomplete="username">
             </div>
             <div class="form-group">
-              <label class="form-label">Contraseña</label>
+              <label class="form-label">Password</label>
               <input type="password" class="form-input" id="login-password" required autocomplete="current-password">
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:10px;">
-              Iniciar Sesión
+              Sign In
             </button>
           </form>
         </div>
@@ -228,7 +228,7 @@
           body: { username, password },
         });
         state.user = res.user;
-        showToast('Sesión iniciada.', 'success');
+        showToast('Signed in.', 'success');
         renderAppShell();
         navigateTo('dashboard');
       } catch (err) {
@@ -250,14 +250,14 @@
             <span class="version-tag">v0.1.0</span>
           </div>
           <nav class="sidebar-nav">
-            <div class="nav-section-title">Desarrollo</div>
+            <div class="nav-section-title">Development</div>
             <a class="nav-item active" data-view="dashboard">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
               <span>Dashboard</span>
             </a>
             <a class="nav-item" data-view="projects">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-              <span>Proyectos</span>
+              <span>Projects</span>
               <span class="nav-badge" id="nav-projects-count">0</span>
             </a>
             <a class="nav-item" data-view="workspace">
@@ -266,17 +266,17 @@
             </a>
             <a class="nav-item" data-view="agents">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-              <span>Agentes IA</span>
+              <span>AI Agents</span>
             </a>
 
-            <div class="nav-section-title">Infraestructura</div>
+            <div class="nav-section-title">Infrastructure</div>
             <a class="nav-item" data-view="deployments">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>
-              <span>Proxy & Dominios</span>
+              <span>Proxy & Domains</span>
             </a>
             <a class="nav-item" data-view="docker">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-              <span>Docker (Opcional)</span>
+              <span>Docker (Optional)</span>
             </a>
             <a class="nav-item" data-view="plugins">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>
@@ -284,7 +284,7 @@
             </a>
             <a class="nav-item" data-view="system">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-              <span>Sistema & Auditoría</span>
+              <span>System & Audit</span>
             </a>
           </nav>
           <div class="sidebar-footer">
@@ -292,7 +292,7 @@
               <div class="user-avatar">${(state.user.username || 'A')[0].toUpperCase()}</div>
               <div class="user-name">${escapeHtml(state.user.username)}</div>
             </div>
-            <button class="btn btn-secondary btn-sm" id="logout-btn" title="Cerrar sesión">
+            <button class="btn btn-secondary btn-sm" id="logout-btn" title="Log out">
               <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
             </button>
           </div>
@@ -347,25 +347,25 @@
       titleEl.textContent = 'Dashboard';
       renderDashboardView();
     } else if (view === 'projects') {
-      titleEl.textContent = 'Gestión de Proyectos';
+      titleEl.textContent = 'Project Management';
       renderProjectsView();
     } else if (view === 'workspace') {
-      titleEl.textContent = 'Workspace & Terminales Persistentes';
+      titleEl.textContent = 'Workspace & Persistent Terminals';
       renderWorkspaceView();
     } else if (view === 'agents') {
-      titleEl.textContent = 'Lanzador de Agentes de IA';
+      titleEl.textContent = 'AI Agent Launcher';
       renderAgentsView();
     } else if (view === 'deployments') {
-      titleEl.textContent = 'Proxy & Publicación de Dominios';
+      titleEl.textContent = 'Proxy & Domain Publishing';
       renderDeploymentsView();
     } else if (view === 'docker') {
-      titleEl.textContent = 'Monitor de Docker';
+      titleEl.textContent = 'Docker Monitor';
       renderDockerView();
     } else if (view === 'plugins') {
-      titleEl.textContent = 'Extensiones & Plugins';
+      titleEl.textContent = 'Extensions & Plugins';
       renderPluginsView();
     } else if (view === 'system') {
-      titleEl.textContent = 'Diagnóstico del Sistema & Auditoría';
+      titleEl.textContent = 'System Diagnostics & Audit';
       renderSystemView();
     }
   }
@@ -400,7 +400,7 @@
   // 1. Dashboard View
   async function renderDashboardView() {
     const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Cargando métricas del sistema...</div>';
+    content.innerHTML = '<div style="color:var(--text-secondary);">Loading system metrics...</div>';
 
     try {
       const [nodeRes, metricsRes, integRes] = await Promise.all([
@@ -416,22 +416,22 @@
       content.innerHTML = `
         <div class="grid-cards">
           <div class="card">
-            <div class="card-title">USO DE MEMORIA</div>
+            <div class="card-title">MEMORY USAGE</div>
             <div class="card-value">${metrics.memoryUsedPercent}%</div>
-            <div class="card-subtitle">${Math.round(node.memory.usedBytes / 1024 / 1024)} MB de ${Math.round(node.memory.totalBytes / 1024 / 1024)} MB</div>
+            <div class="card-subtitle">${Math.round(node.memory.usedBytes / 1024 / 1024)} MB of ${Math.round(node.memory.totalBytes / 1024 / 1024)} MB</div>
           </div>
           <div class="card">
-            <div class="card-title">CARGA CPU (1m)</div>
+            <div class="card-title">CPU LOAD (1m)</div>
             <div class="card-value">${metrics.loadAvg.toFixed(2)}</div>
             <div class="card-subtitle">${node.cpu.cores} cores (${node.cpu.model.split('@')[0].trim()})</div>
           </div>
           <div class="card">
-            <div class="card-title">PROYECTOS ACTIVOS</div>
+            <div class="card-title">ACTIVE PROJECTS</div>
             <div class="card-value">${state.projects.length}</div>
-            <div class="card-subtitle">${node.stats.activeSessions} terminales persistentes</div>
+            <div class="card-subtitle">${node.stats.activeSessions} persistent terminals</div>
           </div>
           <div class="card">
-            <div class="card-title">HOST VPS</div>
+            <div class="card-title">VPS HOST</div>
             <div class="card-value" style="font-size:18px;">${escapeHtml(node.hostname)}</div>
             <div class="card-subtitle">${escapeHtml(node.platform)} ${escapeHtml(node.release)} (${node.arch})</div>
           </div>
@@ -440,15 +440,15 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
           <!-- Integrations status -->
           <div class="card">
-            <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">Integraciones de Plataforma</h3>
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">Platform Integrations</h3>
             <div style="display:flex;flex-direction:column;gap:12px;">
               <div style="display:flex;align-items:center;justify-content:space-between;">
                 <div>
-                  <strong>tmux (Persistencia PTY)</strong>
+                  <strong>tmux (PTY Persistence)</strong>
                   <div style="font-size:12px;color:var(--text-secondary);">${integ.tmux.description}</div>
                 </div>
                 <span class="badge ${integ.tmux.available ? 'badge-success' : 'badge-warning'}">
-                  ${integ.tmux.available ? 'Disponible' : 'Sin tmux'}
+                  ${integ.tmux.available ? 'Available' : 'No tmux'}
                 </span>
               </div>
               <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -457,7 +457,7 @@
                   <div style="font-size:12px;color:var(--text-secondary);">${integ.git.description}</div>
                 </div>
                 <span class="badge ${integ.git.available ? 'badge-success' : 'badge-danger'}">
-                  ${integ.git.available ? 'Activo' : 'Ausente'}
+                  ${integ.git.available ? 'Active' : 'Missing'}
                 </span>
               </div>
               <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -466,16 +466,16 @@
                   <div style="font-size:12px;color:var(--text-secondary);">${integ.caddy.helpMessage}</div>
                 </div>
                 <span class="badge ${integ.caddy.available ? 'badge-success' : 'badge-muted'}">
-                  ${integ.caddy.available ? 'Conectado' : 'Opcional / Inactivo'}
+                  ${integ.caddy.available ? 'Connected' : 'Optional / Inactive'}
                 </span>
               </div>
               <div style="display:flex;align-items:center;justify-content:space-between;">
                 <div>
                   <strong>Docker Engine</strong>
-                  <div style="font-size:12px;color:var(--text-secondary);">${integ.docker.available ? 'Socket conectado' : 'Desactivado / Opcional'}</div>
+                  <div style="font-size:12px;color:var(--text-secondary);">${integ.docker.available ? 'Socket connected' : 'Disabled / Optional'}</div>
                 </div>
                 <span class="badge ${integ.docker.available ? 'badge-success' : 'badge-muted'}">
-                  ${integ.docker.available ? 'Activo' : 'Opcional'}
+                  ${integ.docker.available ? 'Active' : 'Optional'}
                 </span>
               </div>
             </div>
@@ -483,20 +483,20 @@
 
           <!-- Quick Actions & Projects -->
           <div class="card">
-            <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">Acceso Rápido a Proyectos</h3>
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">Quick Project Access</h3>
             <div style="display:flex;gap:10px;margin-bottom:16px;">
-              <button class="btn btn-primary btn-sm" id="dash-new-project-btn">+ Nuevo Proyecto</button>
-              <button class="btn btn-secondary btn-sm" id="dash-clone-btn">Clonar Git</button>
+              <button class="btn btn-primary btn-sm" id="dash-new-project-btn">+ New Project</button>
+              <button class="btn btn-secondary btn-sm" id="dash-clone-btn">Clone Git</button>
             </div>
             <div style="display:flex;flex-direction:column;gap:8px;">
-              ${state.projects.length === 0 ? '<div style="color:var(--text-muted);font-size:13px;">No hay proyectos registrados aún.</div>' : ''}
+              ${state.projects.length === 0 ? '<div style="color:var(--text-muted);font-size:13px;">No projects registered yet.</div>' : ''}
               ${state.projects.slice(0, 5).map((p) => `
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-tertiary);border-radius:6px;">
                   <div>
                     <strong style="color:var(--accent-color);">${escapeHtml(p.name)}</strong>
                     <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${escapeHtml(p.path)}</div>
                   </div>
-                  <button class="btn btn-secondary btn-sm open-workspace-btn" data-project-id="${p.id}">Abrir Terminal</button>
+                  <button class="btn btn-secondary btn-sm open-workspace-btn" data-project-id="${p.id}">Open Terminal</button>
                 </div>
               `).join('')}
             </div>
@@ -514,7 +514,7 @@
         };
       });
     } catch (err) {
-      content.innerHTML = `<div style="color:var(--danger-color);">Error cargando dashboard: ${escapeHtml(err.message)}</div>`;
+      content.innerHTML = `<div style="color:var(--danger-color);">Error loading dashboard: ${escapeHtml(err.message)}</div>`;
     }
   }
 
@@ -522,9 +522,9 @@
   async function renderProjectsView() {
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
-      <button class="btn btn-secondary btn-sm" id="proj-import-btn">Importar Carpeta</button>
-      <button class="btn btn-secondary btn-sm" id="proj-clone-btn">Clonar Git</button>
-      <button class="btn btn-primary btn-sm" id="proj-create-btn">+ Nuevo Proyecto</button>
+      <button class="btn btn-secondary btn-sm" id="proj-import-btn">Import Folder</button>
+      <button class="btn btn-secondary btn-sm" id="proj-clone-btn">Clone Git</button>
+      <button class="btn btn-primary btn-sm" id="proj-create-btn">+ New Project</button>
     `;
 
     document.getElementById('proj-create-btn').onclick = showCreateProjectModal;
@@ -537,13 +537,13 @@
     if (state.projects.length === 0) {
       content.innerHTML = `
         <div class="card" style="text-align:center;padding:60px 20px;">
-          <h3 style="font-size:18px;margin-bottom:8px;">No hay proyectos registrados</h3>
+          <h3 style="font-size:18px;margin-bottom:8px;">No projects registered</h3>
           <p style="color:var(--text-secondary);max-width:400px;margin:0 auto 20px auto;">
-            Registra tu primer repositorio o directorio de trabajo para abrir terminales interactivas y lanzar agentes de IA.
+            Register your first repository or working directory to open interactive terminals and launch AI agents.
           </p>
           <div style="display:flex;justify-content:center;gap:12px;">
-            <button class="btn btn-primary" id="empty-create-btn">Crear Proyecto</button>
-            <button class="btn btn-secondary" id="empty-clone-btn">Clonar Repositorio</button>
+            <button class="btn btn-primary" id="empty-create-btn">Create Project</button>
+            <button class="btn btn-secondary" id="empty-clone-btn">Clone Repository</button>
           </div>
         </div>
       `;
@@ -557,11 +557,11 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th>Nombre</th>
-              <th>Directorio en VPS</th>
-              <th>Git / Rama</th>
-              <th>Sesiones PTY</th>
-              <th>Acciones</th>
+              <th>Name</th>
+              <th>Directory on VPS</th>
+              <th>Git / Branch</th>
+              <th>PTY Sessions</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -573,23 +573,23 @@
                 </td>
                 <td style="font-family:var(--font-mono);font-size:12px;">
                   ${escapeHtml(p.path)}
-                  ${p.existsOnDisk ? '' : '<span class="badge badge-danger" style="margin-left:6px;">No existe</span>'}
+                  ${p.existsOnDisk ? '' : '<span class="badge badge-danger" style="margin-left:6px;">Missing</span>'}
                 </td>
                 <td>
                   ${p.git_remote ? `
                     <div style="font-size:12px;color:var(--accent-color);">${escapeHtml(p.git_branch || 'main')}</div>
                     <div style="font-size:10px;color:var(--text-muted);">${escapeHtml(p.git_remote)}</div>
-                  ` : '<span style="color:var(--text-muted);">Sin Git</span>'}
+                  ` : '<span style="color:var(--text-muted);">No Git</span>'}
                 </td>
                 <td>
                   <span class="badge ${p.active_sessions_count > 0 ? 'badge-success' : 'badge-muted'}">
-                    ${p.active_sessions_count} activas
+                    ${p.active_sessions_count} active
                   </span>
                 </td>
                 <td>
                   <div style="display:flex;gap:6px;">
-                    <button class="btn btn-primary btn-sm open-workspace-btn" data-project-id="${p.id}">Abrir Workspace</button>
-                    <button class="btn btn-danger btn-sm delete-project-btn" data-project-id="${p.id}" data-project-name="${escapeHtml(p.name)}">Eliminar</button>
+                    <button class="btn btn-primary btn-sm open-workspace-btn" data-project-id="${p.id}">Open Workspace</button>
+                    <button class="btn btn-danger btn-sm delete-project-btn" data-project-id="${p.id}" data-project-name="${escapeHtml(p.name)}">Delete</button>
                   </div>
                 </td>
               </tr>
@@ -611,26 +611,26 @@
         const id = btn.getAttribute('data-project-id');
         const name = btn.getAttribute('data-project-name');
         openModal({
-          title: `Eliminar Proyecto "${name}"`,
+          title: `Delete Project "${name}"`,
           bodyHtml: `
             <p style="margin-bottom:12px;color:var(--text-secondary);">
-              ¿Deseas desvincular este proyecto de Citadel?
+              Do you want to unlink this project from Citadel?
             </p>
             <div style="background:var(--bg-tertiary);padding:12px;border-radius:6px;margin-bottom:12px;">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
                 <input type="checkbox" id="del-files-check">
-                <span style="color:var(--danger-color);font-weight:600;">Eliminar también los archivos del disco duro</span>
+                <span style="color:var(--danger-color);font-weight:600;">Also delete the files from disk</span>
               </label>
               <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
-                Por defecto, tus archivos se conservan intactos en el VPS.
+                By default, your files are preserved untouched on the VPS.
               </div>
             </div>
           `,
-          confirmText: 'Eliminar Proyecto',
+          confirmText: 'Delete Project',
           onConfirm: async () => {
             const delFiles = document.getElementById('del-files-check')?.checked || false;
             await api(`/api/projects/${id}?deleteFiles=${delFiles}`, { method: 'DELETE' });
-            showToast('Proyecto eliminado.', 'success');
+            showToast('Project deleted.', 'success');
             renderProjectsView();
           },
         });
@@ -641,22 +641,22 @@
   // Modals for project creation/import/clone
   function showCreateProjectModal() {
     openModal({
-      title: 'Crear Nuevo Proyecto',
+      title: 'Create New Project',
       bodyHtml: `
         <div class="form-group">
-          <label class="form-label">Nombre del Proyecto</label>
-          <input type="text" class="form-input" id="m-proj-name" placeholder="mi-aplicacion" required>
+          <label class="form-label">Project Name</label>
+          <input type="text" class="form-input" id="m-proj-name" placeholder="my-application" required>
         </div>
         <div class="form-group">
-          <label class="form-label">Slug / Identificador (opcional)</label>
-          <input type="text" class="form-input" id="m-proj-slug" placeholder="mi-aplicacion">
+          <label class="form-label">Slug / Identifier (optional)</label>
+          <input type="text" class="form-input" id="m-proj-slug" placeholder="my-application">
         </div>
         <div class="form-group">
-          <label class="form-label">Descripción (opcional)</label>
-          <input type="text" class="form-input" id="m-proj-desc" placeholder="Backend de producción">
+          <label class="form-label">Description (optional)</label>
+          <input type="text" class="form-input" id="m-proj-desc" placeholder="Production backend">
         </div>
       `,
-      confirmText: 'Crear Proyecto',
+      confirmText: 'Create Project',
       onConfirm: async () => {
         const name = document.getElementById('m-proj-name').value;
         const slug = document.getElementById('m-proj-slug').value;
@@ -665,7 +665,7 @@
           method: 'POST',
           body: { name, slug, description },
         });
-        showToast('Proyecto creado exitosamente.', 'success');
+        showToast('Project created successfully.', 'success');
         await loadProjects();
         if (state.currentView === 'projects') renderProjectsView();
         else if (state.currentView === 'dashboard') renderDashboardView();
@@ -675,22 +675,22 @@
 
   function showImportProjectModal() {
     openModal({
-      title: 'Importar Directorio Existente del VPS',
+      title: 'Import Existing VPS Directory',
       bodyHtml: `
         <div class="form-group">
-          <label class="form-label">Ruta Absoluta en el Servidor</label>
-          <input type="text" class="form-input" id="m-import-path" placeholder="/srv/mis-proyectos/app" required>
+          <label class="form-label">Absolute Path on Server</label>
+          <input type="text" class="form-input" id="m-import-path" placeholder="/srv/my-projects/app" required>
         </div>
         <div class="form-group">
-          <label class="form-label">Nombre para el Panel</label>
-          <input type="text" class="form-input" id="m-import-name" placeholder="Mi App Existente" required>
+          <label class="form-label">Display Name</label>
+          <input type="text" class="form-input" id="m-import-name" placeholder="My Existing App" required>
         </div>
         <div class="form-group">
-          <label class="form-label">Descripción (opcional)</label>
+          <label class="form-label">Description (optional)</label>
           <input type="text" class="form-input" id="m-import-desc">
         </div>
       `,
-      confirmText: 'Importar Directorio',
+      confirmText: 'Import Directory',
       onConfirm: async () => {
         const targetPath = document.getElementById('m-import-path').value;
         const name = document.getElementById('m-import-name').value;
@@ -699,7 +699,7 @@
           method: 'POST',
           body: { targetPath, name, description },
         });
-        showToast('Directorio importado correctamente.', 'success');
+        showToast('Directory imported successfully.', 'success');
         await loadProjects();
         if (state.currentView === 'projects') renderProjectsView();
       },
@@ -708,32 +708,32 @@
 
   function showCloneProjectModal() {
     openModal({
-      title: 'Clonar Repositorio Git',
+      title: 'Clone Git Repository',
       bodyHtml: `
         <div class="form-group">
-          <label class="form-label">URL del Repositorio Git</label>
-          <input type="text" class="form-input" id="m-clone-url" placeholder="https://github.com/usuario/repo.git" required>
+          <label class="form-label">Git Repository URL</label>
+          <input type="text" class="form-input" id="m-clone-url" placeholder="https://github.com/user/repo.git" required>
         </div>
         <div class="form-group">
-          <label class="form-label">Nombre del Proyecto (opcional)</label>
+          <label class="form-label">Project Name (optional)</label>
           <input type="text" class="form-input" id="m-clone-name" placeholder="repo">
         </div>
         <div class="form-group">
-          <label class="form-label">Rama (opcional)</label>
+          <label class="form-label">Branch (optional)</label>
           <input type="text" class="form-input" id="m-clone-branch" placeholder="main">
         </div>
       `,
-      confirmText: 'Clonar e Importar',
+      confirmText: 'Clone & Import',
       onConfirm: async () => {
         const repoUrl = document.getElementById('m-clone-url').value;
         const name = document.getElementById('m-clone-name').value;
         const branch = document.getElementById('m-clone-branch').value;
-        showToast('Clonando repositorio en el servidor...', 'info');
+        showToast('Cloning repository on the server...', 'info');
         await api('/api/projects/clone', {
           method: 'POST',
           body: { repoUrl, name, branch },
         });
-        showToast('Repositorio clonado e importado con éxito.', 'success');
+        showToast('Repository cloned and imported successfully.', 'success');
         await loadProjects();
         if (state.currentView === 'projects') renderProjectsView();
       },
@@ -749,8 +749,8 @@
     if (state.projects.length === 0) {
       content.innerHTML = `
         <div style="padding:40px;text-align:center;">
-          <h3>Crea un proyecto primero para abrir una terminal</h3>
-          <button class="btn btn-primary" style="margin-top:16px;" id="ws-create-proj-btn">+ Crear Proyecto</button>
+          <h3>Create a project first to open a terminal</h3>
+          <button class="btn btn-primary" style="margin-top:16px;" id="ws-create-proj-btn">+ Create Project</button>
         </div>
       `;
       document.getElementById('ws-create-proj-btn').onclick = showCreateProjectModal;
@@ -770,7 +770,7 @@
       </select>
       <button class="btn btn-primary btn-sm" id="ws-launch-agent-btn">
         <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        <span>Lanzar Agente IA</span>
+        <span>Launch AI Agent</span>
       </button>
     `;
 
@@ -788,7 +788,7 @@
         <!-- Tabs bar -->
         <div class="terminal-tabs-bar" id="terminal-tabs-container">
           <button class="btn btn-secondary btn-sm" id="tab-new-terminal-btn" style="margin-left:auto;">
-            + Nueva Terminal
+            + New Terminal
           </button>
         </div>
         <!-- Terminal Body -->
@@ -829,7 +829,7 @@
       });
       await activateTerminalSession(res.session.sessionId, res.session.name);
     } catch (err) {
-      showToast(`Error al crear terminal: ${err.message}`, 'error');
+      showToast(`Failed to create terminal: ${err.message}`, 'error');
     }
   }
 
@@ -902,7 +902,7 @@
           if (msg.type === 'output' && msg.data) {
             term.write(msg.data);
           } else if (msg.type === 'exit') {
-            term.write(`\r\n\x1b[33m[Proceso de terminal finalizado]\x1b[0m\r\n`);
+            term.write(`\r\n\x1b[33m[Terminal process finished]\x1b[0m\r\n`);
           } else if (msg.type === 'error') {
             term.write(`\r\n\x1b[31m[Error]: ${msg.message}\x1b[0m\r\n`);
           }
@@ -912,7 +912,7 @@
       };
 
       ws.onclose = () => {
-        term.write(`\r\n\x1b[90m[Conexión WebSocket cerrada]\x1b[0m\r\n`);
+        term.write(`\r\n\x1b[90m[WebSocket connection closed]\x1b[0m\r\n`);
       };
 
       // Client input to WS
@@ -1016,15 +1016,15 @@
   // 4. Agents View
   async function renderAgentsView() {
     const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Consultando agentes disponibles...</div>';
+    content.innerHTML = '<div style="color:var(--text-secondary);">Checking available agents...</div>';
     await loadAgents();
     await loadProjects();
 
     content.innerHTML = `
       <div style="margin-bottom:24px;">
-        <h2 style="font-size:18px;margin-bottom:6px;">Agentes de IA y Herramientas CLI</h2>
+        <h2 style="font-size:18px;margin-bottom:6px;">AI Agents & CLI Tools</h2>
         <p style="color:var(--text-secondary);">
-          Citadel detecta y ejecuta herramientas CLI bajo tu cuenta autorizada sin exigir suscripciones API comerciales.
+          Citadel detects and runs CLI tools under your authorized account without requiring commercial API subscriptions.
         </p>
       </div>
 
@@ -1035,7 +1035,7 @@
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
                 <h3 style="font-size:16px;font-weight:600;">${escapeHtml(a.name)}</h3>
                 <span class="badge ${a.installed ? 'badge-success' : 'badge-muted'}">
-                  ${a.installed ? 'Instalado' : 'No en PATH'}
+                  ${a.installed ? 'Installed' : 'Not in PATH'}
                 </span>
               </div>
               <p style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">
@@ -1043,18 +1043,18 @@
               </p>
               ${a.installed ? `
                 <div style="background:var(--bg-tertiary);padding:8px 12px;border-radius:6px;font-family:var(--font-mono);font-size:11px;margin-bottom:14px;">
-                  <div style="color:var(--text-muted);">Ruta: ${escapeHtml(a.path)}</div>
-                  ${a.version ? `<div style="color:var(--accent-color);margin-top:4px;">Versión: ${escapeHtml(a.version)}</div>` : ''}
+                  <div style="color:var(--text-muted);">Path: ${escapeHtml(a.path)}</div>
+                  ${a.version ? `<div style="color:var(--accent-color);margin-top:4px;">Version: ${escapeHtml(a.version)}</div>` : ''}
                 </div>
               ` : `
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">
-                  Instálalo en tu VPS (ej. npm i -g @anthropic-ai/claude-code) para habilitarlo directamente.
+                  Install it on your VPS (e.g. npm i -g @anthropic-ai/claude-code) to enable it directly.
                 </div>
               `}
             </div>
             <div>
               <button class="btn btn-primary btn-sm launch-agent-btn" data-agent-id="${a.id}" ${!a.installed ? 'disabled' : ''} style="width:100%;justify-content:center;">
-                Lanzar en Proyecto...
+                Launch in Project...
               </button>
             </div>
           </div>
@@ -1072,21 +1072,21 @@
 
   function showLaunchAgentModal(preselectedProjectId = null, preselectedAgentId = null) {
     if (state.projects.length === 0) {
-      showToast('Crea al menos un proyecto antes de lanzar un agente.', 'error');
+      showToast('Create at least one project before launching an agent.', 'error');
       return;
     }
 
     const installedAgents = state.agents.filter((a) => a.installed);
     if (installedAgents.length === 0) {
-      showToast('No se encontró ningún agente CLI instalado en el sistema.', 'error');
+      showToast('No CLI agent installed on the system was found.', 'error');
       return;
     }
 
     openModal({
-      title: 'Lanzar Agente de IA en Proyecto',
+      title: 'Launch AI Agent in Project',
       bodyHtml: `
         <div class="form-group">
-          <label class="form-label">Selecciona Proyecto</label>
+          <label class="form-label">Select Project</label>
           <select class="form-input" id="m-launch-proj">
             ${state.projects.map((p) => `
               <option value="${p.id}" ${p.id === preselectedProjectId ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.path)})</option>
@@ -1094,7 +1094,7 @@
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Selecciona Agente CLI</label>
+          <label class="form-label">Select CLI Agent</label>
           <select class="form-input" id="m-launch-agent">
             ${installedAgents.map((a) => `
               <option value="${a.id}" ${a.id === preselectedAgentId ? 'selected' : ''}>${escapeHtml(a.name)} (${escapeHtml(a.version || a.binaryName)})</option>
@@ -1102,12 +1102,12 @@
           </select>
         </div>
       `,
-      confirmText: 'Lanzar Agente',
+      confirmText: 'Launch Agent',
       onConfirm: async () => {
         const projectId = document.getElementById('m-launch-proj').value;
         const agentId = document.getElementById('m-launch-agent').value;
 
-        showToast('Iniciando sesión del agente...', 'info');
+        showToast('Starting agent session...', 'info');
         const res = await api('/api/agents/launch', {
           method: 'POST',
           body: { projectId, agentId },
@@ -1116,7 +1116,7 @@
         state.activeProjectId = projectId;
         navigateTo('workspace');
         await activateTerminalSession(res.session.sessionId, res.session.name);
-        showToast('Agente lanzado en terminal persistente.', 'success');
+        showToast('Agent launched in persistent terminal.', 'success');
       },
     });
   }
@@ -1124,7 +1124,7 @@
   // 5. Deployments & Proxy View (Caddy)
   async function renderDeploymentsView() {
     const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Cargando estado de Caddy...</div>';
+    content.innerHTML = '<div style="color:var(--text-secondary);">Loading Caddy status...</div>';
 
     try {
       const [statusRes, depRes] = await Promise.all([
@@ -1135,9 +1135,9 @@
       content.innerHTML = `
         <div class="card" style="margin-bottom:24px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-            <h3 style="font-size:16px;font-weight:600;">Estado de Caddy Proxy</h3>
+            <h3 style="font-size:16px;font-weight:600;">Caddy Proxy Status</h3>
             <span class="badge ${statusRes.available ? 'badge-success' : 'badge-muted'}">
-              ${statusRes.available ? 'Activo (127.0.0.1:2019)' : 'No disponible'}
+              ${statusRes.available ? 'Active (127.0.0.1:2019)' : 'Unavailable'}
             </span>
           </div>
           <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">
@@ -1145,25 +1145,25 @@
           </p>
           <div>
             <button class="btn btn-primary btn-sm" id="pub-domain-btn" ${!statusRes.available ? 'disabled' : ''}>
-              + Publicar Dominio / Subdominio
+              + Publish Domain / Subdomain
             </button>
           </div>
         </div>
 
-        <h3 style="font-size:15px;font-weight:600;margin-bottom:12px;">Dominios Mapeados</h3>
+        <h3 style="font-size:15px;font-weight:600;margin-bottom:12px;">Mapped Domains</h3>
         <div class="table-container">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Dominio</th>
-                <th>Proyecto</th>
-                <th>Puerto Destino</th>
-                <th>Estado</th>
-                <th>Acciones</th>
+                <th>Domain</th>
+                <th>Project</th>
+                <th>Target Port</th>
+                <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              ${(depRes.deployments || []).length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No hay dominios publicados</td></tr>' : ''}
+              ${(depRes.deployments || []).length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No published domains</td></tr>' : ''}
               ${(depRes.deployments || []).map((d) => `
                 <tr>
                   <td>
@@ -1171,7 +1171,7 @@
                       ${escapeHtml(d.domain)}
                     </a>
                   </td>
-                  <td>${escapeHtml(d.project_name || 'Desconocido')}</td>
+                  <td>${escapeHtml(d.project_name || 'Unknown')}</td>
                   <td style="font-family:var(--font-mono);">${d.target_port}</td>
                   <td>
                     <span class="badge ${d.status === 'active' ? 'badge-success' : 'badge-warning'}">
@@ -1179,7 +1179,7 @@
                     </span>
                   </td>
                   <td>
-                    <button class="btn btn-danger btn-sm unpub-btn" data-domain="${escapeHtml(d.domain)}">Despublicar</button>
+                    <button class="btn btn-danger btn-sm unpub-btn" data-domain="${escapeHtml(d.domain)}">Unpublish</button>
                   </td>
                 </tr>
               `).join('')}
@@ -1193,7 +1193,7 @@
         btn.onclick = async () => {
           const domain = btn.getAttribute('data-domain');
           await api('/api/proxy/unpublish', { method: 'DELETE', body: { domain } });
-          showToast(`Dominio ${domain} despublicado.`, 'success');
+          showToast(`Domain ${domain} unpublished.`, 'success');
           renderDeploymentsView();
         };
       });
@@ -1204,24 +1204,24 @@
 
   function showPublishDomainModal() {
     openModal({
-      title: 'Publicar Dominio con HTTPS Automático',
+      title: 'Publish Domain with Automatic HTTPS',
       bodyHtml: `
         <div class="form-group">
-          <label class="form-label">Proyecto</label>
+          <label class="form-label">Project</label>
           <select class="form-input" id="m-pub-proj">
             ${state.projects.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Nombre de Dominio o Subdominio (ej: app.tudominio.com)</label>
-          <input type="text" class="form-input" id="m-pub-domain" placeholder="app.ejemplo.com" required>
+          <label class="form-label">Domain or Subdomain Name (e.g. app.yourdomain.com)</label>
+          <input type="text" class="form-input" id="m-pub-domain" placeholder="app.example.com" required>
         </div>
         <div class="form-group">
-          <label class="form-label">Puerto Local del Proyecto</label>
+          <label class="form-label">Project Local Port</label>
           <input type="number" class="form-input" id="m-pub-port" placeholder="3000" min="1" max="65535" required>
         </div>
       `,
-      confirmText: 'Publicar con Caddy',
+      confirmText: 'Publish with Caddy',
       onConfirm: async () => {
         const projectId = document.getElementById('m-pub-proj').value;
         const domain = document.getElementById('m-pub-domain').value;
@@ -1230,7 +1230,7 @@
           method: 'POST',
           body: { projectId, domain, targetPort },
         });
-        showToast('Dominio publicado exitosamente.', 'success');
+        showToast('Domain published successfully.', 'success');
         renderDeploymentsView();
       },
     });
@@ -1239,7 +1239,7 @@
   // 6. Docker View (Optional)
   async function renderDockerView() {
     const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Comprobando Docker Socket...</div>';
+    content.innerHTML = '<div style="color:var(--text-secondary);">Checking Docker socket...</div>';
 
     try {
       const [statusRes, containersRes] = await Promise.all([
@@ -1250,30 +1250,30 @@
       content.innerHTML = `
         <div class="card" style="margin-bottom:24px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-            <h3 style="font-size:16px;font-weight:600;">Integración Docker</h3>
+            <h3 style="font-size:16px;font-weight:600;">Docker Integration</h3>
             <span class="badge ${statusRes.available ? 'badge-success' : 'badge-muted'}">
-              ${statusRes.available ? `v${statusRes.version}` : 'No disponible'}
+              ${statusRes.available ? `v${statusRes.version}` : 'Unavailable'}
             </span>
           </div>
           <p style="font-size:13px;color:var(--text-secondary);">
-            ${statusRes.available ? `Conectado a Docker Engine ${statusRes.version} (${statusRes.os}/${statusRes.arch})` : escapeHtml(statusRes.message)}
+            ${statusRes.available ? `Connected to Docker Engine ${statusRes.version} (${statusRes.os}/${statusRes.arch})` : escapeHtml(statusRes.message)}
           </p>
         </div>
 
-        <h3 style="font-size:15px;font-weight:600;margin-bottom:12px;">Contenedores en el Host</h3>
+        <h3 style="font-size:15px;font-weight:600;margin-bottom:12px;">Containers on Host</h3>
         <div class="table-container">
           <table class="data-table">
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Nombre</th>
-                <th>Imagen</th>
-                <th>Estado</th>
-                <th>Puertos</th>
+                <th>Name</th>
+                <th>Image</th>
+                <th>State</th>
+                <th>Ports</th>
               </tr>
             </thead>
             <tbody>
-              ${(containersRes.containers || []).length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No hay contenedores disponibles o Docker está inactivo</td></tr>' : ''}
+              ${(containersRes.containers || []).length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No containers available or Docker is inactive</td></tr>' : ''}
               ${(containersRes.containers || []).map((c) => `
                 <tr>
                   <td style="font-family:var(--font-mono);">${escapeHtml(c.id)}</td>
@@ -1301,7 +1301,7 @@
   // 7. System & Audit View
   async function renderSystemView() {
     const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Cargando diagnóstico y registros de auditoría...</div>';
+    content.innerHTML = '<div style="color:var(--text-secondary);">Loading diagnostics and audit logs...</div>';
 
     try {
       const [nodeRes, auditRes] = await Promise.all([
@@ -1314,14 +1314,14 @@
 
       content.innerHTML = `
         <div class="card" style="margin-bottom:24px;">
-          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">Diagnóstico de Nodo</h3>
+          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">Node Diagnostics</h3>
           <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;font-size:13px;">
             <div>
               <span style="color:var(--text-muted);">Hostname:</span>
               <strong style="display:block;margin-top:2px;">${escapeHtml(node.hostname)}</strong>
             </div>
             <div>
-              <span style="color:var(--text-muted);">Sistema Operativo:</span>
+              <span style="color:var(--text-muted);">Operating System:</span>
               <strong style="display:block;margin-top:2px;">${escapeHtml(node.platform)} ${escapeHtml(node.release)}</strong>
             </div>
             <div>
@@ -1329,26 +1329,26 @@
               <strong style="display:block;margin-top:2px;color:var(--accent-color);">${escapeHtml(node.nodeVersion)}</strong>
             </div>
             <div>
-              <span style="color:var(--text-muted);">Tiempo Activo (Uptime):</span>
-              <strong style="display:block;margin-top:2px;">${Math.round(node.uptimeSeconds / 3600)} horas</strong>
+              <span style="color:var(--text-muted);">Uptime:</span>
+              <strong style="display:block;margin-top:2px;">${Math.round(node.uptimeSeconds / 3600)} hours</strong>
             </div>
           </div>
         </div>
 
-        <h3 style="font-size:15px;font-weight:600;margin-bottom:12px;">Registro de Auditoría de Seguridad</h3>
+        <h3 style="font-size:15px;font-weight:600;margin-bottom:12px;">Security Audit Log</h3>
         <div class="table-container">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Fecha</th>
-                <th>Acción</th>
-                <th>Usuario</th>
-                <th>Objetivo</th>
-                <th>Detalles</th>
+                <th>Date</th>
+                <th>Action</th>
+                <th>User</th>
+                <th>Target</th>
+                <th>Details</th>
               </tr>
             </thead>
             <tbody>
-              ${logs.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No hay eventos de auditoría registrados</td></tr>' : ''}
+              ${logs.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No audit events recorded</td></tr>' : ''}
               ${logs.map((l) => `
                 <tr>
                   <td style="font-size:11px;color:var(--text-muted);white-space:nowrap;">
@@ -1374,7 +1374,7 @@
   // 8. Plugins View
   async function renderPluginsView() {
     const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Cargando plugins...</div>';
+    content.innerHTML = '<div style="color:var(--text-secondary);">Loading plugins...</div>';
 
     try {
       const res = await api('/api/plugins');
@@ -1382,9 +1382,9 @@
 
       content.innerHTML = `
         <div style="margin-bottom:24px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Plugins y Extensiones Modulares</h2>
+          <h2 style="font-size:18px;margin-bottom:6px;">Modular Plugins & Extensions</h2>
           <p style="color:var(--text-secondary);">
-            Citadel carga plugins desde el directorio <code>plugins/</code> basados en el estándar <code>plugin.json</code>.
+            Citadel loads plugins from the <code>plugins/</code> directory based on the <code>plugin.json</code> standard.
           </p>
         </div>
 
@@ -1392,15 +1392,15 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th>Nombre / ID</th>
-                <th>Versión</th>
-                <th>Capacidades</th>
-                <th>Estado</th>
-                <th>Acción</th>
+                <th>Name / ID</th>
+                <th>Version</th>
+                <th>Capabilities</th>
+                <th>Status</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              ${plugins.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No hay plugins instalados</td></tr>' : ''}
+              ${plugins.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No plugins installed</td></tr>' : ''}
               ${plugins.map((p) => `
                 <tr>
                   <td>
@@ -1418,7 +1418,7 @@
                   </td>
                   <td>
                     <button class="btn btn-secondary btn-sm toggle-plugin-btn" data-id="${p.id}" data-enabled="${p.enabled ? '1' : '0'}">
-                      ${p.enabled ? 'Deshabilitar' : 'Habilitar'}
+                      ${p.enabled ? 'Disable' : 'Enable'}
                     </button>
                   </td>
                 </tr>
@@ -1436,7 +1436,7 @@
             method: 'POST',
             body: { enabled: !isCurrentlyEnabled },
           });
-          showToast(`Plugin ${!isCurrentlyEnabled ? 'habilitado' : 'deshabilitado'}.`, 'success');
+          showToast(`Plugin ${!isCurrentlyEnabled ? 'enabled' : 'disabled'}.`, 'success');
           renderPluginsView();
         };
       });

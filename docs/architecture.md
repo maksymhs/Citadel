@@ -1,35 +1,35 @@
-# Citadel — Arquitectura del Sistema
+# Citadel — System Architecture
 
-## 1. Visión General y Principios de Diseño
+## 1. Overview and Design Principles
 
-Citadel es una plataforma web autohospedada, ultraligera, modular y segura diseñada para desarrolladores y agentes de IA que trabajan en VPS. Proporciona:
+Citadel is a self-hosted, ultralight, modular and secure web platform designed for developers and AI agents working on a VPS. It provides:
 
-- Gestión unificada de proyectos y repositorios Git.
-- Terminales web interactivas y persistentes (`xterm.js` + `node-pty` + `tmux`).
-- Lanzador de herramientas y agentes CLI de Inteligencia Artificial (Claude Code, Codex, OpenCode, y ejecutables personalizados) ejecutados bajo la identidad Linux local autorizada.
-- Monitorización de sesiones, procesos, recursos y auditoría.
-- Publicación opcional mediante proxy reverso (Caddy) y soporte opcional de contenedores (Docker).
-- Despliegue reproducible e idempotente mediante un instalador de una sola línea (`install.sh`).
+- Unified management of projects and Git repositories.
+- Interactive, persistent web terminals (`xterm.js` + `node-pty` + `tmux`).
+- A launcher for AI CLI tools and agents (Claude Code, Codex, OpenCode, and custom executables) running under the authorized local Linux identity.
+- Monitoring of sessions, processes, resources and auditing.
+- Optional publishing through a reverse proxy (Caddy) and optional container support (Docker).
+- Reproducible, idempotent deployment through a one-line installer (`install.sh`).
 
-### Principios Fundamentales
-1. **Entorno de desarrollo primero**: Citadel es una estación de trabajo para desarrolladores y agentes de IA. La publicación y despliegue son capacidades accesorias.
-2. **Cero dependencias pesadas**: No requiere Kubernetes, microservicios, Redis, colas externas ni bases de datos remotas. Funciona en VPS económicos con 512 MB - 1 GB de RAM.
-3. **Resiliencia ante dependencias ausentes**: Si `tmux`, `caddy`, `docker` o un agente CLI no están instalados, el núcleo se degrada limpiamente y sigue funcionando.
-4. **Seguridad por diseño**:
-   - Escucha en `127.0.0.1` por defecto.
-   - Cookies de sesión `HttpOnly` y `SameSite=Strict`.
-   - Validación de origen en WebSockets.
-   - Prevención estricta de Path Traversal mediante resolución canónica.
-   - Ejecución estructurada de procesos (`spawn` con arrays de argumentos), evitando interpolación en shell.
-   - Registro inicial obligatorio de cuenta administradora sin contraseñas predeterminadas.
+### Core Principles
+1. **Development environment first**: Citadel is a workstation for developers and AI agents. Publishing and deployment are accessory capabilities.
+2. **Zero heavy dependencies**: It requires no Kubernetes, microservices, Redis, external queues or remote databases. It runs on cheap VPS instances with 512 MB - 1 GB of RAM.
+3. **Resilience to missing dependencies**: If `tmux`, `caddy`, `docker` or a CLI agent is not installed, the core degrades gracefully and keeps working.
+4. **Secure by design**:
+   - Listens on `127.0.0.1` by default.
+   - `HttpOnly` and `SameSite=Strict` session cookies.
+   - Origin validation on WebSockets.
+   - Strict Path Traversal prevention via canonical resolution.
+   - Structured process execution (`spawn` with argument arrays), avoiding shell interpolation.
+   - Mandatory initial administrator account registration with no default passwords.
 
 ---
 
-## 2. Diagrama de Arquitectura de Capas
+## 2. Layered Architecture Diagram
 
 ```
 +-----------------------------------------------------------------+
-|                       Frontend Web (SPA)                       |
+|                       Web Frontend (SPA)                       |
 |   Dashboard | Projects | Terminal (xterm.js) | Agents | System  |
 +-----------------------------------------------------------------+
                                 | HTTP REST & WebSockets
@@ -52,7 +52,7 @@ Citadel es una plataforma web autohospedada, ultraligera, modular y segura dise�
         |                +-------------------------------+
         v
 +-----------------------------------------------------------------+
-|                       Capa de Servicios                         |
+|                       Service Layer                             |
 | ProjectService | AgentRegistry | GitService | ProxyProvider     |
 | DockerService  | AuditLogger   | NodeService (Local / Remote)   |
 +-----------------------------------------------------------------+
@@ -60,7 +60,7 @@ Citadel es una plataforma web autohospedada, ultraligera, modular y segura dise�
         v                                        v
 +-----------------------+              +--------------------------+
 | SQLite (better-sqlite3)|              | Host Linux OS            |
-| data/citadel.db       |              | - Proyectos (/srv/...)   |
+| data/citadel.db       |              | - Projects (/srv/...)    |
 | WAL mode              |              | - tmux sessions          |
 +-----------------------+              | - CLI agents / binaries  |
                                        +--------------------------+
@@ -68,51 +68,51 @@ Citadel es una plataforma web autohospedada, ultraligera, modular y segura dise�
 
 ---
 
-## 3. Modelo de Datos (SQLite)
+## 3. Data Model (SQLite)
 
 1. **`users`**: ID, username, password_hash, salt, role, created_at, updated_at.
-2. **`sessions`**: ID (token de 256 bits), user_id, expires_at, created_at, last_active.
+2. **`sessions`**: ID (256-bit token), user_id, expires_at, created_at, last_active.
 3. **`projects`**: ID, name, slug, description, path, git_remote, git_branch, created_at, updated_at.
 4. **`term_sessions`**: ID, project_id, name, tmux_session, agent_id, status, created_at, last_active.
 5. **`audit_logs`**: ID, user_id, action, target_type, target_id, details, ip, created_at.
 6. **`deployments`**: ID, project_id, domain, target_port, status, ssl_active, created_at.
 7. **`plugins`**: ID, name, version, enabled, config, created_at.
 
-> Nota: el identificador de sesión se almacena directamente en la tabla `sessions`; no se aplica hashing adicional porque ya es un valor aleatorio de 256 bits que el cliente solo conoce a través de una cookie `HttpOnly`.
+> Note: the session identifier is stored directly in the `sessions` table; no additional hashing is applied because it is already a random 256-bit value that the client only knows through an `HttpOnly` cookie.
 
 ---
 
-## 4. Persistencia de Terminales con `tmux`
+## 4. Terminal Persistence with `tmux`
 
-- Cada proyecto puede abrir múltiples terminales.
-- Cada terminal se vincula a una sesión `tmux` identificada de forma determinista y segura: `citadel_<project_slug>_<session_id>`.
-- `node-pty` ejecuta `tmux new-session -A -s citadel_<project_slug>_<session_id>` con el directorio de trabajo del proyecto.
-- Si el navegador se desconecta y vuelve a conectarse, se reconecta al mismo PTY o reanuda la sesión tmux sin perder el estado ni matar procesos en curso.
-- Si `tmux` no está instalado en el sistema operativo, el gestor utiliza `node-pty` en modo directo y notifica al usuario que instale `tmux` para persistencia ante reinicios.
+- Each project can open multiple terminals.
+- Each terminal is bound to a deterministically and safely identified `tmux` session: `citadel_<project_slug>_<session_id>`.
+- `node-pty` runs `tmux new-session -A -s citadel_<project_slug>_<session_id>` with the project's working directory.
+- If the browser disconnects and reconnects, it reattaches to the same PTY or resumes the tmux session without losing state or killing running processes.
+- If `tmux` is not installed on the OS, the manager uses `node-pty` in direct mode and notifies the user to install `tmux` for persistence across restarts.
 
 ---
 
-## 5. Lanzador de Agentes CLI de IA
+## 5. AI CLI Agent Launcher
 
-El registro de agentes define especificaciones estandarizadas para herramientas como:
+The agent registry defines standardized specifications for tools such as:
 - **Claude Code** (`claude`)
 - **Codex CLI** (`codex`)
 - **OpenCode** (`opencode`)
-- **Custom Agent** (configurado por el administrador)
+- **Custom Agent** (configured by the administrator)
 
-Cada agente se detecta inspeccionando rutas seguras y `PATH`. Se ejecuta en una terminal dedicada dentro del directorio del proyecto seleccionado, aprovechando la configuración y credenciales del usuario Linux del servidor sin exponer secretos al navegador.
+Each agent is detected by inspecting safe paths and `PATH`. It runs in a dedicated terminal inside the selected project's directory, leveraging the server's Linux user configuration and credentials without exposing secrets to the browser.
 
-El binario y cada argumento se citan individualmente (`shellQuote`) antes de escribirse en el PTY, por lo que los argumentos extra suministrados por el navegador no pueden inyectar comandos adicionales.
+The binary and each argument are individually quoted (`shellQuote`) before being written to the PTY, so extra arguments supplied by the browser cannot inject additional commands.
 
 ---
 
-## 6. Aislamiento Real y Limitaciones
+## 6. Real Isolation and Limitations
 
-Citadel proporciona **separación lógica** entre proyectos: cada proyecto tiene su propio directorio, sus propias sesiones de terminal y su propio registro de despliegues. Sin embargo, conviene entender su alcance real de aislamiento:
+Citadel provides **logical separation** between projects: each project has its own directory, its own terminal sessions and its own deployment record. However, its real isolation scope is worth understanding:
 
-- **Un único usuario Linux**: todos los proyectos, terminales y agentes se ejecutan bajo el mismo usuario del sistema (el usuario `citadel.service`, o el usuario que ejecute el servidor). **No existe aislamiento a nivel de sistema operativo** (sin contenedores, `chroot`, namespaces ni distintos UID) entre proyectos. Un proyecto puede, en principio, leer o modificar los archivos de otro proyecto al que ese usuario tenga acceso.
-- **Terminal equivalente a un shell del usuario del servicio**: obtener una terminal en el panel equivale a obtener un shell interactivo con los privilegios de la cuenta que ejecuta Citadel. Por defecto esa cuenta **no es root** y el servicio no concede privilegios elevados; ejecutar el servidor como `root` daría lugar a una terminal `root`.
-- **Validación de rutas**: el directorio de una terminal ad-hoc enviado por el cliente y el borrado recursivo de archivos de proyecto se validan contra el árbol gestionado (`PROJECTS_DIR`). La operación de *importar* un proyecto permite registrar deliberadamente cualquier directorio del host elegido por el administrador (es una función intencional, no una vulnerabilidad, y requiere autenticación).
-- **Validación de origen WebSocket**: las conexiones sin cabecera `Origin` (clientes no navegador, scripts) se aceptan, pero en todos los casos se exige una sesión autenticada válida mediante cookie o token.
-- **Integraciones opcionales**: Caddy y Docker solo se consultan cuando están disponibles localmente. La API administrativa de Caddy debe permanecer escuchando en `127.0.0.1:2019` y nunca exponerse públicamente; Docker se accede únicamente a través del socket Unix local y de solo lectura para inspección.
-- **Sin garantía absoluta de seguridad**: Citadel reduce la superficie de exposición mediante cookies `HttpOnly`/`SameSite=Strict`, validación de origen, límite de peticiones, cabeceras de seguridad y ejecución estructurada de procesos, pero no sustituye a una revisión de seguridad específica de cada despliegue.
+- **A single Linux user**: all projects, terminals and agents run under the same system user (the `citadel.service` user, or whichever user runs the server). **There is no OS-level isolation** (no containers, `chroot`, namespaces or distinct UIDs) between projects. A project can, in principle, read or modify the files of another project that this user can access.
+- **A terminal is equivalent to a shell for the service user**: obtaining a terminal in the panel is equivalent to obtaining an interactive shell with the privileges of the account running Citadel. By default that account **is not root** and the service grants no elevated privileges; running the server as `root` would result in a `root` terminal.
+- **Path validation**: an ad-hoc terminal directory sent by the client and the recursive deletion of project files are validated against the managed tree (`PROJECTS_DIR`). The *import* project operation deliberately allows registering any host directory chosen by the administrator (it is an intentional feature, not a vulnerability, and it requires authentication).
+- **WebSocket origin validation**: connections without an `Origin` header (non-browser clients, scripts) are accepted, but in all cases a valid authenticated session via cookie or token is required.
+- **Optional integrations**: Caddy and Docker are only queried when available locally. The Caddy admin API must keep listening on `127.0.0.1:2019` and never be exposed publicly; Docker is accessed only through the local, read-only Unix socket for inspection.
+- **No absolute security guarantee**: Citadel reduces the exposure surface through `HttpOnly`/`SameSite=Strict` cookies, origin validation, rate limiting, security headers and structured process execution, but it does not replace a security review specific to each deployment.

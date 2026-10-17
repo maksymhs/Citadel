@@ -38,12 +38,12 @@ async function systemRoutes(fastify) {
         tmux: {
           available: tmux,
           description: tmux
-            ? 'tmux está disponible. Las sesiones persisten entre reconexiones y reinicios del panel.'
-            : 'tmux no está instalado. Las terminales funcionan en modo PTY directo (sin persistencia ante reinicios).',
+            ? 'tmux is available. Sessions persist across reconnections and panel restarts.'
+            : 'tmux is not installed. Terminals run in direct PTY mode (no persistence across restarts).',
         },
         git: {
           available: gitAvailable,
-          description: 'Git CLI disponible para clonar, consultar ramas y estado.',
+          description: 'Git CLI available for cloning and querying branches and status.',
         },
         caddy,
         docker,

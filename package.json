@@ -1,7 +1,7 @@
 {
   "name": "citadel",
   "version": "0.1.0",
-  "description": "Plataforma web autohospedada, ultraligera y segura para gestionar proyectos, terminales persistentes y agentes CLI en VPS",
+  "description": "Self-hosted, ultralight and secure web platform to manage projects, persistent terminals and CLI agents on a VPS",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",

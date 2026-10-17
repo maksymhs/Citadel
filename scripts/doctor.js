@@ -8,7 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 
 console.log('====================================================');
-console.log('       Citadel — Diagnóstico del Sistema            ');
+console.log('       Citadel — System Diagnostics                 ');
 console.log('====================================================\n');
 
 let passCount = 0;
@@ -34,28 +34,28 @@ const major = parseInt(nodeVer.slice(1).split('.')[0], 10);
 if (major >= 18) {
   report('PASS', 'Node.js Runtime', `${nodeVer} (compatible)`);
 } else {
-  report('FAIL', 'Node.js Runtime', `${nodeVer} (requiere Node.js >= 18 LTS)`);
+  report('FAIL', 'Node.js Runtime', `${nodeVer} (requires Node.js >= 18 LTS)`);
 }
 
 // 2. Check System Memory
 const totalMemMB = Math.round(os.totalmem() / 1024 / 1024);
 const freeMemMB = Math.round(os.freemem() / 1024 / 1024);
 if (totalMemMB >= 500) {
-  report('PASS', 'Memoria RAM', `${totalMemMB} MB total (${freeMemMB} MB libre)`);
+  report('PASS', 'System Memory', `${totalMemMB} MB total (${freeMemMB} MB free)`);
 } else {
-  report('WARN', 'Memoria RAM', `${totalMemMB} MB total (se recomiendan al menos 512 MB)`);
+  report('WARN', 'System Memory', `${totalMemMB} MB total (at least 512 MB recommended)`);
 }
 
 // 3. Check tmux
 try {
   const tmuxRes = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
   if (tmuxRes.status === 0) {
-    report('PASS', 'tmux (Persistencia)', tmuxRes.stdout.trim());
+    report('PASS', 'tmux (Persistence)', tmuxRes.stdout.trim());
   } else {
-    report('WARN', 'tmux (Persistencia)', 'No disponible. Terminales usarán PTY directo sin persistencia ante reinicios.');
+    report('WARN', 'tmux (Persistence)', 'Not available. Terminals will use direct PTY without persistence across restarts.');
   }
 } catch {
-  report('WARN', 'tmux (Persistencia)', 'tmux no encontrado en PATH.');
+  report('WARN', 'tmux (Persistence)', 'tmux not found in PATH.');
 }
 
 // 4. Check Git
@@ -64,10 +64,10 @@ try {
   if (gitRes.status === 0) {
     report('PASS', 'Git CLI', gitRes.stdout.trim());
   } else {
-    report('FAIL', 'Git CLI', 'Git no está disponible en PATH.');
+    report('FAIL', 'Git CLI', 'Git is not available in PATH.');
   }
 } catch {
-  report('FAIL', 'Git CLI', 'No se pudo invocar git.');
+  report('FAIL', 'Git CLI', 'Could not invoke git.');
 }
 
 // 5. Check AI Agents
@@ -84,33 +84,33 @@ for (const agent of agents) {
   }
 }
 if (detectedAgents.length > 0) {
-  report('PASS', 'Agentes IA detectados', detectedAgents.join(', '));
+  report('PASS', 'AI Agents detected', detectedAgents.join(', '));
 } else {
-  report('WARN', 'Agentes IA detectados', 'Ningún agente en PATH (instala claude, codex u opencode cuando desees utilizarlos)');
+  report('WARN', 'AI Agents detected', 'No agent in PATH (install claude, codex or opencode whenever you want to use them)');
 }
 
 // 6. Check Caddy (Optional)
 try {
   const caddyRes = spawnSync('caddy', ['version'], { encoding: 'utf8' });
   if (caddyRes.status === 0) {
-    report('PASS', 'Caddy Proxy', `${caddyRes.stdout.trim()} (opcional)`);
+    report('PASS', 'Caddy Proxy', `${caddyRes.stdout.trim()} (optional)`);
   } else {
-    report('WARN', 'Caddy Proxy', 'No instalado. Mapeo automático de dominios y HTTPS estará inactivo (opcional).');
+    report('WARN', 'Caddy Proxy', 'Not installed. Automatic domain mapping and HTTPS will be inactive (optional).');
   }
 } catch {
-  report('WARN', 'Caddy Proxy', 'No instalado (opcional). El panel funciona sin proxy.');
+  report('WARN', 'Caddy Proxy', 'Not installed (optional). The panel works without a proxy.');
 }
 
 // 7. Check Docker (Optional)
 try {
   const dockerRes = spawnSync('docker', ['--version'], { encoding: 'utf8' });
   if (dockerRes.status === 0) {
-    report('PASS', 'Docker Engine', `${dockerRes.stdout.trim()} (opcional)`);
+    report('PASS', 'Docker Engine', `${dockerRes.stdout.trim()} (optional)`);
   } else {
-    report('WARN', 'Docker Engine', 'No instalado (opcional).');
+    report('WARN', 'Docker Engine', 'Not installed (optional).');
   }
 } catch {
-  report('WARN', 'Docker Engine', 'No instalado (opcional).');
+  report('WARN', 'Docker Engine', 'Not installed (optional).');
 }
 
 // 8. Check Directories & DB Write Integrity
@@ -122,9 +122,9 @@ try {
   const testFile = path.join(dataDir, '.write-test');
   fs.writeFileSync(testFile, 'ok');
   fs.unlinkSync(testFile);
-  report('PASS', 'Permisos de Almacenamiento', `Escritura verificada en ${dataDir}`);
+  report('PASS', 'Storage Permissions', `Write verified at ${dataDir}`);
 } catch (err) {
-  report('FAIL', 'Permisos de Almacenamiento', `Error de escritura en ${dataDir}: ${err.message}`);
+  report('FAIL', 'Storage Permissions', `Write error at ${dataDir}: ${err.message}`);
 }
 
 // 9. Check Vendor Assets
@@ -132,13 +132,13 @@ const vendorDir = path.resolve(__dirname, '../public/vendor');
 const requiredVendor = ['xterm.js', 'xterm.css', 'addon-fit.js', 'addon-web-links.js'];
 const missingVendor = requiredVendor.filter((f) => !fs.existsSync(path.join(vendorDir, f)));
 if (missingVendor.length === 0) {
-  report('PASS', 'Assets locales (xterm.js)', 'Todos los bundles vendor están en public/vendor/ (0 CDNs)');
+  report('PASS', 'Local Assets (xterm.js)', 'All vendor bundles are in public/vendor/ (0 CDNs)');
 } else {
-  report('FAIL', 'Assets locales (xterm.js)', `Faltan archivos: ${missingVendor.join(', ')}. Ejecuta: npm run postinstall`);
+  report('FAIL', 'Local Assets (xterm.js)', `Missing files: ${missingVendor.join(', ')}. Run: npm run postinstall`);
 }
 
 console.log('\n====================================================');
-console.log(`Diagnóstico completado: ${passCount} superadas, ${warnCount} advertencias, ${failCount} fallos`);
+console.log(`Diagnostics complete: ${passCount} passed, ${warnCount} warnings, ${failCount} failures`);
 console.log('====================================================\n');
 
 process.exit(failCount > 0 ? 1 : 0);

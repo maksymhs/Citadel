@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Citadel — Actualizador seguro e idempotente
+# Citadel — Safe, idempotent updater
 set -euo pipefail
 
 echo "=================================================="
-echo "          Citadel — Proceso de Actualización      "
+echo "          Citadel — Update Process                "
 echo "=================================================="
 
 INSTALL_DIR="${CITADEL_DIR:-/srv/citadel/app}"
@@ -13,31 +13,31 @@ if [ ! -d "$INSTALL_DIR" ]; then
   INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 
-echo "[1/4] Accediendo al directorio de aplicación: $INSTALL_DIR"
+echo "[1/4] Entering application directory: $INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-echo "[2/4] Actualizando dependencias de Node.js..."
+echo "[2/4] Updating Node.js dependencies..."
 npm install --omit=dev
 npm run postinstall
 
-echo "[3/4] Verificando salud del sistema..."
+echo "[3/4] Checking system health..."
 node scripts/doctor.js
 
-echo "[4/4] Reiniciando servicio si está activo..."
+echo "[4/4] Restarting service if active..."
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet citadel 2>/dev/null; then
-  echo "Reiniciando citadel.service..."
+  echo "Restarting citadel.service..."
   sudo systemctl restart citadel
   sleep 2
-  echo "Verificando respuesta del servidor..."
+  echo "Checking server response..."
   if curl -s -f http://127.0.0.1:3000/api/auth/status >/dev/null; then
-    echo "Servicio actualizado y respondiendo correctamente."
+    echo "Service updated and responding correctly."
   else
-    echo "Advertencia: El servicio tardó en responder. Revisa: journalctl -u citadel -n 50"
+    echo "Warning: The service took too long to respond. Check: journalctl -u citadel -n 50"
   fi
 else
-  echo "Citadel actualizado localmente. Inicia con: npm start"
+  echo "Citadel updated locally. Start it with: npm start"
 fi
 
 echo "=================================================="
-echo "          Actualización completada con éxito      "
+echo "          Update completed successfully           "
 echo "=================================================="
