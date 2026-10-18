@@ -1615,7 +1615,11 @@
     content.innerHTML = `
       <div class="workspace-container">
         <div class="terminal-tabs-bar" id="sys-terminal-tabs-container">
-          <button class="btn btn-secondary btn-sm copy-mode-btn" id="sys-copy-mode-btn" style="margin-left:auto;" title="Browse scrollback (tmux copy-mode)" disabled>
+          <button class="btn btn-secondary btn-sm paste-btn" id="sys-paste-btn" style="margin-left:auto;" title="Paste from clipboard">
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
+            <span class="paste-label">Paste</span>
+          </button>
+          <button class="btn btn-secondary btn-sm copy-mode-btn" id="sys-copy-mode-btn" title="Browse scrollback (tmux copy-mode)" disabled>
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
             <span class="copy-mode-label">History</span>
           </button>
@@ -1630,6 +1634,9 @@
     document.getElementById('sys-tab-new-terminal-btn').onclick = () => spawnSysTerminal();
     document.getElementById('sys-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.sysTerminals.get(state.activeSysTerminalId), 'sys-copy-mode-btn');
+    };
+    document.getElementById('sys-paste-btn').onclick = () => {
+      pasteIntoTerminal(() => state.sysTerminals.get(state.activeSysTerminalId));
     };
 
     const viewport = document.getElementById('sys-terminal-viewport');
@@ -1709,7 +1716,8 @@
     if (!tabsContainer) return;
 
     const existingNewBtn = document.getElementById('sys-tab-new-terminal-btn');
-    const tabAnchor = document.getElementById('sys-copy-mode-btn') || existingNewBtn;
+    const tabAnchor = document.getElementById('sys-paste-btn')
+      || document.getElementById('sys-copy-mode-btn') || existingNewBtn;
     tabsContainer.querySelectorAll('.terminal-tab').forEach((el) => el.remove());
 
     for (const [id, item] of state.sysTerminals.entries()) {
@@ -1800,7 +1808,11 @@
       <div class="workspace-container">
         <!-- Tabs bar -->
         <div class="terminal-tabs-bar" id="terminal-tabs-container">
-          <button class="btn btn-secondary btn-sm copy-mode-btn" id="ws-copy-mode-btn" style="margin-left:auto;" title="Browse scrollback (tmux copy-mode)" disabled>
+          <button class="btn btn-secondary btn-sm paste-btn" id="ws-paste-btn" style="margin-left:auto;" title="Paste from clipboard">
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
+            <span class="paste-label">Paste</span>
+          </button>
+          <button class="btn btn-secondary btn-sm copy-mode-btn" id="ws-copy-mode-btn" title="Browse scrollback (tmux copy-mode)" disabled>
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
             <span class="copy-mode-label">History</span>
           </button>
@@ -1818,6 +1830,9 @@
     };
     document.getElementById('ws-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
+    };
+    document.getElementById('ws-paste-btn').onclick = () => {
+      pasteIntoTerminal(() => state.terminals.get(state.activeTerminalId));
     };
 
     const viewport = document.getElementById('terminal-viewport');
@@ -1899,7 +1914,8 @@
     if (!tabsContainer) return;
 
     const existingNewBtn = document.getElementById('tab-new-terminal-btn');
-    const tabAnchor = document.getElementById('ws-copy-mode-btn') || existingNewBtn;
+    const tabAnchor = document.getElementById('ws-paste-btn')
+      || document.getElementById('ws-copy-mode-btn') || existingNewBtn;
 
     // Remove old tabs
     tabsContainer.querySelectorAll('.terminal-tab').forEach((el) => el.remove());
@@ -2047,6 +2063,54 @@
     } catch (err) {
       showToast(err.message, 'error');
     }
+  }
+
+  // Paste button for the terminal toolbars. Long-press paste inside xterm is
+  // unreliable on mobile browsers, and the async Clipboard API is blocked on
+  // non-secure (plain HTTP) origins. Try the Clipboard API first, and when it is
+  // unavailable fall back to a modal textarea where the user can paste manually.
+  // Both paths deliver the text through term.paste() so bracketed paste mode
+  // (used by full-screen TUIs like opencode) is honored.
+  async function pasteIntoTerminal(getItem) {
+    const item = getItem ? getItem() : null;
+    if (!item || item.disposed) return;
+
+    let text = null;
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        text = await navigator.clipboard.readText();
+      }
+    } catch {
+      text = null;
+    }
+
+    if (text !== null) {
+      if (text === '') {
+        showToast('Clipboard is empty.', 'info');
+        return;
+      }
+      item.term.paste(text);
+      return;
+    }
+
+    openModal({
+      title: 'Paste into terminal',
+      bodyHtml: `
+        <div class="form-group">
+          <label class="form-label" for="terminal-paste-input">Long-press the box below and choose Paste</label>
+          <textarea id="terminal-paste-input" class="form-input" rows="5" spellcheck="false" placeholder="Paste here..."></textarea>
+        </div>
+      `,
+      confirmText: 'Send to terminal',
+      onConfirm: async () => {
+        const el = document.getElementById('terminal-paste-input');
+        const value = el ? el.value : '';
+        if (value && !item.disposed) item.term.paste(value);
+      },
+    });
+
+    const input = document.getElementById('terminal-paste-input');
+    if (input) input.focus();
   }
 
   // 4. Agents View

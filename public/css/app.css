@@ -927,6 +927,7 @@ html.is-mobile-ui #app-container {
   }
 
   .copy-mode-label,
+  .paste-label,
   .new-term-label {
     display: none;
   }
