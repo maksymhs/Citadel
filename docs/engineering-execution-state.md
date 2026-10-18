@@ -676,7 +676,7 @@ README/.env.example/architecture. No commits/pushes/deploys.
   recovery, JSON/stdout contract, injectable test design.
 - `docs/decisions.md` ADR-009: local-first diagnostics with a narrow, verified
   recovery surface.
-- Version will be bumped to `0.19.0` in the accompanying release commit.
+- Version bumped to `0.19.0` and released with annotated tag `v0.19.0`.
 
 ## 34. Residual risks and limits
 - Wi-Fi changes require NetworkManager (`nmcli`); other backends are diagnosed
@@ -693,11 +693,19 @@ README/.env.example/architecture. No commits/pushes/deploys.
   remains the fallback for a disruptive change.
 - Network diagnostics are Linux-first (`ip`); macOS/Windows are intentionally
   limited to the cross-platform checks, matching the deployment target.
-- No push or deploy is performed by this feature commit.
+- No push or deploy was performed; the release commit and tag are local.
 
 ## 35. Last checkpoint / next safe action
 - Checkpoint: implementation, tests, README/architecture/ADR/ledger updated;
   full suite green. Committed as `feat(diagnostics): add local doctor, network,
   wifi and repair commands`.
-- Next safe action: bump to `0.19.0`, create the release commit and annotated
-  tag, then push only when explicitly authorized.
+- Next safe action: push `main` and `v0.19.0` with
+  `git push origin main --tags` when explicitly authorized.
+
+## 36. Release v0.19.0
+- Feature commit: `2c28ba2` (`feat(diagnostics): add local doctor, network,
+  wifi and repair commands`).
+- Release commit: `chore(release): v0.19.0`; annotated tag `v0.19.0`.
+- Validation: `npm test` → 256 tests / 43 suites, 0 failures;
+  `git diff --check` clean.
+- Not pushed and not deployed.
