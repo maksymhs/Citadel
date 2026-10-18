@@ -444,3 +444,14 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Checkpoint: all three findings fixed, `npm test` 180/180 green, diff reviewed,
   docs updated.
 - Next safe action: none required; optional commit by the operator.
+
+## 27. Release v0.17.2 (this run, explicitly requested by the operator)
+- Version bump: `0.17.1` → `0.17.2` (patch: fail-closed worker credential
+  configuration, null-lease authority fix + recovery, unbound-heartbeat
+  warning; no API/schema changes).
+- Fix commit: `4d3b85a` (fix(task-mesh): fail closed on invalid node-token maps
+  and null-lease authority), with the full suite 180/180 green after the bump.
+- Release commit `chore(release): v0.17.2` and annotated tag `v0.17.2` created
+  locally.
+- Push not performed here: publish with `git push origin main --tags`.
+- No deploy performed (release = git version/tag only).
