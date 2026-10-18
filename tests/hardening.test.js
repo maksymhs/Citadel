@@ -53,9 +53,18 @@ describe('Config validation (fail closed)', () => {
   test('CITADEL_NODE_TOKEN is exposed when configured', () => {
     const cfg = withConfigEnv({ CITADEL_NODE_TOKEN: 'node-secret-123' }, (c) => c);
     assert.equal(cfg.NODE_TOKEN, 'node-secret-123');
+    assert.equal(cfg.NODE_TOKENS_CONFIGURED, false, 'unset per-node map keeps the shared model');
+    assert.equal(cfg.NODE_TOKENS.size, 0);
   });
 
-  test('CITADEL_NODE_TOKENS binds credentials to valid node ids only', () => {
+  test('an empty CITADEL_NODE_TOKENS counts as unset (shared model preserved)', () => {
+    const cfg = withConfigEnv({ CITADEL_NODE_TOKENS: '', CITADEL_NODE_TOKEN: 'node-secret-123' }, (c) => c);
+    assert.equal(cfg.NODE_TOKENS_CONFIGURED, false);
+    assert.equal(cfg.NODE_TOKENS.size, 0);
+    assert.equal(cfg.NODE_TOKEN, 'node-secret-123');
+  });
+
+  test('CITADEL_NODE_TOKENS binds credentials to valid node ids only (mixed config)', () => {
     const cfg = withConfigEnv({
       CITADEL_NODE_TOKENS: 'alpha:alpha-secret-0123456789,beta:short,broken,gamma:gamma-secret-0123456789,bad id:long-enough-secret-123',
     }, (c) => c);
@@ -64,6 +73,29 @@ describe('Config validation (fail closed)', () => {
     assert.equal(cfg.NODE_TOKENS.has('beta'), false, 'short tokens must be ignored');
     assert.equal(cfg.NODE_TOKENS.has('bad id'), false, 'invalid node ids must be ignored');
     assert.equal(cfg.NODE_TOKENS.size, 2);
+    assert.equal(cfg.NODE_TOKENS_CONFIGURED, true, 'valid entries keep the per-node model selected');
+  });
+
+  test('a fully invalid CITADEL_NODE_TOKENS fails closed and never logs secrets', () => {
+    const secret = 'shared-secret-never-logged-0123456789';
+    const errors = [];
+    const originalError = console.error;
+    console.error = (...args) => errors.push(args.join(' '));
+    let cfg;
+    try {
+      cfg = withConfigEnv({
+        CITADEL_NODE_TOKENS: 'beta:short,broken,bad id:long-enough-secret-123',
+        CITADEL_NODE_TOKEN: secret,
+      }, (c) => c);
+    } finally {
+      console.error = originalError;
+    }
+    assert.equal(cfg.NODE_TOKENS_CONFIGURED, true, 'an explicitly set map stays selected');
+    assert.equal(cfg.NODE_TOKENS.size, 0);
+    const report = errors.join('\n');
+    assert.match(report, /no valid "nodeId:token" entry/i);
+    assert.ok(!report.includes(secret), 'the shared secret must never be logged');
+    assert.ok(!report.includes('long-enough-secret-123'), 'entry values must never be logged');
   });
 });
 

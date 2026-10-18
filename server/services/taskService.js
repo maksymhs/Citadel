@@ -78,6 +78,16 @@ function tokensMatch(expected, provided) {
   return crypto.timingSafeEqual(a, b);
 }
 
+/**
+ * A lease is the only execution authority a running attempt has. Missing
+ * (NULL/empty) and past leases are both invalid: a result is accepted only
+ * while the current attempt holds a lease that is still in the future. A
+ * missing lease is never treated as an indefinite one.
+ */
+function hasValidLease(leaseUntil, now) {
+  return typeof leaseUntil === 'string' && leaseUntil !== '' && leaseUntil >= now;
+}
+
 function toPublicNode(row) {
   if (!row) return null;
   return {
@@ -185,12 +195,20 @@ function getTask(id) {
  *     remain, otherwise mark failed (explicit, bounded retry semantics).
  *   - `cancelling` past its lease: the worker never confirmed the kill, so the
  *     process is considered dead and the cancellation becomes final.
+ *
+ * A `running`/`cancelling` row with NO lease (NULL or empty) is treated exactly
+ * like an expired one: the current code never stores that state, so its only
+ * possible origin is a legacy/manually repaired database. Requeueing it (rather
+ * than granting it indefinite authority, or leaving it stuck forever) restores
+ * the invariant that every running attempt holds a valid, expiring lease.
+ *
  * Returns a summary so callers can emit trace events outside the transaction.
  */
 function reclaimExpired(db, now) {
   const expired = db.prepare(`
     SELECT id, node, attempt, max_attempts FROM tasks
-    WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until < ?
+    WHERE status = 'running'
+      AND (lease_until IS NULL OR lease_until = '' OR lease_until < ?)
   `).all(now);
 
   const requeued = [];
@@ -215,7 +233,9 @@ function reclaimExpired(db, now) {
   }
 
   const cancelling = db.prepare(`
-    SELECT id, node FROM tasks WHERE status = 'cancelling' AND lease_until IS NOT NULL AND lease_until < ?
+    SELECT id, node FROM tasks
+    WHERE status = 'cancelling'
+      AND (lease_until IS NULL OR lease_until = '' OR lease_until < ?)
   `).all(now);
   const finalizeStmt = db.prepare(`
     UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL, finished_at = ?, updated_at = ?
@@ -317,13 +337,15 @@ function claimTask(node) {
  * Report the outcome of a claimed task. The caller must present the claim token
  * returned by `claimTask`, and the attempt must still hold a valid lease: once
  * `lease_until` has passed the attempt has no authority, even if no other
- * worker has reclaimed the task yet.
+ * worker has reclaimed the task yet, and a running row whose lease is missing
+ * (NULL/empty) has no authority either — a null lease is never read as an
+ * indefinite one.
  *
  * All ownership checks (claim token, node identity, status, lease) and the
  * write run in one transaction with a guarded UPDATE, so a cancellation, a
  * reclaim or a concurrent duplicate report can never interleave with it. An
- * expired lease is reclaimed in the same transaction (requeue while attempts
- * remain, otherwise failed) and the caller gets an explicit rejection.
+ * expired or missing lease is reclaimed in the same transaction (requeue while
+ * attempts remain, otherwise failed) and the caller gets an explicit rejection.
  *
  * Statuses: `done`/`failed` finish a running attempt; `cancelled` confirms that
  * a previously requested cancellation actually terminated the process.
@@ -364,11 +386,13 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
       throw new Error('Task not found or already finished.');
     }
 
-    const leaseExpired = typeof row.lease_until === 'string'
-      && row.lease_until !== ''
-      && row.lease_until < now;
-    if (leaseExpired) {
-      return { leaseExpired: true, node: row.node, reclaim: reclaimExpired(db, now) };
+    const leaseMissing = row.lease_until === null || row.lease_until === undefined || row.lease_until === '';
+    if (leaseMissing || !hasValidLease(row.lease_until, now)) {
+      return {
+        leaseInvalid: leaseMissing ? 'missing' : 'expired',
+        node: row.node,
+        reclaim: reclaimExpired(db, now),
+      };
     }
 
     const finalStatus = isCancelReport ? 'cancelled' : (status === 'done' ? 'done' : 'failed');
@@ -380,7 +404,7 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
       SET status = ?, exit_code = ?, result_ref = ?, error = ?, result = ?,
           lease_until = NULL, claim_token = NULL, finished_at = ?, updated_at = ?
       WHERE id = ? AND claim_token = ? AND status = ?
-        AND (lease_until IS NULL OR lease_until >= ?)
+        AND lease_until >= ?
     `).run(
       finalStatus,
       Number.isFinite(exitCode) ? Math.trunc(exitCode) : null,
@@ -407,16 +431,21 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
 
   const outcome = tx();
   if (outcome.reclaim) recordReclaim(outcome.reclaim);
-  if (outcome.leaseExpired) {
+  if (outcome.leaseInvalid) {
+    const missing = outcome.leaseInvalid === 'missing';
     logService.record({
       level: 'warn',
       category: 'task',
       taskId: id,
       node: outcome.node,
-      action: 'task_result_rejected_expired',
-      message: 'Result rejected: the attempt lease had already expired; the task was reclaimed.',
+      action: missing ? 'task_result_rejected_no_lease' : 'task_result_rejected_expired',
+      message: missing
+        ? 'Result rejected: the running attempt had no lease; the task was reclaimed.'
+        : 'Result rejected: the attempt lease had already expired; the task was reclaimed.',
     });
-    throw new Error('Task lease expired; the result was rejected and the task reclaimed.');
+    throw new Error(missing
+      ? 'Task attempt has no lease; the result was rejected and the task reclaimed.'
+      : 'Task lease expired; the result was rejected and the task reclaimed.');
   }
 
   const task = outcome.task;
@@ -443,9 +472,10 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
  * Request cancellation of a queued or running task.
  *
  * A queued task is finalised immediately. A running task whose lease has
- * already expired is also finalised immediately: no worker holds authority to
- * keep running, so there is nothing to wait for. A running task with a valid
- * lease moves to `cancelling` (a *request*, not a confirmed kill): its node
+ * already expired — or is missing altogether — is also finalised immediately:
+ * no worker holds authority to keep running, so there is nothing to wait for.
+ * A running task with a valid lease moves to `cancelling` (a *request*, not a
+ * confirmed kill): its node
  * keeps the claim and the next heartbeat returns it in the `cancel` list so the
  * sentinel terminates the child and confirms with
  * `completeTask(..., {status:'cancelled', claimToken})`. If the worker never
@@ -460,16 +490,12 @@ function cancelTask(id) {
       throw new Error('Task not found or already finished.');
     }
 
-    const leaseExpired = typeof row.lease_until === 'string'
-      && row.lease_until !== ''
-      && row.lease_until < now;
-
     if (row.status === 'queued') {
       db.prepare(`
         UPDATE tasks SET status = 'cancelled', finished_at = ?, updated_at = ?
         WHERE id = ? AND status = 'queued'
       `).run(now, now, id);
-    } else if (leaseExpired) {
+    } else if (!hasValidLease(row.lease_until, now)) {
       db.prepare(`
         UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL,
                          finished_at = ?, updated_at = ?
@@ -505,8 +531,18 @@ function cancelTask(id) {
  * `running` is a *witness list*: the attempts this node says it is executing
  * right now. A sentinel sends object entries with the claim token it holds, so
  * the server can renew exactly those attempts and an outdated beat (old attempt,
- * wrong token) can never extend a newer attempt's lease. Plain id strings are
- * still accepted for compatibility (renewal then checks id/node/status only).
+ * wrong token) can never extend a newer attempt's lease.
+ *
+ * Plain id strings (and objects without claimToken) are still accepted for
+ * compatibility with older clients, but their guarantee is explicitly weaker:
+ * renewal is bound only to id + node + running status, so a delayed beat from
+ * an earlier attempt of the same node can extend a newer attempt's lease. Two
+ * bounds remain even for them: `reclaimExpired` runs before renewal in the same
+ * transaction, so an already-expired attempt is requeued/failed and cannot be
+ * resurrected; and a task re-claimed by a different node is protected by the
+ * node guard. The heartbeat logs a one-time warning when it sees unbound
+ * entries so operators know to upgrade the client.
+ *
  * A missing/!array value means a legacy client that only reports liveness: the
  * caller falls back to node-wide renewal so live tasks are not requeued under a
  * running process, and logs a one-time warning.
@@ -542,6 +578,20 @@ function warnLegacyHeartbeat(node) {
   });
 }
 
+const unboundHeartbeatWarned = new Set();
+
+function warnUnboundHeartbeat(node) {
+  if (unboundHeartbeatWarned.has(node)) return;
+  unboundHeartbeatWarned.add(node);
+  logService.record({
+    level: 'warn',
+    category: 'task',
+    node,
+    action: 'node_heartbeat_unbound',
+    message: 'Heartbeat reported running task ids without a claim token; those leases are renewed by id/node/status only, so a delayed beat from a previous attempt could extend a newer one. Upgrade the client to send {id, claimToken}.',
+  });
+}
+
 /**
  * Upsert a node's liveness, load and capacity and renew the leases of the
  * attempts that are actually alive on it.
@@ -551,7 +601,8 @@ function warnLegacyHeartbeat(node) {
  *     this node stops being renewed and expires through `reclaimExpired`. A
  *     delayed or duplicated beat therefore cannot resurrect a finished task or
  *     extend an outdated attempt (claim-token guard), and a dead process can
- *     never hold its lease forever.
+ *     never hold its lease forever. Entries without a claim token renew by
+ *     id/node/status only (documented weaker guarantee, warned once).
  *   - witness list absent (legacy client): renew every running attempt on the
  *     node and warn once; refusing to renew would requeue tasks that are still
  *     executing and cause duplicate work.
@@ -612,7 +663,11 @@ function heartbeat({ node, url, tags, capacity, active, load, running } = {}) {
   });
   const reclaim = tx();
   recordReclaim(reclaim);
-  if (!runningInfo.present) warnLegacyHeartbeat(cleanNode);
+  if (!runningInfo.present) {
+    warnLegacyHeartbeat(cleanNode);
+  } else if (runningInfo.entries.some((e) => !e.claimToken)) {
+    warnUnboundHeartbeat(cleanNode);
+  }
 
   // Tell a node which of its tasks were cancelled since the last beat. Both
   // `cancelling` (kill in flight) and `cancelled` are returned so the sentinel

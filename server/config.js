@@ -95,13 +95,20 @@ const SERVICE_NAME = process.env.CITADEL_SERVICE || 'citadel';
 const NODE_TOKEN = process.env.CITADEL_NODE_TOKEN || null;
 
 // Optional per-node worker credentials, "nodeId:token" pairs separated by
-// commas, semicolons or newlines (e.g. "vps-1:<secret>,vps-2:<secret>"). When
-// configured, each sentinel proves which node id it is: a credential can no
-// longer claim, heartbeat or report for another node, and the shared
-// CITADEL_NODE_TOKEN is ignored for worker endpoints (enabling identity binding
-// must never silently fall back to the shared secret). Malformed or short
-// entries are ignored with a warning that never contains the token itself.
-// Rotation/revocation = edit this value and restart; nothing is persisted.
+// commas, semicolons or newlines (e.g. "vps-1:<secret>,vps-2:<secret>").
+//
+// Three explicit states (worker node-token auth):
+//   - unset/empty        : legacy shared-token model (CITADEL_NODE_TOKEN), kept
+//                          for compatibility.
+//   - configured + valid : per-node identity binding; the shared token is
+//                          ignored for worker endpoints.
+//   - configured + all entries invalid: fail closed. Worker node-token auth is
+//                          disabled (the shared token is NOT used as a silent
+//                          fallback), an error is logged, and nothing is
+//                          persisted. Fix the value and restart.
+//
+// Malformed or short entries are ignored with a warning that never contains
+// the token itself. Rotation/revocation = edit this value and restart.
 function parseNodeTokens(value) {
   const map = new Map();
   if (!value) return map;
@@ -122,7 +129,23 @@ function parseNodeTokens(value) {
   });
   return map;
 }
-const NODE_TOKENS = parseNodeTokens(process.env.CITADEL_NODE_TOKENS);
+// Whether the administrator explicitly selected the per-node credential model.
+// An explicitly empty value (e.g. "CITADEL_NODE_TOKENS=") counts as unset, the
+// way docker-compose/systemd pass optional variables.
+const NODE_TOKENS_RAW = process.env.CITADEL_NODE_TOKENS;
+const NODE_TOKENS_CONFIGURED = typeof NODE_TOKENS_RAW === 'string' && NODE_TOKENS_RAW.trim() !== '';
+const NODE_TOKENS = parseNodeTokens(NODE_TOKENS_RAW);
+if (NODE_TOKENS_CONFIGURED && NODE_TOKENS.size === 0) {
+  // Selecting identity binding must never silently degrade to the shared
+  // secret. The map is authoritative even when empty: no node token will be
+  // accepted on worker endpoints until the value is fixed. The message never
+  // contains an entry or token.
+  console.error(
+    '[Config] CITADEL_NODE_TOKENS is set but no valid "nodeId:token" entry could be parsed. ' +
+    'Worker node-token authentication is disabled (fail closed); the shared CITADEL_NODE_TOKEN will NOT be used. ' +
+    'Fix the value and restart the server.'
+  );
+}
 if (NODE_TOKENS.size > 0 && NODE_TOKEN) {
   console.warn('[Config] CITADEL_NODE_TOKENS is set: the shared CITADEL_NODE_TOKEN is ignored for worker endpoints.');
 }
@@ -166,6 +189,7 @@ module.exports = {
   TRUST_PROXY,
   NODE_TOKEN,
   NODE_TOKENS,
+  NODE_TOKENS_CONFIGURED,
   DATA_DIR,
   DATABASE_PATH,
   PROJECTS_DIR,

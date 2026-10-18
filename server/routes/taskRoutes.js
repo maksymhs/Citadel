@@ -13,11 +13,13 @@
  *     cannot claim, heartbeat or report as another node.
  *   - CITADEL_NODE_TOKEN (legacy shared secret): any holder may declare any
  *     node id; acceptable only when every node is inside the same trust
- *     perimeter (single operator). Disabled as soon as per-node tokens exist.
+ *     perimeter (single operator). Disabled as soon as per-node tokens are
+ *     configured, including a configuration whose entries all failed to parse
+ *     (fail closed: never a silent fallback to the shared secret).
  */
 const crypto = require('node:crypto');
 const { requireAuth } = require('../security/auth');
-const { NODE_TOKEN, NODE_TOKENS } = require('../config');
+const { NODE_TOKEN, NODE_TOKENS, NODE_TOKENS_CONFIGURED } = require('../config');
 const taskService = require('../services/taskService');
 const auditService = require('../services/auditService');
 
@@ -39,7 +41,11 @@ function resolveNodeIdentity(provided) {
   for (const [nodeId, token] of NODE_TOKENS) {
     if (constantTimeEqual(provided, token)) return { nodeId };
   }
-  if (NODE_TOKENS.size === 0 && constantTimeEqual(provided, NODE_TOKEN)) {
+  // The shared token is accepted only when the per-node model was not selected
+  // at all. If CITADEL_NODE_TOKENS is set, the map is authoritative even when
+  // it parsed to zero entries (config.js logs the error): a typo must not
+  // silently downgrade identity binding back to the shared secret.
+  if (!NODE_TOKENS_CONFIGURED && constantTimeEqual(provided, NODE_TOKEN)) {
     return { nodeId: null };
   }
   return null;

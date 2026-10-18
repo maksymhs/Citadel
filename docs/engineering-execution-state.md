@@ -335,3 +335,112 @@ README/.env.example/architecture. No commits/pushes/deploys.
   authority and node identity binding`; `chore(release): v0.17.1`.
 - Tag `v0.17.1` pushed to `origin` together with `main`.
 - No deploy performed (release = git tag/version only).
+
+---
+
+# Continuation run — v0.17.1 final review and targeted fixes (2026-10-18)
+
+## 20. Scope and entry state
+- HEAD `575fe4d` (chore(release): v0.17.1), branch `main`, `git status` clean at entry.
+- Baseline: `npm test` → 164 tests, 164 pass, 0 fail (recorded in §18).
+- Reviewed: `server/config.js`, `server/routes/taskRoutes.js`,
+  `server/services/taskService.js`, `server/database/db.js` (schema + migrations
+  001–003), `scripts/sentinel.js`, the task/auth/hardening/sentinel tests, and the
+  task-mesh docs (`README.md`, `.env.example`, `docs/architecture.md`).
+
+## 21. Findings (verified, with evidence)
+- V1.1 CONFIRMED — silent shared-token fallback: `resolveNodeIdentity`
+  (`server/routes/taskRoutes.js`) accepted the shared `CITADEL_NODE_TOKEN`
+  whenever `NODE_TOKENS.size === 0`, including the case where the administrator
+  explicitly set `CITADEL_NODE_TOKENS` but every entry was invalid. Selecting
+  per-node identity silently degraded to the shared secret. Evidence: the new
+  `tests/task-node-tokens-invalid.test.js` ("shared token is rejected") fails on
+  a clean v0.17.1 worktree.
+- V2.1 CONFIRMED — null lease read as valid authority: `completeTask` only
+  rejected a lease that was a non-empty string `< now`, and its guarded UPDATE
+  explicitly allowed `lease_until IS NULL`; `cancelTask` and `reclaimExpired` had
+  the same blind spot (a running NULL-lease row could be completed indefinitely,
+  parked in `cancelling` forever, or never reclaimed). All 5 new null-lease tests
+  fail on clean v0.17.1.
+- V2.2 Reachability of `running` + NULL lease: NOT produced by any released flow.
+  `lease_until` has existed since the tasks table was introduced (`e8e6ba7`,
+  v0.14), `claimTask` has always set it, and `reclaimExpired` has always required
+  `lease_until IS NOT NULL`. Conclusion: **no data migration** (per the no-op
+  rule); instead the semantics were fixed and the reclaim path extended so any
+  such legacy/manually repaired row is recovered rather than stuck.
+- V3.1 CONFIRMED — legacy heartbeat entries (plain ids / objects without
+  `claimToken`) renew with a weaker guarantee: renewal binds id/node/status only,
+  so a delayed beat from a previous attempt of the same node can extend a newer
+  attempt. Compatibility is required (refusing to renew would requeue live tasks
+  of older clients and cause duplicate execution), but the guarantee was neither
+  warned nor explicitly tested. Bounds verified with new tests: `reclaimExpired`
+  runs before renewal in the same transaction (an expired attempt cannot be
+  resurrected) and the node guard blocks cross-node renewal.
+- Already correct (re-verified, no change): stale claim token vs newer attempt,
+  bound object entries, missing-`running` legacy warning, cancel confirmation
+  after expiry cannot reopen a terminal state, no secrets in API errors.
+
+## 22. Behaviour after the fixes
+- `CITADEL_NODE_TOKENS` unset/empty: legacy shared-token model exactly as before.
+- Configured with at least one valid entry (even mixed with invalid ones):
+  per-node model, shared token rejected (unchanged from v0.17.1).
+- Configured with zero valid entries: fail closed. Clear startup error (never
+  contains entries/tokens), the shared token is NOT accepted on worker endpoints,
+  sessions keep orchestrator access. Driven by the new `NODE_TOKENS_CONFIGURED`.
+- `completeTask`: authority = matching claim token + status + per-node identity
+  (when used) + valid lease (non-empty, not expired), checked atomically with the
+  guarded UPDATE (`lease_until >= now`). Missing/empty lease → distinct
+  `task_result_rejected_no_lease` event, reclaim in-transaction, explicit error.
+- `reclaimExpired`: NULL/empty leases on `running`/`cancelling` are treated as
+  expired (requeue / bounded failure / cancellation finalisation), restoring the
+  invariant "running ⇒ valid, expiring lease".
+- `cancelTask`: a running task with a missing lease finalises as `cancelled`
+  immediately (no authority to wait for).
+- `heartbeat`: entries without a claim token keep renewing (compat) and now emit
+  a one-time per-node `node_heartbeat_unbound` warning.
+
+## 23. Files changed (this run)
+- `server/config.js`: `NODE_TOKENS_CONFIGURED` + fail-closed startup error when
+  the variable is set but no entry parses; documented the three states.
+- `server/routes/taskRoutes.js`: shared token accepted only when the per-node
+  model was never selected.
+- `server/services/taskService.js`: `hasValidLease`, null-lease rejection and
+  recovery, tightened guarded UPDATE, `cancelTask` coherence, unbound-heartbeat
+  warning.
+- Tests new: `tests/task-node-tokens-invalid.test.js` (4),
+  `tests/task-node-tokens-mixed.test.js` (2).
+- Tests extended: `tests/hardening.test.js` (+2 config scenarios and extra
+  assertions), `tests/task-leases.test.js` (+8: five null-lease + three unbound
+  heartbeat cases).
+- Docs: `README.md`, `docs/architecture.md`, `.env.example`, this ledger.
+
+## 24. Tests executed (real commands, real results)
+- Pre-fix evidence (clean worktree of `575fe4d`, new tests copied in):
+  `node --test tests/task-node-tokens-invalid.test.js tests/task-node-tokens-mixed.test.js tests/task-leases.test.js`
+  → 28 tests, 20 pass, 8 fail (invalid-config fail-closed 2, null-lease 5,
+  unbound-heartbeat warning 1). Confirms the defects are real and caught.
+- `node --test tests/task-leases.test.js` → 22/22 pass.
+- `node --test tests/hardening.test.js tests/task-node-tokens-invalid.test.js
+  tests/task-node-tokens-mixed.test.js tests/task-node-auth.test.js
+  tests/task-node-identity.test.js` → 30/30 pass.
+- `npm test` (full) → 180 tests, 180 pass, 0 fail (~17 s). 164 previous + 16 new.
+- `git diff --check` → clean.
+
+## 25. Compatibility notes / residual risks
+- No schema change, no data migration; binary upgrade/downgrade unaffected.
+- Externally visible behaviour changes: (a) a fully-invalid per-node
+  configuration now disables worker token auth instead of silently falling back
+  to the shared token; (b) running rows with a missing lease are rejected and
+  recovered instead of treated as valid; (c) a new warning event for unbound
+  heartbeat entries. All intended hardening; normal configs/flows unchanged.
+- Residual: shared-token mode still trusts the declared node id (documented
+  single-operator model); legacy unbound heartbeats still renew by
+  id/node/status (warned, bounded by reclaim-first ordering); sentinel-restart
+  orphan risk unchanged.
+- Human decisions needed: none blocking. No commits/pushes/tags/deploys
+  performed (as instructed).
+
+## 26. Last checkpoint / next safe action
+- Checkpoint: all three findings fixed, `npm test` 180/180 green, diff reviewed,
+  docs updated.
+- Next safe action: none required; optional commit by the operator.
