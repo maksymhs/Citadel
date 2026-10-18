@@ -2,6 +2,7 @@
 # ==============================================================================
 # Citadel — friendly management CLI
 #   citadel status | url | qr | logs | restart | update | help
+#   citadel doctor | network | wifi list | wifi connect | repair
 # Installed as /usr/local/bin/citadel (a thin launcher for this file).
 # ==============================================================================
 set -euo pipefail
@@ -27,6 +28,11 @@ usage() {
 Citadel CLI
 
   citadel status         Service, version, URL and health
+  citadel doctor         Read-only host, network and Citadel diagnostics
+  citadel network        Detailed network and Wi-Fi diagnosis
+  citadel wifi list      List visible Wi-Fi networks (NetworkManager)
+  citadel wifi connect   Connect to a saved or new Wi-Fi network
+  citadel repair         List and apply supported recovery actions
   citadel url            Print the panel URL
   citadel qr             Print a scannable QR code for the panel URL
   citadel logs           Follow the service logs (journalctl -f)
@@ -34,6 +40,10 @@ Citadel CLI
   citadel update         Update to the latest version
   citadel tunnel         Expose the panel globally via a Cloudflare Quick Tunnel
   citadel help           Show this help
+
+Diagnostics options: doctor/network/wifi support --json; repair supports
+--action=<id> and --yes (remote network changes also require --confirm-remote).
+Run "citadel doctor --help" for details.
 
 Environment overrides: CITADEL_APP_DIR, CITADEL_SERVICE, CITADEL_UPDATER_PATH, PORT
 EOF
@@ -78,6 +88,18 @@ case "$cmd" in
     url="$(panel_url)"
     echo "Panel URL: $url"
     (cd "$APP_DIR" && node scripts/print-qr.js "$url")
+    ;;
+
+  doctor|network|wifi|repair)
+    if ! command -v node >/dev/null 2>&1; then
+      echo "ERROR: Node.js is required for $cmd." >&2
+      exit 1
+    fi
+    if [ ! -f "$APP_DIR/scripts/doctor.js" ]; then
+      echo "ERROR: $APP_DIR/scripts/doctor.js not found (set CITADEL_APP_DIR)." >&2
+      exit 1
+    fi
+    exec node "$APP_DIR/scripts/doctor.js" "$cmd" "$@"
     ;;
 
   logs)

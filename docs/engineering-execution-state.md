@@ -573,3 +573,131 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Next safe action: operator review of the diff and commit. If the release is
   approved, create `chore(release): v0.18.0` and tag `v0.18.0`, then push with
   `git push origin main --tags`. No deploy was performed.
+
+---
+
+# Continuation run — minimal Linux operations and recovery CLI (2026-10-19)
+
+## 29. Scope and entry state
+- Entry: `main` at `e264f9a` (`feat(task-mesh): track executions and reconcile
+  after restarts`), tag `v0.18.0` present and pushed. The operator explicitly
+  authorized that release commit/tag/push; §28's "no commit created" checkpoint
+  was superseded by that release.
+- New scope: implement the requested minimal operations surface without a plugin
+  framework, new database, daemon, service, dependency or frontend: `doctor`,
+  `network`, `wifi list`, `wifi connect`, `repair`, local-only and
+  capability-detected, with verified recovery and no blind configuration edits.
+- Baseline before this run: 216 tests / 36 suites, all passing.
+
+## 30. What was implemented
+- `scripts/diagnostics.js` (new): injectable dependency factory (`createDeps`),
+  parsers for `/proc/meminfo`, `df` (space and inodes, including macOS's combined
+  columns), default routes (JSON + text), `ip` interfaces (JSON + `ip -o`),
+  resolv.conf, failed systemd units, rfkill and NetworkManager output; read-only
+  collectors for host/capabilities, load, memory, disk/inodes, services,
+  interfaces/routes/DNS/gateway/HTTPS, Wi-Fi, containers and Citadel itself.
+  Every command uses an argv array, no shell, and a bounded timeout.
+- `scripts/doctor.js` (rewritten): `doctor`, `network`, `wifi list`,
+  `wifi connect`, `repair`, `help`; text and `--json`; exit codes 0/1/2;
+  capability-driven skips; allow-listed repair plan (`restart:<unit>`,
+  `wifi:unblock`, `wifi:reconnect:<profile>`), unit validation against observed
+  failed units plus `citadel.service`, root/sudo checks, confirmation, result
+  verification, and SSH-specific confirmation (`--confirm-remote`).
+- `scripts/citadel` (extended): dispatches `doctor|network|wifi|repair` to the
+  Node CLI with the same arguments; usage updated. `npm run doctor` remains.
+- `install.sh`: separated `npm install` from the post-install diagnostics and
+  made diagnostics informational, so a warning/failure report cannot abort an
+  otherwise valid install (the old `&&` chain would have propagated exit 1).
+- Secret handling: passwords are never accepted in argv or emitted in logs/JSON.
+  New Wi-Fi networks use `nmcli --ask` on a TTY; saved profiles use
+  `nmcli connection up id`. JSON mode refuses prompts (requires `--yes`, and a
+  saved profile for Wi-Fi), keeping stdout as exactly one JSON document; notes
+  go to stderr.
+
+## 31. Defects caught and fixed while building/testing
+- JSON stdout was polluted by Wi-Fi/repair progress (`write`). Added `note()`,
+  which sends non-result text to stderr in JSON mode.
+- SSH-over-wireless detection called the full network collector (ping/curl/DNS).
+  Replaced with a direct `ip -json addr` read plus `ip -o` fallback.
+- `verifyWifi` treated a missing nmcli device report as success, and only checked
+  a generic connection. It now requires a connected Wi-Fi device, a default
+  route, and the active SSID; an unverifiable SSID is reported as unverified.
+- `systemctl is-failed` exit status 1 means "not failed", not a command error.
+  Verification now distinguishes command errors, empty output and an actual
+  `failed` state. `rfkill` verification likewise fails closed.
+- `parseDf` misread macOS `df -P -i` (which also prints block columns) and
+  reported a bogus inode failure on `/dev`; parsing is now header-driven and
+  excludes pseudo filesystems.
+- `parseIpO` required a `<FLAGS>` block that `ip -o addr` does not emit; it now
+  parses address-only lines and accumulates IPv4/IPv6 addresses per interface.
+- `repair` silently exited 0 when `--action` was requested but the plan was
+  empty; it now reports an unknown/no-longer-applicable action (exit 2).
+- `restart:citadel.service` could be added twice (failed units + Citadel
+  service); it is deduplicated.
+- `--action=` and empty `--ssid=` are rejected as usage errors; extra arguments
+  are rejected instead of ignored.
+- Wi-Fi JSON mode could prompt (and `nmcli --ask` could write to inherited
+  stdout); prompt-based paths are refused in JSON mode.
+- Hard/soft-blocked radios are rejected before attempting a connection; the
+  already-blocked path now also applies when an SSID was supplied.
+- A missing/failed NetworkManager or rfkill command produces an honest warning
+  instead of a silent success or crash.
+- `--no-color` was parsed but not applied; it (and `--json`) now disables ANSI
+  on every report/note. `verifyWifi`/reconnect route checks gained the text
+  fallback for older iproute2 and require the active SSID/profile, not just a
+  link or a route.
+- Piping the text report into `head`/`less` crashed with an unhandled EPIPE;
+  the CLI now exits cleanly on a broken stdout pipe.
+- Installer integration: the post-install doctor call is no longer chained to
+  `npm install` with `&&`, so diagnostics cannot abort a valid installation.
+
+## 32. Tests executed (real commands, real results)
+- `node --test tests/diagnostics.test.js` → **20/20 pass** (parsers, capability
+  detection, optional Wi-Fi, manager/radio failures, healthy/failed/no-route
+  networks, DNS and HTTP honesty, no-network-change assertions via fakes).
+- `node --test tests/doctor-cli.test.js` → **20/20 pass** (JSON-only stdout and
+  exit codes, help/usage, empty and unknown repair plans, unit validation and
+  verification, still-failed/unverifiable actions, rfkill/reconnect checks,
+  remote confirmation, JSON repair execution, Wi-Fi list/connect, `nmcli --ask`
+  argv without passwords, JSON prompt refusal, hard-block refusal, and
+  unverifiable active SSID, and `--no-color`).
+- `npm test` (full) → **256 tests / 43 suites, 256 pass, 0 fail**, exit 0
+  (~11.2 s). No baseline regression (216 → 256; 40 new).
+- Manual local smoke on macOS (non-target, no `ip`/systemd): `doctor` and
+  `doctor --json` exit 0, JSON parses, unavailable subsystems are skipped, and
+  `repair --json` returns an empty plan. No host network/firewall commands were
+  executed by the tests.
+
+## 33. Documentation
+- `README.md` §6: commands, `--json`, Debian/Ubuntu first, optional Wi-Fi/VPS,
+  read-only guarantees, allow-listed repair, secret handling, SSH risk, exit
+  codes, and source-checkout invocation; layout updated.
+- `docs/architecture.md` §7: local CLI flow, capability-driven skips, narrow
+  recovery, JSON/stdout contract, injectable test design.
+- `docs/decisions.md` ADR-009: local-first diagnostics with a narrow, verified
+  recovery surface.
+- Version will be bumped to `0.19.0` in the accompanying release commit.
+
+## 34. Residual risks and limits
+- Wi-Fi changes require NetworkManager (`nmcli`); other backends are diagnosed
+  as unsupported rather than reconfigured blindly.
+- Hidden networks may not appear in `nmcli device wifi list`, so an otherwise
+  successful connection can be reported "could not be verified" (honest, not a
+  false success).
+- Polkit may ask for authorization or deny `nmcli`/`rfkill`; the command reports
+  the failure. There is no automatic privilege escalation beyond an explicit
+  `sudo` invocation for allow-listed root actions.
+- Read-only probes (DNS/HTTPS/gateway) can take a few seconds on a broken
+  network; they are bounded and never required for the local checks.
+- No automatic rollback and no configuration-file editing; console/IPMI access
+  remains the fallback for a disruptive change.
+- Network diagnostics are Linux-first (`ip`); macOS/Windows are intentionally
+  limited to the cross-platform checks, matching the deployment target.
+- No push or deploy is performed by this feature commit.
+
+## 35. Last checkpoint / next safe action
+- Checkpoint: implementation, tests, README/architecture/ADR/ledger updated;
+  full suite green. Committed as `feat(diagnostics): add local doctor, network,
+  wifi and repair commands`.
+- Next safe action: bump to `0.19.0`, create the release commit and annotated
+  tag, then push only when explicitly authorized.

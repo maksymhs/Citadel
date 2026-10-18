@@ -388,7 +388,12 @@ else
   # account that systemd runs the server as, and so the working directory is
   # accessible even when its parent is not world-traversable.
   # npm install runs the postinstall (copy-vendor) itself, so it is not repeated here.
-  run_as_service_user "cd '$APP_DIR' && npm install --omit=dev && DATA_DIR='$DATA_DIR' node scripts/doctor.js"
+  run_as_service_user "cd '$APP_DIR' && npm install --omit=dev"
+  # Diagnostics are informational during installation: a failed check (for
+  # example, memory pressure or a failed system unit) must not abort a valid
+  # install. The operator can inspect the report and run "citadel repair".
+  run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' node scripts/doctor.js" \
+    || echo "      Diagnostics reported issues; installation continues. Review the output above."
   # Re-assert ownership in case anything above was created with different perms.
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
     $SUDO chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
