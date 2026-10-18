@@ -20,6 +20,7 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
 - **Domain Publishing (Optional)**: Caddy integration through its local admin API for reverse proxying and automatic HTTPS via Let's Encrypt.
 - **Docker Monitoring (Optional)**: Container inspection over a protected Unix socket. The core works 100% without Docker or Caddy.
 - **Fleet (Multi-Host)**: Register other Citadel instances (URL + token, encrypted at rest) and manage them from one panel — a **single-pane-of-glass dashboard** shows every device (online/offline, version, updates, agents installed) and offers **Check All** / **Update All** bulk actions. You can also browse each host's status/version, list and install AI agents and trigger self-updates remotely. The token is a bearer session id accepted by the remote API.
+- **Distributed Task Mesh**: A minimal, pull-based work queue so one smart orchestrator agent can split work across many nodes. A per-node **sentinel** pulls one task at a time when it has a free slot, so load balancing is emergent; a short lease keeps crashed workers harmless. Exposed over HTTP and as a dependency-free **MCP server** (`scripts/citadel-mcp.js`).
 - **Plugin System**: Standardized `plugin.json` manifests with fault isolation so no plugin can take down the core.
 - **Idempotent Installation**: An `install.sh` installer and a systemd unit for Debian/Ubuntu and POSIX environments.
 
@@ -153,6 +154,41 @@ CITADEL_PEER_TOKEN=<long-random-shared-secret>
 ```
 
 When set, triggering an update also asks every peer to update itself. The peer endpoint is token-authenticated (constant-time) and never fans out again, so there are no update loops. Keep the token out of version control.
+
+### Distributed task mesh (parallel work across nodes)
+
+The simplest and most solid way to spread work is a **pull queue**: the orchestrator (a smart agent) decides *what* and *how much*; each node is dumb and only pulls when it has a free slot, so load balancing is emergent and no node is a scheduler. A short lease, renewed by the sentinel heartbeat, means a crashed worker's task returns to the queue automatically.
+
+**Control plane (HTTP, session-authenticated):**
+
+```
+POST /api/tasks              {cmd, args?, projectPath?, priority?, node?}  # enqueue
+POST /api/tasks/claim        {node}                                       # pull one (204 if none)
+POST /api/tasks/:id/result   {status, exitCode?, resultRef?, error?}      # report
+GET  /api/tasks?status=&node=                                             # progress
+POST /api/nodes/heartbeat    {node, capacity, active, load, tags?}        # liveness + lease renewal
+GET  /api/nodes                                                           # list nodes and load
+```
+
+**Sentinel (one per node).** Run it inside a Citadel terminal so tmux keeps it alive across restarts, or as a systemd unit:
+
+```
+CITADEL_URL=https://panel.example.com \
+CITADEL_TOKEN=<session id> \
+CITADEL_NODE=vps-2 \
+CITADEL_CAPACITY=2 \
+node scripts/sentinel.js
+```
+
+`cmd` is executed directly (no shell); for shell one-liners use `{"cmd":"bash","args":["-lc","..."]}`. Leave `node` off a task to let any free node pull it, or pin it to place work manually. Data/artifacts stay on your own transport (git branches, an object store) — the queue only carries small JSON.
+
+**MCP server.** Any MCP-capable agent can drive the mesh with the tools `citadel_nodes`, `citadel_node_load`, `citadel_enqueue_task`, `citadel_tasks` and `citadel_task`:
+
+```
+CITADEL_URL=https://panel.example.com CITADEL_TOKEN=<session id> node scripts/citadel-mcp.js
+```
+
+It is dependency-free: newline-delimited JSON-RPC 2.0 on stdio. To distribute load-aware, the agent reads `citadel_nodes`/`citadel_node_load` and either enqueues unpinned (any idle node) or pins to the least busy one.
 
 ### File Explorer
 

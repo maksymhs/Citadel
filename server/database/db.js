@@ -163,9 +163,43 @@ function initDatabase(customPath = null) {
       updated_at TEXT NOT NULL
     );
 
+    -- Distributed work queue: an orchestrator enqueues tasks, a per-node
+    -- sentinel atomically claims one at a time and reports the result. A short
+    -- lease (renewed by the node heartbeat) makes crashed workers harmless.
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'queued',
+      node TEXT,
+      project_path TEXT,
+      cmd TEXT NOT NULL,
+      args TEXT,
+      priority INTEGER NOT NULL DEFAULT 0,
+      lease_until TEXT,
+      result_ref TEXT,
+      exit_code INTEGER,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT
+    );
+
+    -- Nodes that run sentinels and report their load via heartbeat.
+    CREATE TABLE IF NOT EXISTS nodes (
+      id TEXT PRIMARY KEY,
+      url TEXT,
+      tags TEXT,
+      capacity INTEGER NOT NULL DEFAULT 1,
+      active INTEGER NOT NULL DEFAULT 0,
+      load REAL,
+      last_seen TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_lease ON tasks(lease_until);
   `);
 
   runMigrations(db);
