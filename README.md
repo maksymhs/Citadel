@@ -21,6 +21,7 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
 - **Docker Monitoring (Optional)**: Container inspection over a protected Unix socket. The core works 100% without Docker or Caddy.
 - **Fleet (Multi-Host)**: Register other Citadel instances (URL + token, encrypted at rest) and manage them from one panel — a **single-pane-of-glass dashboard** shows every device (online/offline, version, updates, agents installed) and offers **Check All** / **Update All** bulk actions. You can also browse each host's status/version, list and install AI agents and trigger self-updates remotely. The token is a bearer session id accepted by the remote API.
 - **Distributed Task Mesh**: A minimal, pull-based work queue so one smart orchestrator agent can split work across many nodes. A per-node **sentinel** pulls one task at a time when it has a free slot, so load balancing is emergent; a short lease keeps crashed workers harmless. Exposed over HTTP and as a dependency-free **MCP server** (`scripts/citadel-mcp.js`).
+- **Observability (Logs & Metrics)**: A built-in **event trace** (task lifecycle, node health) plus periodic **resource samples** (load, memory, terminals/tasks), shown as a live sparkline and a filterable timeline with **JSON/CSV export** — so you can debug and tune from real data. Retention and sampling interval are configurable.
 - **Plugin System**: Standardized `plugin.json` manifests with fault isolation so no plugin can take down the core.
 - **Idempotent Installation**: An `install.sh` installer and a systemd unit for Debian/Ubuntu and POSIX environments.
 
@@ -194,6 +195,24 @@ CITADEL_URL=https://panel.example.com CITADEL_TOKEN=<session id> node scripts/ci
 ```
 
 It is dependency-free: newline-delimited JSON-RPC 2.0 on stdio. To distribute load-aware, the agent reads `citadel_nodes`/`citadel_node_load` and either enqueues unpinned (any idle node) or pins to the least busy one.
+
+### Observability (logs & metrics)
+
+The **Logs & Metrics** view turns Citadel's own operation into something you can debug and improve from. It has two layers, both stored in SQLite and exportable:
+
+- **Event trace** — task lifecycle (`enqueued`, `claimed`, `completed`, `failed`, `cancelled`) and node health transitions (`stale`, `recovered`), plus server start. Sensitive keys (`token`, `password`, `secret`, …) are redacted before storage.
+- **Resource samples** — load average, CPU cores, memory and active terminal/task counts, captured every 30s by a background sampler and shown as a live sparkline.
+
+The view shows 24h summary cards (errors/warns, task status, peak load/memory, nodes online), a filterable event timeline and the slowest tasks, with one-click **Export JSON/CSV**:
+
+```
+GET /api/logs/events?level=&category=&node=&taskId=&since=&limit=   # trace
+GET /api/logs/metrics?host=&since=&limit=                          # samples (oldest first)
+GET /api/logs/summary                                              # 24h health overview
+GET /api/logs/export?type=events|metrics&format=json|csv           # download
+```
+
+Retention is configurable: `CITADEL_LOG_RETENTION_DAYS` (default `30`), sampler interval `CITADEL_METRICS_INTERVAL_MS` (default `30000`), node staleness `CITADEL_NODE_STALE_MS` (default `90000`).
 
 ### File Explorer
 

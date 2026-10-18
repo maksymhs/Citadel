@@ -26,6 +26,10 @@
     fleetHosts: [],
     fleetAgents: {}, // hostId -> agents[]
     fleetStatus: {}, // hostId -> { ok, version, commit } | { error }
+    logsEvents: [],
+    logsMetrics: [],
+    logsSummary: null,
+    logsFilter: { level: '', category: '', limit: 200 },
     docker: null,
     containers: [],
     dashboardTimer: null,
@@ -39,7 +43,7 @@
   const UI_STATE_KEY = 'citadel.uiState';
   const KNOWN_VIEWS = [
     'dashboard', 'projects', 'repos', 'files', 'workspace', 'terminal',
-    'agents', 'deployments', 'docker', 'plugins', 'fleet', 'system',
+    'agents', 'deployments', 'docker', 'plugins', 'fleet', 'logs', 'system',
   ];
 
   function loadUiState() {
@@ -359,6 +363,10 @@
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/></svg>
               <span>Fleet</span>
             </a>
+            <a class="nav-item" data-view="logs">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+              <span>Logs & Metrics</span>
+            </a>
             <a class="nav-item" data-view="system">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
               <span>System & Audit</span>
@@ -534,6 +542,9 @@
     } else if (view === 'fleet') {
       titleEl.textContent = 'Fleet — Remote Hosts';
       renderFleetView();
+    } else if (view === 'logs') {
+      titleEl.textContent = 'Logs & Metrics';
+      renderLogsView();
     } else if (view === 'system') {
       titleEl.textContent = 'System Diagnostics & Audit';
       renderSystemView();
@@ -2513,6 +2524,190 @@
         renderFleetHosts(document.getElementById('main-content'));
         showToast(host ? 'Host updated.' : 'Host added.', 'success');
       },
+    });
+  }
+
+  // 4c. Logs & Metrics — observability (event trace + resource samples)
+  async function renderLogsView() {
+    const content = document.getElementById('main-content');
+    const actions = document.getElementById('top-bar-actions');
+    actions.innerHTML = `
+      <button class="btn btn-secondary btn-sm" id="logs-export-json">Export JSON</button>
+      <button class="btn btn-secondary btn-sm" id="logs-export-csv">Export CSV</button>
+      <button class="btn btn-secondary btn-sm" id="logs-refresh">Refresh</button>`;
+    document.getElementById('logs-export-json').onclick = () => exportLogs('json');
+    document.getElementById('logs-export-csv').onclick = () => exportLogs('csv');
+    document.getElementById('logs-refresh').onclick = () => refreshLogs();
+
+    content.innerHTML = '<div style="color:var(--text-secondary);">Loading logs…</div>';
+    await refreshLogs();
+  }
+
+  function exportLogs(format, type = 'events') {
+    const qs = new URLSearchParams({ type, format });
+    if (state.logsFilter.level) qs.set('level', state.logsFilter.level);
+    if (state.logsFilter.category) qs.set('category', state.logsFilter.category);
+    const a = document.createElement('a');
+    a.href = `/api/logs/export?${qs.toString()}`;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function refreshLogs() {
+    const content = document.getElementById('main-content');
+    if (!content) return;
+    const f = state.logsFilter;
+    const qs = new URLSearchParams();
+    if (f.level) qs.set('level', f.level);
+    if (f.category) qs.set('category', f.category);
+    qs.set('limit', String(f.limit || 200));
+    try {
+      const [ev, me, su] = await Promise.all([
+        api(`/api/logs/events?${qs.toString()}`),
+        api('/api/logs/metrics?limit=120'),
+        api('/api/logs/summary'),
+      ]);
+      state.logsEvents = ev.events || [];
+      state.logsMetrics = me.metrics || [];
+      state.logsSummary = su.summary || null;
+    } catch (err) {
+      content.innerHTML = `<div style="color:var(--danger-color);">Failed to load logs: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
+    renderLogsContent();
+  }
+
+  function logEventRow(ev) {
+    const badge = ev.level === 'error' ? 'badge-danger' : ev.level === 'warn' ? 'badge-warning' : 'badge-muted';
+    const time = new Date(ev.ts).toLocaleTimeString();
+    return `<tr>
+      <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(time)}</td>
+      <td><span class="badge ${badge}">${escapeHtml(ev.level)}</span></td>
+      <td>${escapeHtml(ev.category || '')}</td>
+      <td>${escapeHtml(ev.message || ev.action || '')}</td>
+      <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">${escapeHtml(ev.node || '—')}</td>
+    </tr>`;
+  }
+
+  function renderMetricsChart(metrics) {
+    if (!metrics.length) return '';
+    const w = 600;
+    const h = 80;
+    const pad = 4;
+    const line = (vals, color) => {
+      const max = Math.max(...vals, 1);
+      const points = vals.map((v, i) => {
+        const x = pad + (i / Math.max(vals.length - 1, 1)) * (w - 2 * pad);
+        const y = h - pad - (v / max) * (h - 2 * pad);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      return `<polyline fill="none" stroke="${color}" stroke-width="2" points="${points}" />`;
+    };
+    const load = line(metrics.map((m) => m.load1 || 0), 'var(--accent-color)');
+    const mem = line(metrics.map((m) => m.memUsedPercent || 0), '#f59e0b');
+    const last = metrics[metrics.length - 1];
+    return `
+      <div class="card" style="margin-bottom:24px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:12px;">
+          <h3 style="font-size:14px;font-weight:600;">Resources</h3>
+          <div style="font-size:12px;color:var(--text-muted);">
+            <span style="color:var(--accent-color);">load1</span> · <span style="color:#f59e0b;">mem %</span>
+            · now: ${last.load1 != null ? last.load1.toFixed(2) : '—'} / ${last.memUsedPercent ?? '—'}%
+            · ${metrics.length} samples
+          </div>
+        </div>
+        <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:90px;background:var(--bg-tertiary);border-radius:6px;">${load}${mem}</svg>
+      </div>`;
+  }
+
+  function renderSlowTasks(list) {
+    if (!list || list.length === 0) return '';
+    return `
+      <div class="card" style="margin-bottom:24px;">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">Slowest tasks (24h)</h3>
+        <div class="table-container">
+          <table class="data-table">
+            <thead><tr><th>Task</th><th style="width:120px;">Node</th><th>Command</th><th style="width:100px;">Duration</th></tr></thead>
+            <tbody>${list.map((t) => `<tr>
+              <td style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(String(t.id).slice(0, 8))}</td>
+              <td>${escapeHtml(t.node || '—')}</td>
+              <td style="font-family:var(--font-mono);font-size:11px;">${escapeHtml((t.cmd || '').split('/').pop())}</td>
+              <td>${t.durationSeconds != null ? `${t.durationSeconds.toFixed(1)}s` : '—'}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  function renderLogsContent() {
+    const content = document.getElementById('main-content');
+    const s = state.logsSummary || {};
+    const level = s.eventsByLevel || {};
+    const events = state.logsEvents || [];
+    const metrics = state.logsMetrics || [];
+    const totalEvents = (level.info || 0) + (level.warn || 0) + (level.error || 0) + (level.debug || 0);
+    const tasks = s.tasksByStatus || {};
+
+    content.innerHTML = `
+      <div class="grid-cards">
+        <div class="card">
+          <div class="card-title">EVENTS (24h)</div>
+          <div class="card-value">${totalEvents}</div>
+          <div class="card-subtitle">${level.error || 0} error · ${level.warn || 0} warn</div>
+        </div>
+        <div class="card">
+          <div class="card-title">TASKS</div>
+          <div class="card-value">${tasks.running || 0}</div>
+          <div class="card-subtitle">${tasks.failed || 0} failed · ${tasks.done || 0} done</div>
+        </div>
+        <div class="card">
+          <div class="card-title">PEAK LOAD / MEM</div>
+          <div class="card-value">${s.peakLoad != null ? Number(s.peakLoad).toFixed(2) : '—'}</div>
+          <div class="card-subtitle">mem ${s.peakMemPercent != null ? `${s.peakMemPercent}%` : '—'}</div>
+        </div>
+        <div class="card">
+          <div class="card-title">NODES ONLINE</div>
+          <div class="card-value">${s.nodesOnline ?? 0}/${s.nodesTotal ?? 0}</div>
+          <div class="card-subtitle">${(s.staleNodes || []).length ? `stale: ${escapeHtml(s.staleNodes.join(', '))}` : 'all healthy'}</div>
+        </div>
+      </div>
+
+      ${renderMetricsChart(metrics)}
+
+      <div class="card" style="margin-bottom:24px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
+          <h3 style="font-size:14px;font-weight:600;">Event Timeline</h3>
+          <div style="display:flex;gap:8px;">
+            <select class="form-input" id="logs-level-filter" style="width:auto;padding:6px 10px;">
+              <option value="">All levels</option>
+              ${['info', 'warn', 'error', 'debug'].map((l) => `<option value="${l}" ${state.logsFilter.level === l ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+            <select class="form-input" id="logs-category-filter" style="width:auto;padding:6px 10px;">
+              <option value="">All categories</option>
+              ${['task', 'node', 'system'].map((c) => `<option value="${c}" ${state.logsFilter.category === c ? 'selected' : ''}>${c}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead><tr><th style="width:100px;">Time</th><th style="width:80px;">Level</th><th style="width:100px;">Category</th><th>Message</th><th style="width:130px;">Node</th></tr></thead>
+            <tbody>${events.length ? events.map(logEventRow).join('') : '<tr><td colspan="5" style="color:var(--text-muted);">No events.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+
+      ${renderSlowTasks(s.slowestTasks)}
+    `;
+
+    document.getElementById('logs-level-filter')?.addEventListener('change', (e) => {
+      state.logsFilter.level = e.target.value;
+      refreshLogs();
+    });
+    document.getElementById('logs-category-filter')?.addEventListener('change', (e) => {
+      state.logsFilter.category = e.target.value;
+      refreshLogs();
     });
   }
 

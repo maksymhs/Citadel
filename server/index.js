@@ -11,12 +11,14 @@ const {
   HOST,
   SESSION_SECRET,
   NODE_ENV,
+  APP_VERSION,
 } = require('./config');
 
 const { initDatabase, closeDatabase } = require('./database/db');
 const pluginLoader = require('./services/pluginLoader');
 const terminalManager = require('./services/terminalManager');
 const connectService = require('./services/connectService');
+const logService = require('./services/logService');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -28,6 +30,7 @@ const systemRoutes = require('./routes/systemRoutes');
 const peerRoutes = require('./routes/peerRoutes');
 const fleetRoutes = require('./routes/fleetRoutes');
 const taskRoutes = require('./routes/taskRoutes');
+const logRoutes = require('./routes/logRoutes');
 const fileRoutes = require('./routes/fileRoutes');
 const proxyRoutes = require('./routes/proxyRoutes');
 const dockerRoutes = require('./routes/dockerRoutes');
@@ -125,6 +128,7 @@ async function buildServer(options = {}) {
   await fastify.register(peerRoutes);
   await fastify.register(fleetRoutes);
   await fastify.register(taskRoutes);
+  await fastify.register(logRoutes);
   await fastify.register(fileRoutes);
   await fastify.register(proxyRoutes);
   await fastify.register(dockerRoutes);
@@ -157,12 +161,17 @@ async function startServer() {
     // Non-fatal: reconciliation is best-effort.
   }
 
+  // Observability: start sampling resources and recording node health.
+  logService.record({ category: 'system', action: 'server_started', message: `Citadel started (v${APP_VERSION}).` });
+  logService.startSampler();
+
   // Graceful shutdown
   const signals = ['SIGINT', 'SIGTERM'];
   for (const signal of signals) {
     process.on(signal, async () => {
       console.log(`\n[Citadel] Received ${signal}. Shutting down gracefully...`);
       try {
+        logService.stopSampler();
         await fastify.close();
         closeDatabase();
         console.log('[Citadel] Server and database closed cleanly.');

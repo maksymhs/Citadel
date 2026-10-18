@@ -208,11 +208,45 @@ function initDatabase(customPath = null) {
       last_seen TEXT NOT NULL
     );
 
+    -- Structured observability timeline (task lifecycle, node health, system).
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      level TEXT NOT NULL DEFAULT 'info',
+      category TEXT NOT NULL,
+      node TEXT,
+      task_id TEXT,
+      action TEXT,
+      message TEXT,
+      details TEXT
+    );
+
+    -- Periodic resource samples for historical charts and export.
+    CREATE TABLE IF NOT EXISTS metric_samples (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      host TEXT NOT NULL,
+      load1 REAL,
+      load5 REAL,
+      load15 REAL,
+      cpu_cores INTEGER,
+      mem_used_percent INTEGER,
+      mem_free_mb INTEGER,
+      mem_total_mb INTEGER,
+      active_terminals INTEGER,
+      tasks_running INTEGER
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
     CREATE INDEX IF NOT EXISTS idx_tasks_lease ON tasks(lease_until);
+    CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+    CREATE INDEX IF NOT EXISTS idx_events_level ON events(level);
+    CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
+    CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metric_samples(ts);
+    CREATE INDEX IF NOT EXISTS idx_metrics_host ON metric_samples(host);
   `);
 
   runMigrations(db);

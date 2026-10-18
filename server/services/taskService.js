@@ -11,6 +11,7 @@
  */
 const crypto = require('node:crypto');
 const { getDatabase } = require('../database/db');
+const logService = require('./logService');
 
 const LEASE_MS = parseInt(process.env.CITADEL_TASK_LEASE_MS, 10) || 90000;
 const MAX_RESULT_CHARS = 20000;
@@ -122,6 +123,15 @@ function enqueue({ cmd, args, projectPath, priority, node, agent, prompt } = {})
     now
   );
 
+  logService.record({
+    category: 'task',
+    taskId: id,
+    node: node ? String(node) : null,
+    action: 'task_enqueued',
+    message: agentId ? `Enqueued ${agentId} agent task.` : `Enqueued task: ${cleanCmd}.`,
+    details: { cmd: cleanCmd, agent: agentId, projectPath: projectPath ? String(projectPath) : null },
+  });
+
   return getTask(id);
 }
 
@@ -185,7 +195,17 @@ function claimTask(node) {
     return db.prepare('SELECT * FROM tasks WHERE id = ?').get(candidate.id);
   });
 
-  return toPublicTask(tx());
+  const claimed = toPublicTask(tx());
+  if (claimed) {
+    logService.record({
+      category: 'task',
+      taskId: claimed.id,
+      node: claimed.node,
+      action: 'task_claimed',
+      message: `Task claimed by ${claimed.node}.`,
+    });
+  }
+  return claimed;
 }
 
 /**
@@ -216,7 +236,20 @@ function completeTask(id, { status, exitCode, resultRef, error, result } = {}) {
   if (res.changes !== 1) {
     throw new Error('Task not found or already finished.');
   }
-  return getTask(id);
+
+  const task = getTask(id);
+  logService.record({
+    level: finalStatus === 'failed' ? 'error' : 'info',
+    category: 'task',
+    taskId: id,
+    node: task.node,
+    action: finalStatus === 'failed' ? 'task_failed' : 'task_completed',
+    message: finalStatus === 'failed'
+      ? `Task failed (exit ${task.exitCode ?? 'n/a'}): ${error || 'unknown error'}`
+      : 'Task completed.',
+    details: { exitCode: task.exitCode, resultRef: task.resultRef },
+  });
+  return task;
 }
 
 /**
@@ -234,7 +267,17 @@ function cancelTask(id) {
   if (res.changes !== 1) {
     throw new Error('Task not found or already finished.');
   }
-  return getTask(id);
+
+  const task = getTask(id);
+  logService.record({
+    level: 'warn',
+    category: 'task',
+    taskId: id,
+    node: task.node,
+    action: 'task_cancelled',
+    message: 'Task cancelled.',
+  });
+  return task;
 }
 
 /**
