@@ -151,6 +151,17 @@ DATA_DIR="$TARGET_DIR/data"
 PROJECTS_DIR="$TARGET_DIR/projects"
 LOGS_DIR="$TARGET_DIR/logs"
 
+# Best LAN address: the source IP of the default route (the real network the
+# phone shares), falling back to the first hostname -I entry.
+detect_lan_ip() {
+  local ip_addr=""
+  if command -v ip >/dev/null 2>&1; then
+    ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')"
+  fi
+  [ -z "$ip_addr" ] && ip_addr="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf '%s' "$ip_addr"
+}
+
 # Install the friendly `citadel` launcher as early as possible so that
 # `citadel status|url|qr|kiosk|...` works right after this run. It is a thin
 # shim pointing at the repository script (so code updates take effect at once).
@@ -278,7 +289,7 @@ else
     else
       echo "HOST=$BIND_ADDR" | $SUDO tee -a "$APP_DIR/.env" >/dev/null
     fi
-    LAN_IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    LAN_IP_ADDR="$(detect_lan_ip)"
     if [ -n "$LAN_IP_ADDR" ]; then
       LAN_EXPOSED=true
       LAN_ORIGIN="http://$LAN_IP_ADDR:$PANEL_PORT"
@@ -511,7 +522,7 @@ else
     [ -n "$TS_DNS" ] && ACCESS_URL="https://${TS_DNS%.}"
   fi
   if [ -z "$ACCESS_URL" ] && [ "$LAN_EXPOSED" = true ] && command -v hostname >/dev/null 2>&1; then
-    LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    LAN_IP=$(detect_lan_ip)
     [ -n "$LAN_IP" ] && ACCESS_URL="http://${LAN_IP}:$PANEL_PORT"
   fi
   [ -z "$ACCESS_URL" ] && ACCESS_URL="http://127.0.0.1:$PANEL_PORT"

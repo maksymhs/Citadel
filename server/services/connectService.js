@@ -32,6 +32,18 @@ function detectTailscale() {
 }
 
 function detectLanIp() {
+  // Prefer the source address of the default route: the real network the phone
+  // most likely shares (avoids docker/VPN interfaces).
+  try {
+    const res = spawnSync('ip', ['route', 'get', '1.1.1.1'], { encoding: 'utf8', timeout: 2000 });
+    if (res.status === 0 && res.stdout) {
+      const match = res.stdout.match(/\bsrc\s+(\S+)/);
+      if (match) return match[1];
+    }
+  } catch {
+    // fall through to interface scanning
+  }
+
   const candidates = [];
   const nets = os.networkInterfaces();
   for (const name of Object.keys(nets)) {
