@@ -45,7 +45,7 @@ Run the installer directly from the repository:
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | sudo bash
 ```
 
-That single command installs **everything** with no extra flags: the service, LAN access, a scannable QR code, the privileged System Terminal and the in-panel updater. Opt out with `--no-admin-terminal`, `--no-updater` or `--local` if you prefer a minimal/private setup.
+That single command installs **everything** with no extra flags: the service, a **global Cloudflare Quick Tunnel** (so the printed QR works from any network), the privileged System Terminal and the in-panel updater. Opt out with `--no-tunnel`, `--no-admin-terminal`, `--no-updater` or `--local` if you prefer a minimal/private setup.
 
 Preview what it will do without changing the system:
 
@@ -171,7 +171,7 @@ citadel tunnel stop     # stop it
 citadel tunnel remove   # stop and delete the service
 ```
 
-It gives you a public `https://<random>.trycloudflare.com` URL that works everywhere. The URL **changes on every restart**, so the panel reads it dynamically and the QR always shows the current one (no need to touch `.env`). Because it is a **public** URL, make sure you use a strong administrator password; disable it with `citadel tunnel stop` when you don't need it. You can also request it at install time with `sudo bash install.sh --tunnel`.
+It gives you a public `https://<random>.trycloudflare.com` URL that works everywhere. The installer starts it by default (so the QR it prints is already global); disable it with `--no-tunnel` or, once installed, `citadel tunnel stop`. The URL **changes on every restart**, so the panel reads it dynamically and the QR always shows the current one (no need to touch `.env`). Because it is a **public** URL, make sure you use a strong administrator password.
 
 To reach the panel privately instead (only your own devices), use Tailscale:
 

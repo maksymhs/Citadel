@@ -38,7 +38,7 @@ LAN_EXPOSED=false
 HOST_ADDR=""
 PANEL_PORT=3000
 UPDATE_MODE=false
-TUNNEL=false
+TUNNEL=true
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
@@ -76,6 +76,9 @@ for arg in "$@"; do
     --tunnel)
       TUNNEL=true
       ;;
+    --no-tunnel)
+      TUNNEL=false
+      ;;
   esac
 done
 
@@ -100,8 +103,9 @@ if [ "$LAN_ACCESS" = true ]; then
 fi
 
 if [ "$TUNNEL" = true ]; then
-  echo -e "${YELLOW}[TUNNEL] Setting up a public Cloudflare Quick Tunnel (global URL, no account needed)."
-  echo -e "         The URL is public and changes on restart.${NC}\n"
+  echo -e "${YELLOW}[TUNNEL] Setting up a public Cloudflare Quick Tunnel so the panel has a GLOBAL URL"
+  echo -e "         (works from any network, no account needed). The URL is public and changes on"
+  echo -e "         restart. Disable with --no-tunnel.${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)
@@ -458,8 +462,8 @@ EOF
     echo "      Management CLI installed: citadel status | url | qr | update | tunnel"
   fi
 
-  # Optional: global access via a Cloudflare Quick Tunnel (opt-in with --tunnel;
-  # also available anytime as `citadel tunnel`). No account or domain required.
+  # Global access via a Cloudflare Quick Tunnel (on by default; disable with
+  # --no-tunnel; also available anytime as `citadel tunnel`). No account or domain.
   if [ "$TUNNEL" = true ] && [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/tunnel.sh" ]; then
     echo "      Setting up a global Cloudflare Quick Tunnel..."
     $SUDO bash "$APP_DIR/scripts/tunnel.sh" up || echo -e "${YELLOW}      Tunnel setup skipped (see errors above).${NC}"
@@ -503,22 +507,37 @@ else
   echo "=================================================================="
   echo -e "${NC}"
 
-  # Best URL for a phone: explicit public URL > Tailscale (*.ts.net) > LAN IP.
+  # Best URL for a phone: explicit public URL > Cloudflare tunnel > Tailscale
+  # (*.ts.net) > LAN IP. Each branch also sets a human label.
   ACCESS_URL="${CITADEL_PUBLIC_URL:-}"
+  ACCESS_LABEL="Panel (public URL)"
+  TUNNEL_URL_FILE="$DATA_DIR/tunnel-url"
+  if [ -z "$ACCESS_URL" ] && [ -f "$TUNNEL_URL_FILE" ]; then
+    ACCESS_URL="$(head -n1 "$TUNNEL_URL_FILE" 2>/dev/null || true)"
+    ACCESS_LABEL="Panel (global)"
+  fi
   if [ -z "$ACCESS_URL" ] && command -v tailscale >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     TS_DNS=$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write((j.Self&&j.Self.DNSName)||"")}catch(e){}})' 2>/dev/null)
-    [ -n "$TS_DNS" ] && ACCESS_URL="https://${TS_DNS%.}"
+    if [ -n "$TS_DNS" ]; then
+      ACCESS_URL="https://${TS_DNS%.}"
+      ACCESS_LABEL="Panel (Tailscale)"
+    fi
   fi
   if [ -z "$ACCESS_URL" ] && [ "$LAN_EXPOSED" = true ] && command -v hostname >/dev/null 2>&1; then
     LAN_IP=$(detect_lan_ip)
-    [ -n "$LAN_IP" ] && ACCESS_URL="http://${LAN_IP}:$PANEL_PORT"
+    if [ -n "$LAN_IP" ]; then
+      ACCESS_URL="http://${LAN_IP}:$PANEL_PORT"
+      ACCESS_LABEL="Panel (your network)"
+    fi
   fi
-  [ -z "$ACCESS_URL" ] && ACCESS_URL="http://127.0.0.1:$PANEL_PORT"
+  if [ -z "$ACCESS_URL" ]; then
+    ACCESS_URL="http://127.0.0.1:$PANEL_PORT"
+    ACCESS_LABEL="Panel (this machine)"
+  fi
 
-  echo "  Panel (this machine):  http://127.0.0.1:$PANEL_PORT"
-  if [ "$LAN_EXPOSED" = true ]; then
-    echo "  Panel (your network):  $ACCESS_URL"
-  fi
+  echo "  $ACCESS_LABEL:  $ACCESS_URL"
+  [ "$ACCESS_URL" != "http://127.0.0.1:$PANEL_PORT" ] \
+    && echo "  Panel (this machine):  http://127.0.0.1:$PANEL_PORT"
   echo "  Data Directory:        $DATA_DIR"
   echo "  Projects Directory:    $PROJECTS_DIR"
   echo "  Diagnostics:           node $APP_DIR/scripts/doctor.js"
