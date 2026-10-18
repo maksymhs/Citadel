@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { getDatabase } = require('../database/db');
-const { TMUX_PATH, TERMINAL_ADMIN_USER } = require('../config');
+const { TMUX_PATH, TERMINAL_ADMIN_USER, AGENTS_DIR } = require('../config');
 
 class TerminalManager {
   constructor() {
@@ -136,21 +136,31 @@ class TerminalManager {
    */
   _buildPath(home) {
     const base = process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
-    if (!home) return base;
+    // Shared agents directory (install-once-for-all-users) is always included,
+    // regardless of which user the session runs as.
     const dirs = [
-      path.join(home, '.local', 'bin'),
-      path.join(home, '.opencode', 'bin'),
-      path.join(home, '.npm-global', 'bin'),
-      path.join(home, '.cargo', 'bin'),
-      path.join(home, 'bin'),
-    ].filter((dir) => {
+      path.join(AGENTS_DIR, 'bin'),
+      path.join(AGENTS_DIR, '.local', 'bin'),
+      path.join(AGENTS_DIR, '.opencode', 'bin'),
+      path.join(AGENTS_DIR, '.npm-global', 'bin'),
+    ];
+    if (home) {
+      dirs.push(
+        path.join(home, '.local', 'bin'),
+        path.join(home, '.opencode', 'bin'),
+        path.join(home, '.npm-global', 'bin'),
+        path.join(home, '.cargo', 'bin'),
+        path.join(home, 'bin'),
+      );
+    }
+    const existing = dirs.filter((dir) => {
       try {
         return fs.existsSync(dir);
       } catch {
         return false;
       }
     });
-    return [...dirs, base].join(':');
+    return [...existing, base].join(':');
   }
 
   /**

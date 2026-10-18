@@ -171,6 +171,9 @@ APP_DIR="$TARGET_DIR/app"
 DATA_DIR="$TARGET_DIR/data"
 PROJECTS_DIR="$TARGET_DIR/projects"
 LOGS_DIR="$TARGET_DIR/logs"
+# Shared, world-readable install root for CLI agents (opencode, claude, codex…).
+# Installing an agent once here makes it available to every OS user and session.
+AGENTS_DIR="${CITADEL_AGENTS_DIR:-/opt/citadel/agents}"
 
 # Best LAN address: the source IP of the default route (the real network the
 # phone shares), falling back to the first hostname -I entry.
@@ -262,6 +265,9 @@ else
   fi
 
   $SUDO mkdir -p "$APP_DIR" "$DATA_DIR" "$PROJECTS_DIR" "$LOGS_DIR"
+  # Shared agents root: 0755 so any OS user can traverse and execute the agents
+  # installed here (the panel install button populates it).
+  $SUDO mkdir -p "$AGENTS_DIR" && $SUDO chmod 0755 "$AGENTS_DIR" 2>/dev/null || true
 
   # Re-running the installer upgrades an existing installation in place: it pulls
   # the latest code, reinstalls dependencies and restarts the service.

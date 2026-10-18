@@ -41,6 +41,12 @@ const SESSION_SECRET = process.env.SESSION_SECRET || null; // Will auto-generate
 // service user (secure default).
 const TERMINAL_ADMIN_USER = process.env.TERMINAL_ADMIN_USER || null;
 
+// Shared, world-readable directory used as the installation HOME for CLI agents
+// (the one-line installers honour $HOME). Keeping them outside any user home
+// means installing an agent once makes it usable by every OS user; the resulting
+// binaries are also symlinked into /usr/local/bin (already on everyone's PATH).
+const AGENTS_DIR = process.env.CITADEL_AGENTS_DIR || '/opt/citadel/agents';
+
 // Application version and self-update configuration
 let APP_VERSION = '0.0.0';
 try {
@@ -98,6 +104,7 @@ module.exports = {
   SESSION_TTL_DAYS,
   SESSION_SECRET,
   TERMINAL_ADMIN_USER,
+  AGENTS_DIR,
   APP_VERSION,
   UPDATE_REPO,
   UPDATE_BRANCH,

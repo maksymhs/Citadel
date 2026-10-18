@@ -2,6 +2,8 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const { AGENTS_DIR } = require('../server/config');
 const agentRegistry = require('../server/services/agentRegistry');
 const projectService = require('../server/services/projectService');
 const terminalManager = require('../server/services/terminalManager');
@@ -68,6 +70,22 @@ describe('AI Agent Registry & Launcher Tests', () => {
       assert.equal(typeof agent.installCommand, 'string');
       assert.match(agent.installCommand, /install|npm/i);
     }
+  });
+
+  test('install command installs into a shared location for all users', () => {
+    const agent = agentRegistry.listAgents().find((a) => a.id === 'opencode');
+    const cmd = agentRegistry.buildInstallCommand(agent);
+    assert.match(cmd, /export HOME=/);
+    assert.ok(cmd.includes(AGENTS_DIR), 'should install under the shared AGENTS_DIR');
+    assert.match(cmd, /\/usr\/local\/bin\/opencode/);
+    const res = spawnSync('bash', ['-n'], { input: cmd, encoding: 'utf8' });
+    assert.equal(res.status, 0, `bash syntax error: ${res.stderr}`);
+  });
+
+  test('install command rejects an unsafe binary name', () => {
+    assert.throws(() => {
+      agentRegistry.buildInstallCommand({ name: 'Evil', binaryName: 'x; rm -rf /', installCommand: 'true' });
+    }, /Invalid binary name/i);
   });
 
   test('Installing an unknown agent is rejected', () => {

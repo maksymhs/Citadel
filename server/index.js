@@ -15,6 +15,7 @@ const {
 const { initDatabase, closeDatabase } = require('./database/db');
 const pluginLoader = require('./services/pluginLoader');
 const terminalManager = require('./services/terminalManager');
+const connectService = require('./services/connectService');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -159,16 +160,32 @@ async function startServer() {
 
   try {
     await fastify.listen({ port: PORT, host: HOST });
+
+    // Print the panel URL and a scannable QR code on every start so the panel
+    // can be opened from a phone right after (re)starting the server.
+    let connect = { url: `http://${HOST}:${PORT}`, source: 'localhost' };
+    try {
+      connect = connectService.getConnectInfo();
+    } catch {
+      // QR/URL detection is best-effort; fall back to the local address.
+    }
+
     console.log(`
 ==================================================================
   Citadel — Development Platform & AI Agents
 ==================================================================
-  Panel URL:     http://${HOST}:${PORT}
+  Panel URL:     ${connect.url}${connect.source && connect.source !== 'localhost' ? `  (${connect.source})` : ''}
   Environment:   ${NODE_ENV}
   Host:          ${require('node:os').hostname()}
   Node.js:       ${process.version}
-==================================================================
-`);
+==================================================================`);
+
+    try {
+      console.log(connectService.qrAnsi(connect.url));
+      console.log('  Scan to open the panel.');
+    } catch {
+      // If QR rendering fails, it is not a fatal condition.
+    }
   } catch (err) {
     console.error('[Citadel] Failed to start server:', err);
     process.exit(1);

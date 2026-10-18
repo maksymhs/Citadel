@@ -91,6 +91,28 @@ function resolve() {
   return result;
 }
 
+function qrAnsi(text) {
+  const qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  const count = qr.getModuleCount();
+  const quiet = 2;
+  const size = count + quiet * 2;
+  const BLACK = '\x1b[40m  \x1b[0m';
+  const WHITE = '\x1b[47m  \x1b[0m';
+  let out = '\n';
+  for (let row = 0; row < size; row++) {
+    for (let col = 0; col < size; col++) {
+      const insideRow = row >= quiet && row < quiet + count;
+      const insideCol = col >= quiet && col < quiet + count;
+      const dark = insideRow && insideCol && qr.isDark(row - quiet, col - quiet);
+      out += dark ? BLACK : WHITE;
+    }
+    out += '\n';
+  }
+  return out;
+}
+
 function qrSvg(text) {
   const qr = qrcode(0, 'H');
   qr.addData(text);
@@ -105,4 +127,4 @@ function getConnectInfo() {
   return { url, source, qrSvg: qrSvg(url) };
 }
 
-module.exports = { getConnectInfo, normalizeUrl, _reset: () => { cache = null; cacheAt = 0; } };
+module.exports = { getConnectInfo, qrSvg, qrAnsi, normalizeUrl, _reset: () => { cache = null; cacheAt = 0; } };

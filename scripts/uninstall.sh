@@ -12,6 +12,7 @@ set -euo pipefail
 SERVICE="${CITADEL_SERVICE:-citadel}"
 RUN_USER="${CITADEL_RUN_USER:-citadel}"
 TARGET_DIR="${CITADEL_TARGET_DIR:-/srv/citadel}"
+AGENTS_DIR="${CITADEL_AGENTS_DIR:-/opt/citadel/agents}"
 PURGE=true
 REMOVE_SOURCE=true
 for arg in "$@"; do
@@ -103,6 +104,12 @@ fi
 if [ "$PURGE" = true ]; then
   echo "Deleting all data in $TARGET_DIR..."
   $SUDO rm -rf "$TARGET_DIR"
+  # Shared CLI agents installed from the panel (opencode, claude, codex…).
+  if [ -e "$AGENTS_DIR" ]; then
+    echo "Removing shared CLI agents in $AGENTS_DIR..."
+    $SUDO rm -rf "$AGENTS_DIR"
+    $SUDO rmdir /opt/citadel 2>/dev/null || true
+  fi
   if id "$RUN_USER" >/dev/null 2>&1; then
     echo "Removing service user '$RUN_USER'..."
     $SUDO userdel -r "$RUN_USER" 2>/dev/null || $SUDO userdel "$RUN_USER" 2>/dev/null || true

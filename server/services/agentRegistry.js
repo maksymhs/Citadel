@@ -6,7 +6,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { getDatabase } = require('../database/db');
-const { TERMINAL_ADMIN_USER } = require('../config');
+const { TERMINAL_ADMIN_USER, AGENTS_DIR } = require('../config');
 const terminalManager = require('./terminalManager');
 const projectService = require('./projectService');
 
@@ -97,9 +97,18 @@ class AgentRegistry {
         path.join(home, '.npm-global', 'bin', binaryName),
         path.join(home, '.opencode', 'bin', binaryName),
         path.join(home, '.cargo', 'bin', binaryName),
+        path.join(home, '.citadel', 'agents', 'bin', binaryName),
         path.join(home, 'bin', binaryName)
       );
     }
+    // Shared agents directory: installing once here (HOME=$AGENTS_DIR) makes the
+    // binary visible to every OS user, so it is checked before system paths.
+    candidatePaths.push(
+      path.join(AGENTS_DIR, 'bin', binaryName),
+      path.join(AGENTS_DIR, '.local', 'bin', binaryName),
+      path.join(AGENTS_DIR, '.opencode', 'bin', binaryName),
+      path.join(AGENTS_DIR, '.npm-global', 'bin', binaryName)
+    );
     candidatePaths.push(
       `/usr/local/bin/${binaryName}`,
       `/usr/bin/${binaryName}`,
@@ -241,6 +250,41 @@ class AgentRegistry {
    * command is a fixed server-side string (never user input), so there is no
    * shell-injection surface.
    */
+  /**
+   * Build the fixed shell command that installs one agent for every user.
+   * Pure (no side effects) so it can be unit-tested. The only interpolated
+   * values are the server-controlled AGENTS_DIR and the validated binary name.
+   *
+   *  1. Prepare a shared, world-readable HOME (AGENTS_DIR). Prefer the system
+   *     path via sudo; if sudo is unavailable (--no-admin-terminal) fall back to
+   *     ~/.citadel/agents, which the registry also detects.
+   *  2. Run the official installer with HOME pointed there, so its per-user
+   *     drops land in the shared directory instead of a private home.
+   *  3. Relax permissions and symlink the resulting binary into /usr/local/bin
+   *     (already on every user's PATH). Sessions keep their own $HOME at
+   *     runtime, so each user still gets their own config/credentials.
+   */
+  buildInstallCommand(agent) {
+    const bin = String(agent.binaryName || '');
+    if (!/^[A-Za-z0-9._-]+$/.test(bin)) {
+      throw new Error(`Invalid binary name for agent "${agent.name}".`);
+    }
+
+    const sharedDir = shellQuote(AGENTS_DIR);
+    return [
+      `AG=${sharedDir}`,
+      'if ! (sudo mkdir -p "$AG" && sudo chown "$(id -u):$(id -g)" "$AG" && chmod 0755 "$AG") 2>/dev/null; '
+        + 'then AG="$HOME/.citadel/agents"; mkdir -p "$AG"; fi',
+      'export HOME="$AG"',
+      agent.installCommand,
+      'chmod -R a+rX "$AG" 2>/dev/null',
+      `for b in "$AG/bin/${bin}" "$AG/.local/bin/${bin}" "$AG/.opencode/bin/${bin}" "$AG/.npm-global/bin/${bin}"; do `
+        + `if [ -x "$b" ]; then sudo ln -sf "$b" "/usr/local/bin/${bin}" 2>/dev/null `
+        + `|| { mkdir -p "$AG/bin"; ln -sf "$b" "$AG/bin/${bin}"; }; break; fi; done`,
+      `echo "[Citadel] ${agent.name} installed for all users. Reload the panel to launch it."`,
+    ].join('; ');
+  }
+
   installAgent({ agentId }) {
     const agent = this.getAgent(agentId);
     if (!agent) {
@@ -259,21 +303,7 @@ class AgentRegistry {
       agentId: null,
     });
 
-    // After the installer finishes, make the binary reachable on the system PATH
-    // (/usr/local/bin). This matters because System Terminal sessions run under
-    // sudo, which resets PATH — and the one-line installers drop the binary in a
-    // per-user directory (e.g. ~/.opencode/bin) that is not otherwise visible.
-    const linkablePaths = [
-      `"$HOME/.opencode/bin/${agent.binaryName}"`,
-      `"$HOME/.local/bin/${agent.binaryName}"`,
-      `"$HOME/.npm-global/bin/${agent.binaryName}"`,
-      `"$HOME/bin/${agent.binaryName}"`,
-    ].join(' ');
-    const linkCommand = `for b in ${linkablePaths}; do if [ -x "$b" ]; then `
-      + `sudo ln -sf "$b" "/usr/local/bin/${agent.binaryName}" 2>/dev/null `
-      + `|| { mkdir -p "$HOME/.local/bin"; ln -sf "$b" "$HOME/.local/bin/${agent.binaryName}"; }; `
-      + `break; fi; done`;
-    const fullCommand = `${agent.installCommand}; ${linkCommand}`;
+    const fullCommand = this.buildInstallCommand(agent);
 
     const activeSession = terminalManager.activePtySessions.get(session.sessionId);
     if (activeSession) {
