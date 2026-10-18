@@ -42,14 +42,26 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
 Run the installer directly from the repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | sudo bash
 ```
+
+That single command installs **everything** with no extra flags: the service, LAN access, a scannable QR code, the privileged System Terminal and the in-panel updater. Opt out with `--no-admin-terminal`, `--no-updater` or `--local` if you prefer a minimal/private setup.
 
 Preview what it will do without changing the system:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash -s -- --check-only
 ```
+
+### One-line uninstall
+
+Remove **everything** (service, helper scripts, `/srv/citadel` and the service user):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/scripts/uninstall.sh | sudo bash
+```
+
+Pass `--keep-data` to preserve `/srv/citadel` (database and projects).
 
 ### Install from a clone
 
@@ -95,26 +107,26 @@ citadel update     # update to the latest version
 
 `citadel update` needs root and re-invokes `sudo` automatically.
 
-### Privileged System Terminal (opt-in)
+### Privileged System Terminal (enabled by default)
 
-By default every terminal in the panel runs as the unprivileged service user. To let the **System Terminal** run as a privileged account (so you can administer the whole VPS from the panel):
-
-```bash
-sudo bash install.sh --admin-terminal            # defaults to user 'ubuntu'
-sudo bash install.sh --admin-terminal=deploy     # or any existing OS user
-```
-
-This installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. **Security warning:** it makes the panel root-equivalent — anyone able to log into the panel can obtain a root shell on the host. Only enable it on a personal, single-admin server.
-
-### In-panel Updater (opt-in)
-
-Citadel can check GitHub for new releases (System view) and, optionally, update itself with one click:
+The **System Terminal** runs as a privileged account so you can administer the whole host from the panel. The installer picks the user that ran it (`$SUDO_USER`, falling back to `ubuntu`); override or disable it:
 
 ```bash
-sudo bash install.sh --enable-updater
+sudo bash install.sh --admin-terminal=deploy     # run terminals as 'deploy'
+sudo bash install.sh --no-admin-terminal         # unprivileged service user only
 ```
 
-This installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. It is disabled by default; without it the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.
+It installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. **Security warning:** it makes the panel root-equivalent — anyone able to log into the panel can obtain a root shell on the host. Only enable it on a personal, single-admin server.
+
+### In-panel Updater (enabled by default)
+
+Citadel checks GitHub for new releases (System view) and can update itself with one click. To turn it off:
+
+```bash
+sudo bash install.sh --no-updater
+```
+
+It installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. Without it the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.
 
 ### Local network access
 
@@ -204,7 +216,7 @@ citadel/
 │   ├── copy-vendor.js    # Copies xterm assets and applies +x permissions
 │   ├── doctor.js         # Health and dependency diagnostics
 │   ├── update.sh         # Self-updater (git fetch/reset + deps + restart)
-│   ├── uninstall.sh      # Controlled uninstaller
+│   ├── uninstall.sh      # Full uninstaller (removes everything)
 │   └── citadel.service   # systemd unit for Linux
 ├── tests/                # Automated tests (49 tests across 11 suites)
 ├── docs/                 # Architecture documentation and ADRs
@@ -224,8 +236,11 @@ node scripts/doctor.js
 ./scripts/update.sh
 sudo /usr/local/sbin/citadel-update --check   # verify the updater without changing anything
 
-# Uninstall while preserving data by default
+# Uninstall everything (service, scripts, /srv/citadel and the service user)
 ./scripts/uninstall.sh
+
+# ...but keep the database and projects
+./scripts/uninstall.sh --keep-data
 ```
 
 ---

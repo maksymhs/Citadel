@@ -217,7 +217,7 @@ async function notifyPeers() {
  */
 async function triggerUpdate({ fanout = true } = {}) {
   if (!fs.existsSync(UPDATER_PATH)) {
-    throw new Error('Updater is not installed on this host. Re-run install.sh with --enable-updater.');
+    throw new Error('Updater is not installed on this host. Re-run the installer to enable updates.');
   }
 
   const precheck = spawnSync('sudo', ['-n', UPDATER_PATH, '--check'], { encoding: 'utf8' });

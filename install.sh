@@ -19,8 +19,19 @@ echo "=================================================================="
 echo -e "${NC}"
 
 CHECK_ONLY=false
-ADMIN_TERMINAL_USER=""
-ENABLE_UPDATER=false
+# Everything is enabled by default so a single command (`curl | sudo bash`) gives
+# the full experience: LAN + QR, privileged System Terminal and in-panel updater.
+# Opt out with --no-admin-terminal / --no-updater / --local if you don't want them.
+DEFAULT_ADMIN_USER="${SUDO_USER:-}"
+if [ -z "$DEFAULT_ADMIN_USER" ]; then
+  if id ubuntu >/dev/null 2>&1; then
+    DEFAULT_ADMIN_USER="ubuntu"
+  else
+    DEFAULT_ADMIN_USER="$(id -un)"
+  fi
+fi
+ADMIN_TERMINAL_USER="$DEFAULT_ADMIN_USER"
+ENABLE_UPDATER=true
 LAN_ACCESS=true
 LOCAL_ONLY=false
 LAN_EXPOSED=false
@@ -35,6 +46,9 @@ for arg in "$@"; do
     --update|--upgrade)
       UPDATE_MODE=true
       ;;
+    --no-admin-terminal)
+      ADMIN_TERMINAL_USER=""
+      ;;
     --admin-terminal)
       ADMIN_TERMINAL_USER="${ADMIN_TERMINAL_USER:-ubuntu}"
       ;;
@@ -43,6 +57,9 @@ for arg in "$@"; do
       ;;
     --enable-updater)
       ENABLE_UPDATER=true
+      ;;
+    --no-updater)
+      ENABLE_UPDATER=false
       ;;
     --local|--localhost-only)
       LOCAL_ONLY=true
@@ -64,11 +81,13 @@ fi
 
 if [ -n "$ADMIN_TERMINAL_USER" ]; then
   echo -e "${YELLOW}[ADMIN TERMINAL] The in-panel System Terminal will run as '$ADMIN_TERMINAL_USER'."
-  echo -e "                 This grants the panel root-equivalent access to the host.${NC}\n"
+  echo -e "                 This grants the panel root-equivalent access to the host."
+  echo -e "                 Disable with --no-admin-terminal.${NC}\n"
 fi
 
 if [ "$ENABLE_UPDATER" = true ]; then
-  echo -e "${YELLOW}[UPDATER] Installing the privileged in-panel updater (root-owned helper).${NC}\n"
+  echo -e "${YELLOW}[UPDATER] Installing the privileged in-panel updater (root-owned helper)."
+  echo -e "          Disable with --no-updater.${NC}\n"
 fi
 
 if [ "$LAN_ACCESS" = true ]; then
@@ -350,9 +369,9 @@ EOF
     echo "      citadel service started and enabled at boot."
   fi
 
-  # Optional: privileged "System Terminal" (opt-in via --admin-terminal).
-  # Grants the service user a sudoers rule to open a shell as the admin user and
-  # relaxes the sandbox drop-in. This makes the panel root-capable by design.
+  # Privileged "System Terminal" (enabled by default; disable with
+  # --no-admin-terminal). Grants the service user a sudoers rule to open a shell
+  # as the admin user and relaxes the sandbox drop-in (root-capable by design).
   if [ -n "$ADMIN_TERMINAL_USER" ]; then
     if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && command -v systemctl >/dev/null 2>&1; then
       echo "      Enabling privileged System Terminal as '$ADMIN_TERMINAL_USER'..."
@@ -383,11 +402,11 @@ EOF
       $SUDO systemctl restart citadel.service
       echo "      System Terminal will run as '$ADMIN_TERMINAL_USER'."
     else
-      echo -e "${YELLOW}      Skipping --admin-terminal (requires Linux + systemd + sudo).${NC}"
+      echo -e "${YELLOW}      Skipping privileged System Terminal (requires Linux + systemd + sudo).${NC}"
     fi
   fi
 
-  # Optional: privileged in-panel updater (opt-in via --enable-updater).
+  # Privileged in-panel updater (enabled by default; disable with --no-updater).
   # Installs a root-owned helper and a scoped sudoers rule so the panel can run
   # exactly that updater (and nothing else) as root.
   if [ "$ENABLE_UPDATER" = true ]; then
@@ -400,7 +419,7 @@ EOF
       $SUDO visudo -cf "$UPDATER_SUDOERS" >/dev/null
       echo "      In-panel updater enabled (System → Update)."
     else
-      echo -e "${YELLOW}      Skipping --enable-updater (requires Linux + sudo).${NC}"
+      echo -e "${YELLOW}      Skipping privileged updater (requires Linux + sudo).${NC}"
     fi
   fi
 

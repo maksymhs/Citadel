@@ -2335,7 +2335,7 @@
               <div id="update-status" style="margin-top:8px;font-size:13px;color:var(--text-muted);">
                 ${ver.updaterAvailable
                   ? 'The in-panel updater is enabled.'
-                  : 'In-panel updater not installed. Run install.sh --enable-updater to enable one-click updates.'}
+                  : 'In-panel updater not installed. Re-run the installer to enable one-click updates.'}
               </div>
             </div>
             <div style="display:flex;gap:8px;flex-shrink:0;">

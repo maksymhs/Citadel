@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Citadel — Controlled uninstaller
-# Removes the systemd service, drop-ins, sudoers rules and helper scripts.
-# Database and projects are preserved unless --purge is passed.
+# Citadel — full uninstaller
+# Removes the systemd service, drop-ins, sudoers rules, helper scripts, the
+# data directory (/srv/citadel) and the service user. Nothing is left behind.
 #
-#   sudo ./scripts/uninstall.sh            # keep data and the service user
-#   sudo ./scripts/uninstall.sh --purge    # also delete /srv/citadel and the user
+#   sudo ./scripts/uninstall.sh              # remove EVERYTHING
+#   sudo ./scripts/uninstall.sh --keep-data  # keep /srv/citadel (data + user)
 set -euo pipefail
 
 SERVICE="${CITADEL_SERVICE:-citadel}"
 RUN_USER="${CITADEL_RUN_USER:-citadel}"
-PURGE=false
+PURGE=true
 for arg in "$@"; do
   case "$arg" in
+    --keep-data) PURGE=false ;;
     --purge) PURGE=true ;;
     --help|-h)
-      echo "Usage: $0 [--purge]"
-      echo "  --purge   Also delete the data directory and the service user."
+      echo "Usage: $0 [--keep-data]"
+      echo "  (default)     Remove everything, including /srv/citadel and the user."
+      echo "  --keep-data   Keep /srv/citadel (data, projects) and the service user."
       exit 0
       ;;
   esac
@@ -62,7 +64,7 @@ if command -v git >/dev/null 2>&1; then
 fi
 
 if [ "$PURGE" = true ]; then
-  echo "[WARNING] Deleting all data in /srv/citadel..."
+  echo "Deleting all data in /srv/citadel..."
   $SUDO rm -rf /srv/citadel
   if id "$RUN_USER" >/dev/null 2>&1; then
     echo "Removing service user '$RUN_USER'..."
@@ -75,5 +77,5 @@ else
   echo "       - /srv/citadel/data"
   echo "       - /srv/citadel/projects"
   echo "       - database snapshots in /srv/citadel/data/backups"
-  echo "To remove everything (including the '$RUN_USER' user): $0 --purge"
+  echo "To remove everything (including the '$RUN_USER' user): $0"
 fi
