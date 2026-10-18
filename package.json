@@ -1,6 +1,6 @@
 {
   "name": "citadel",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "description": "Self-hosted, ultralight and secure web platform to manage projects, persistent terminals and CLI agents on a VPS",
   "main": "server/index.js",
   "scripts": {
@@ -8,6 +8,8 @@
     "dev": "node --watch server/index.js",
     "test": "node --test",
     "doctor": "node scripts/doctor.js",
+    "sentinel": "node scripts/sentinel.js",
+    "mcp": "node scripts/citadel-mcp.js",
     "postinstall": "node scripts/copy-vendor.js"
   },
   "keywords": [
