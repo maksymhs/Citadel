@@ -8,17 +8,23 @@
 #   sudo citadel-update            # perform the update
 #   sudo citadel-update --check    # verify it can update, change nothing
 # ==============================================================================
-set -euo pipefail
+set -eEuo pipefail
 
 APP_DIR="${CITADEL_DIR:-/srv/citadel/app}"
 SERVICE="${CITADEL_SERVICE:-citadel}"
 RUN_USER="${CITADEL_RUN_USER:-citadel}"
 BRANCH="${CITADEL_REPO_BRANCH:-main}"
 PORT="${PORT:-3000}"
+HEALTH_RETRIES="${CITADEL_UPDATE_HEALTH_RETRIES:-30}"
+HEALTH_INTERVAL="${CITADEL_UPDATE_HEALTH_INTERVAL:-1}"
 
 CHECK_ONLY=false
 for arg in "$@"; do
-  [ "$arg" = "--check" ] && CHECK_ONLY=true
+  case "$arg" in
+    --check) CHECK_ONLY=true ;;
+    "" ) : ;;
+    *) echo "[citadel-update] ERROR: unknown option: $arg" >&2; exit 2 ;;
+  esac
 done
 
 SUDO=""
@@ -46,6 +52,15 @@ DB_PATH="${DATABASE_PATH:-$DATA_DIR_RESOLVED/citadel.db}"
 BACKUP_DIR="${CITADEL_BACKUP_DIR:-$DATA_DIR_RESOLVED/backups}"
 BACKUP_KEEP="${CITADEL_BACKUP_KEEP:-5}"
 
+service_manager_available() { command -v systemctl >/dev/null 2>&1; }
+sys() { $SUDO systemctl "$@"; }
+
+# Can we stop the service and replace its database if we have to roll back?
+DB_RESTORE_CAPABLE=true
+if [ -e "$DB_PATH" ] && { ! service_manager_available || { [ "$(id -u)" -ne 0 ] && [ -z "$SUDO" ]; }; }; then
+  DB_RESTORE_CAPABLE=false
+fi
+
 # Install dependencies as the service user when running as root, so files are
 # not left root-owned.
 npm_install() {
@@ -67,20 +82,29 @@ chown_tree() {
   fi
 }
 
-# Consistent SQLite snapshot (WAL included) with rotation. Best-effort: a missing
-# database is not an error, but an unwritable backup aborts the update.
+# $DB_BACKUP holds the EXACT snapshot pathname created for this attempt so the
+# rollback restores the matching file instead of reconstructing a name from a
+# timestamp. A reliable SQLite-aware snapshot is required when a DB exists: a
+# bare copy of a live database can be torn, so we abort before touching the
+# checkout rather than pretend it is safe.
+DB_BACKUP=""
 backup_database() {
   if [ ! -f "$DB_PATH" ]; then
     echo "[citadel-update] No database at $DB_PATH; skipping backup."
+    DB_BACKUP=""
     return 0
+  fi
+  if [ -L "$DB_PATH" ]; then
+    echo "[citadel-update] ERROR: refusing a symlinked database path: $DB_PATH" >&2
+    return 1
   fi
   mkdir -p "$BACKUP_DIR"
   local stamp target
   stamp="$(date -u +%Y%m%d-%H%M%S)"
-  target="$BACKUP_DIR/citadel-${stamp}-${CURRENT}.db"
+  target="$BACKUP_DIR/citadel-${stamp}-${CURRENT_SHORT}.db"
   local done=false
   if command -v sqlite3 >/dev/null 2>&1; then
-    if sqlite3 "$DB_PATH" ".timeout 5000" "VACUUM INTO '$target'"; then
+    if sqlite3 "$DB_PATH" ".timeout 5000" "VACUUM INTO '$target'" >/dev/null 2>&1; then
       done=true
     else
       echo "[citadel-update] WARNING: sqlite3 snapshot failed; trying node." >&2
@@ -95,37 +119,129 @@ backup_database() {
     " "$DB_PATH" "$target"); then
       done=true
     else
-      echo "[citadel-update] WARNING: node backup failed; copying files." >&2
+      echo "[citadel-update] WARNING: node backup failed." >&2
     fi
   fi
-  # Last resort: plain copy (may be torn if writes happen mid-copy).
-  if [ "$done" = false ]; then
-    cp -f "$DB_PATH" "$target"
-    [ -f "$DB_PATH-wal" ] && cp -f "$DB_PATH-wal" "$target-wal" || true
-    [ -f "$DB_PATH-shm" ] && cp -f "$DB_PATH-shm" "$target-shm" || true
+  if [ "$done" != true ] || [ ! -s "$target" ]; then
+    echo "[citadel-update] ERROR: could not create a reliable SQLite snapshot of $DB_PATH; aborting before any change." >&2
+    return 1
   fi
-  echo "[citadel-update] Database snapshot: $target"
+  DB_BACKUP="$target"
+  echo "[citadel-update] Database snapshot: $DB_BACKUP"
   # Rotate: keep the most recent $BACKUP_KEEP snapshots.
-  ls -1t "$BACKUP_DIR"/citadel-*.db 2>/dev/null \
+  { ls -1t "$BACKUP_DIR"/citadel-*.db 2>/dev/null || true; } \
     | tail -n +"$((BACKUP_KEEP + 1))" \
     | while read -r old; do
         rm -f "$old" "$old-wal" "$old-shm" 2>/dev/null || true
-      done
+      done || true
+  return 0
 }
 
-# Restore the previous commit + deps and restart. Used by the ERR trap and after
-# a failed health check.
-perform_rollback() {
-  echo "[citadel-update] Rolling back to $CURRENT..." >&2
-  git_safe reset --hard "$CURRENT" || true
-  chown_tree
-  npm_install || true
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl restart "$SERVICE" 2>/dev/null || true
+# Stop the service in a controlled, checked way before touching its database.
+stop_service_checked() {
+  service_manager_available || return 1
+  if ! sys is-active --quiet "$SERVICE" 2>/dev/null; then
+    return 0
   fi
-  echo "[citadel-update] Rolled back to $CURRENT." >&2
+  sys stop "$SERVICE" || return 1
+  local i
+  for i in 1 2 3 4 5; do
+    if ! sys is-active --quiet "$SERVICE" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
+
+# Replace the database with the attempt's snapshot. Only called once the service
+# is confirmed stopped. Uses a temp file in the same directory + rename, and
+# removes stale SQLite sidecars (they no longer match the restored main file).
+restore_database() {
+  [ -n "$DB_BACKUP" ] && [ -f "$DB_BACKUP" ] || return 0
+  local meta owner mode tmp
+  meta="$(stat -c '%u:%g %a' "$DB_PATH" 2>/dev/null || true)"
+  owner="${meta%% *}"
+  mode="${meta##* }"
+  tmp="${DB_PATH}.rollback.$$"
+  if ! $SUDO cp -f "$DB_BACKUP" "$tmp"; then
+    return 1
+  fi
+  $SUDO rm -f "$DB_PATH-wal" "$DB_PATH-shm" 2>/dev/null || true
+  if ! $SUDO mv -f "$tmp" "$DB_PATH"; then
+    $SUDO rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if [ -n "$owner" ] && [ "$owner" != "$mode" ]; then
+    $SUDO chown "$owner" "$DB_PATH" 2>/dev/null || true
+  fi
+  if [ -n "$mode" ]; then
+    $SUDO chmod "$mode" "$DB_PATH" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# Poll the service until it is active and answering on the local port.
+wait_for_health() {
+  service_manager_available || return 0
+  local i
+  for i in $(seq 1 "$HEALTH_RETRIES"); do
+    if sys is-active --quiet "$SERVICE" 2>/dev/null; then
+      if ! command -v curl >/dev/null 2>&1; then
+        return 0
+      fi
+      if curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/api/auth/status" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+    sleep "$HEALTH_INTERVAL"
+  done
+  return 1
+}
+
+# Roll back to the previous commit and, when the new code may have migrated the
+# database, to the matching snapshot. Reports honestly when any step failed and
+# never deletes the snapshot.
+perform_rollback() {
+  echo "[citadel-update] Rolling back to $CURRENT_SHORT..." >&2
+  ROLLBACK_OK=true
+  if ! git_safe reset --hard "$CURRENT_SHA"; then ROLLBACK_OK=false; fi
+  chown_tree
+  if ! npm_install; then ROLLBACK_OK=false; fi
+
+  if [ "$SERVICE_RESTARTED_NEW" = true ] && [ -n "$DB_BACKUP" ]; then
+    if [ "$DB_RESTORE_CAPABLE" != true ]; then
+      echo "[citadel-update] WARNING: cannot restore the database safely (no systemd/privilege); snapshot kept at $DB_BACKUP" >&2
+      ROLLBACK_OK=false
+    elif stop_service_checked; then
+      if restore_database; then
+        echo "[citadel-update] Restored database from $DB_BACKUP" >&2
+      else
+        echo "[citadel-update] WARNING: database restore failed; snapshot kept at $DB_BACKUP" >&2
+        ROLLBACK_OK=false
+      fi
+    else
+      echo "[citadel-update] WARNING: could not confirm $SERVICE stopped; database NOT restored; snapshot kept at $DB_BACKUP" >&2
+      ROLLBACK_OK=false
+    fi
+  fi
+
+  if service_manager_available; then
+    sys daemon-reload 2>/dev/null || true
+    if ! sys restart "$SERVICE" 2>/dev/null; then ROLLBACK_OK=false; fi
+    if ! wait_for_health; then ROLLBACK_OK=false; fi
+  fi
+
+  if [ "$ROLLBACK_OK" = true ]; then
+    echo "[citadel-update] Rolled back to $CURRENT_SHORT." >&2
+  else
+    echo "[citadel-update] WARNING: rollback was INCOMPLETE. Snapshot preserved at ${DB_BACKUP:-<none>}; inspect the service manually." >&2
+  fi
+}
+
+CODE_MODIFIED=false
+SERVICE_RESTARTED_NEW=false
+ROLLBACK_OK=true
 
 on_error() {
   local rc=$?
@@ -134,46 +250,39 @@ on_error() {
   exit "$rc"
 }
 
-# Poll the service until it is active and answering on the local port.
-wait_for_health() {
-  command -v systemctl >/dev/null 2>&1 || return 0
-  local i
-  for i in $(seq 1 30); do
-    if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
-      if ! command -v curl >/dev/null 2>&1; then
-        return 0
-      fi
-      if curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/api/auth/status" >/dev/null 2>&1; then
-        return 0
-      fi
-    fi
-    sleep 1
-  done
-  return 1
-}
-
-CURRENT="$(git_safe rev-parse --short HEAD 2>/dev/null || echo unknown)"
-echo "[citadel-update] Current commit: $CURRENT"
+CURRENT_SHA="$(git_safe rev-parse HEAD 2>/dev/null || echo unknown)"
+CURRENT_SHORT="$(git_safe rev-parse --short HEAD 2>/dev/null || echo unknown)"
+echo "[citadel-update] Current commit: $CURRENT_SHORT"
 
 echo "[citadel-update] Fetching origin/$BRANCH..."
 git_safe fetch --depth 1 origin "$BRANCH"
-TARGET="$(git_safe rev-parse --short "origin/$BRANCH")"
-echo "[citadel-update] Available commit: $TARGET"
+TARGET_SHA="$(git_safe rev-parse "origin/$BRANCH")"
+TARGET_SHORT="$(git_safe rev-parse --short "origin/$BRANCH")"
+echo "[citadel-update] Available commit: $TARGET_SHORT"
 
 if [ "$CHECK_ONLY" = true ]; then
-  echo "[citadel-update] Check OK ($CURRENT -> $TARGET). No changes applied."
+  echo "[citadel-update] Check OK ($CURRENT_SHORT -> $TARGET_SHORT). No changes applied."
   exit 0
 fi
 
-if [ "$CURRENT" = "$TARGET" ]; then
-  echo "[citadel-update] Already up to date ($CURRENT)."
+if [ "$CURRENT_SHA" = "$TARGET_SHA" ]; then
+  echo "[citadel-update] Already up to date ($CURRENT_SHORT)."
 else
-  # Snapshot the database before touching the working tree.
+  # Never start changing the checkout unless we could undo it: a DB that cannot
+  # be restored safely means the update is refused before any modification.
+  if [ -e "$DB_PATH" ] && [ "$DB_RESTORE_CAPABLE" != true ]; then
+    echo "[citadel-update] ERROR: cannot safely update: a database exists but this run cannot stop the service/restore it (no systemd or privilege). Refusing before any change." >&2
+    exit 1
+  fi
+
+  # Snapshot the database before touching the working tree. Aborts (set -e) if a
+  # reliable snapshot cannot be produced.
   backup_database
 
-  echo "[citadel-update] Updating $CURRENT -> $TARGET"
+  echo "[citadel-update] Updating $CURRENT_SHORT -> $TARGET_SHORT"
   trap on_error ERR
   git_safe reset --hard "origin/$BRANCH"
+  CODE_MODIFIED=true
   chown_tree
   npm_install
   trap - ERR
@@ -196,12 +305,12 @@ fi
 # does not touch.
 UNIT_SRC="$APP_DIR/scripts/citadel.service"
 UNIT_DST="/etc/systemd/system/${SERVICE}.service"
-if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1 \
+if [ "$(id -u)" -eq 0 ] && service_manager_available \
    && [ -f "$UNIT_SRC" ] && [ -f "$UNIT_DST" ] \
    && ! cmp -s "$UNIT_SRC" "$UNIT_DST"; then
   echo "[citadel-update] Refreshing ${SERVICE}.service unit..."
   install -m 0644 "$UNIT_SRC" "$UNIT_DST"
-  systemctl daemon-reload
+  sys daemon-reload
 fi
 
 # Persistent drop-in: guarantee detached tmux terminals (and the opencode
@@ -210,7 +319,7 @@ fi
 # unrelated overrides, only ensures KillMode=process is present.
 DROPIN_DIR="/etc/systemd/system/${SERVICE}.service.d"
 DROPIN_FILE="$DROPIN_DIR/terminal-persistence.conf"
-if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+if [ "$(id -u)" -eq 0 ] && service_manager_available; then
   dropin_changed=false
   if [ ! -f "$DROPIN_FILE" ]; then
     mkdir -p "$DROPIN_DIR"
@@ -222,25 +331,33 @@ if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
   fi
   if [ "$dropin_changed" = true ]; then
     echo "[citadel-update] Ensuring tmux terminal persistence (KillMode=process)..."
-    systemctl daemon-reload
+    sys daemon-reload
   fi
 fi
 
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+if service_manager_available && sys is-active --quiet "$SERVICE" 2>/dev/null; then
   echo "[citadel-update] Restarting $SERVICE..."
-  systemctl restart "$SERVICE"
+  if ! sys restart "$SERVICE"; then
+    echo "[citadel-update] ERROR: could not restart $SERVICE." >&2
+    if [ "$CODE_MODIFIED" = true ]; then
+      perform_rollback
+    fi
+    exit 1
+  fi
+  # The new code is now running, so migrations may have run against the DB.
+  SERVICE_RESTARTED_NEW=true
   if wait_for_health; then
     echo "[citadel-update] Service is healthy."
   else
     echo "[citadel-update] ERROR: $SERVICE did not become healthy after the update." >&2
-    if [ "$CURRENT" != "$TARGET" ]; then
+    if [ "$CODE_MODIFIED" = true ]; then
       perform_rollback
       exit 1
     fi
   fi
 fi
 
-echo "[citadel-update] Update completed: $TARGET"
+echo "[citadel-update] Update completed: $TARGET_SHORT"
 
 # Ensure the friendly `citadel` CLI launcher exists (and points at this app dir).
 CLI_DST="/usr/local/bin/citadel"

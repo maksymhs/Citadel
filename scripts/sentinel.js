@@ -46,6 +46,7 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { Journal, acquireLock } = require('./sentinelJournal');
 const proc = require('./sentinelProcess');
+const { buildTaskEnv } = require('./sentinelEnv');
 
 const BASE = (process.env.CITADEL_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
 const TOKEN = process.env.CITADEL_TOKEN || '';
@@ -65,9 +66,17 @@ const MAX_RESULT = Math.max(1000, parseInt(process.env.CITADEL_MAX_RESULT, 10) |
 const KILL_GRACE_MS = Math.max(0, parseInt(process.env.CITADEL_KILL_GRACE_MS, 10) || 10000);
 const KILL_CONFIRM_MS = Math.max(0, parseInt(process.env.CITADEL_KILL_CONFIRM_MS, 10) || 5000);
 const PROTOCOL = 2;
+// Durable result reporting: a finished execution keeps its bounded report in
+// the journal until the server accepts it. Retries use bounded exponential
+// backoff so an unreachable panel is not hammered on every poll.
+const REPORT_BASE_MS = Math.max(1000, parseInt(process.env.CITADEL_REPORT_RETRY_MS, 10) || 3000);
+const REPORT_MAX_MS = Math.max(REPORT_BASE_MS, parseInt(process.env.CITADEL_REPORT_RETRY_MAX_MS, 10) || 60000);
 
 let active = 0;
 const running = new Map(); // task id -> execution entry
+// Executions whose stored report is being sent right now: prevents the periodic
+// retry loop and a finishing handler from sending the same result twice.
+const reportingInFlight = new Set();
 
 let journalInstance = null;
 function journal() {
@@ -226,6 +235,135 @@ function entryFinite(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+/**
+ * A rejection that means "this attempt is over, never retry": the claim token
+ * is invalid or the task is already finished. A 409 is different — the server
+ * is telling us the lease expired and reconciliation is required — so it is not
+ * treated as definitive.
+ */
+function isDefinitiveResultError(err) {
+  if (!err) return false;
+  if (err.status === 403 || err.status === 404) return true;
+  if (err.status === 409) return false;
+  return /already finished|claimed by another worker|not found|identity mismatch|refusing a result from another execution|not authorized/i.test(err.message || '');
+}
+
+function reportBackoffMs(attempts) {
+  return Math.min(REPORT_MAX_MS, REPORT_BASE_MS * 2 ** Math.min(attempts, 10));
+}
+
+/**
+ * Persist the bounded report and its retry state in the existing journal before
+ * the first network attempt. Returns the updated record (or null when the
+ * journal could not be written).
+ */
+function markReportPending(execId, report) {
+  try {
+    return journal().update(execId, {
+      state: 'terminated',
+      report,
+      reportPending: true,
+      reportAttempts: 0,
+      reportNextAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(`[sentinel] could not persist pending report for ${execId}: ${err.message}`);
+    return null;
+  }
+}
+
+function scheduleReportRetry(execId) {
+  const current = journal().get(execId);
+  if (!current) return;
+  const attempts = (entryFinite(current.reportAttempts) ? current.reportAttempts : 0) + 1;
+  const nextAt = new Date(Date.now() + reportBackoffMs(attempts)).toISOString();
+  try {
+    journal().update(execId, { reportAttempts: attempts, reportNextAt: nextAt });
+    console.error(`[sentinel] ${current.taskId}: report still pending (attempt ${attempts}); retrying after ${nextAt}.`);
+  } catch (err) {
+    console.error(`[sentinel] could not persist report retry state for ${execId}: ${err.message}`);
+  }
+}
+
+/**
+ * Deliver one finished execution's result, durably. The bounded report is read
+ * from the journal, so this survives a crash/restart. On a transient failure the
+ * journal is preserved and the next poll retries; on a definitive rejection or an
+ * accepted result the journal entry is cleaned up. A rejected-but-reconcilable
+ * attempt (lease expired) falls back to the reconcile protocol with the stored
+ * identity, never inventing a new execution.
+ *
+ * Accepts an execId or a journal record; re-reads the record so concurrent
+ * callers share persisted state.
+ */
+async function deliverReport(ref) {
+  const execId = typeof ref === 'string' ? ref : (ref && ref.execId);
+  if (!execId || reportingInFlight.has(execId)) return;
+  const record = journal().get(execId) || (typeof ref === 'object' ? ref : null);
+  if (!record || !record.claimToken) return;
+
+  reportingInFlight.add(execId);
+  try {
+    if (record.report) {
+      const body = {
+        status: record.report.status,
+        exitCode: record.report.exitCode,
+        error: record.report.error,
+        result: record.report.result,
+        claimToken: record.claimToken,
+        execId,
+      };
+      try {
+        await api(`/api/tasks/${record.taskId}/result`, { method: 'POST', body });
+        cleanupJournal(execId);
+        console.log(`[sentinel] ${record.taskId} -> ${body.status}`);
+        return;
+      } catch (err) {
+        if (isDefinitiveResultError(err)) {
+          cleanupJournal(execId);
+          console.log(`[sentinel] ${record.taskId}: result discarded by the server (${err.message}).`);
+          return;
+        }
+        console.error(`[sentinel] report ${record.taskId} failed: ${err.message}; attempting reconcile.`);
+      }
+    }
+
+    // No saved report (a legacy v0.19.0 entry) or the result was rejected as
+    // reconcilable: use the existing reconcile protocol with the stored identity.
+    const settled = await safeReconcileRecord(record, 'terminated', record.exitCode, record.signal);
+    if (settled.settled) {
+      cleanupJournal(execId);
+      console.log(`[sentinel] ${record.taskId} reconciled.`);
+      return;
+    }
+    scheduleReportRetry(execId);
+  } finally {
+    reportingInFlight.delete(execId);
+  }
+}
+
+/**
+ * A journaled execution whose process has terminated and whose report is still
+ * pending. Legacy terminated entries (no saved report) are included so they are
+ * reconciled on the next poll instead of waiting for a sentinel restart.
+ */
+function isReportDue(record, now) {
+  if (!record || !record.claimToken) return false;
+  const pending = record.reportPending || record.state === 'terminated';
+  if (!pending) return false;
+  if (!record.reportNextAt) return true;
+  const next = Date.parse(record.reportNextAt);
+  return !Number.isFinite(next) || next <= now;
+}
+
+async function retryPendingReports() {
+  const now = Date.now();
+  for (const record of journal().all()) {
+    if (!isReportDue(record, now)) continue;
+    await deliverReport(record);
+  }
+}
+
 function requestCancel(entry) {
   if (!entry) return Promise.resolve({ gone: true });
   if (entry.termination) return entry.termination;
@@ -289,15 +427,9 @@ async function abandonExecution(item, reason) {
 }
 
 function buildEnv(task, execId) {
-  return {
-    ...process.env,
-    CITADEL_TASK_ID: task.id,
-    CITADEL_TASK_NODE: NODE,
-    CITADEL_TASK_PROJECT: task.projectPath || '',
-    // Inherited by the whole subtree so a restarted sentinel can attribute
-    // survivors even if it crashed before persisting the pid.
-    CITADEL_EXEC_ID: execId,
-  };
+  // Never hand a task command Citadel's own control-plane secrets: keep the
+  // runtime environment and the recovery markers, drop the internal creds.
+  return buildTaskEnv(task, execId, { baseEnv: process.env, node: NODE });
 }
 
 function runTask(task) {
@@ -451,47 +583,29 @@ function runTask(task) {
       execId,
     };
 
-    try {
-      await api(`/api/tasks/${task.id}/result`, { method: 'POST', body: report });
-      cleanupJournal(execId);
-      console.log(`[sentinel] ${task.id} -> ${outcome}${outcome === 'failed' ? ` (${exitCode})` : ''}`);
-    } catch (err) {
-      const definitive = [403, 404, 409].includes(err.status)
-        || /already finished|claimed by another worker|not found|identity mismatch/i.test(err.message);
-      if (definitive) {
-        cleanupJournal(execId);
-        console.log(`[sentinel] ${task.id}: result discarded by the server (${err.message}).`);
-        return;
-      }
-      // Lease expired / reconciliation required: report the confirmed outcome
-      // through the reconcile endpoint instead of blind-retrying a result.
-      const record = { ...recordFor(entry), taskId: task.id, claimToken, execId };
-      const settled = await safeReconcileRecord(record, 'terminated', exitCode, signalText);
-      if (settled.settled) {
-        cleanupJournal(execId);
-        console.log(`[sentinel] ${task.id} reconciled after result rejection.`);
-      } else {
-        console.error(`[sentinel] could not report ${task.id}: ${err.message}; keeping journal for restart.`);
-      }
-    }
+    // Persist the bounded report BEFORE the first network attempt, so an
+    // unreachable server (or a crash right now) cannot lose it. The periodic
+    // retry loop replays it later without restarting the sentinel.
+    markReportPending(execId, report);
+    await deliverReport(execId);
   };
 
   function finishUnstarted(taskArg, execIdArg, claimTokenArg, message) {
     void (async () => {
       if (!claimTokenArg) { cleanupJournal(execIdArg); return; }
-      try {
-        await api(`/api/tasks/${taskArg.id}/result`, {
-          method: 'POST',
-          body: { status: 'failed', exitCode: -1, error: message, claimToken: claimTokenArg, execId: execIdArg },
-        });
-        cleanupJournal(execIdArg);
-      } catch (err) {
-        const settled = await safeReconcileRecord(
-          { taskId: taskArg.id, claimToken: claimTokenArg, execId: execIdArg, state: 'terminated' },
-          'terminated', null, null
-        );
-        if (settled.settled) cleanupJournal(execIdArg);
-      }
+      const report = {
+        status: 'failed',
+        exitCode: -1,
+        error: message,
+        result: '',
+        claimToken: claimTokenArg,
+        execId: execIdArg,
+      };
+      const persisted = markReportPending(execIdArg, report);
+      // If the journal record is somehow gone there is nothing durable to
+      // retry, but still make one best-effort attempt with the known identity.
+      const ref = persisted || { execId: execIdArg, taskId: taskArg.id, claimToken: claimTokenArg, report, state: 'terminated' };
+      await deliverReport(ref);
     })().catch(() => {});
   }
 
@@ -611,6 +725,12 @@ async function reconcileOnStartup() {
   for (const record of records) {
     try {
       if (record.state === 'terminated') {
+        // A stored report is delivered as-is (the result was never accepted);
+        // a legacy entry without one is reconciled with its existing identity.
+        if (record.reportPending && record.report) {
+          await deliverReport(record);
+          continue;
+        }
         const settled = await safeReconcileRecord(record, 'terminated', record.exitCode, record.signal);
         if (settled.settled) cleanupJournal(record.execId);
         continue;
@@ -674,6 +794,10 @@ async function tickCycle() {
 
   // Attempts the server could not safely requeue because a process may exist.
   await reconcileAssigned(beat && beat.node && beat.node.reconcile);
+
+  // Finished executions whose result the server has not accepted yet. Retrying
+  // here (instead of only at startup) means an outage no longer needs a restart.
+  await retryPendingReports();
 
   // Kill any task the operator cancelled since the last beat. SIGTERM first,
   // then bounded escalation to SIGKILL; the result report confirms termination.
@@ -748,6 +872,10 @@ module.exports = {
   tickCycle,
   api,
   runTask,
+  buildEnv,
+  deliverReport,
+  retryPendingReports,
+  markReportPending,
   reconcileOnStartup,
   reconcileAssigned,
   requestCancel,

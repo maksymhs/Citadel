@@ -164,7 +164,7 @@ describe('repair planning and execution', () => {
             restarted = args;
             return response('');
           }
-          if (args.join(' ') === 'is-failed docker.service') return response('active', 1);
+          if (args.join(' ') === 'is-active docker.service') return response('active');
           return failure();
         },
       },
@@ -194,7 +194,7 @@ describe('repair planning and execution', () => {
       responses: {
         systemctl: (args) => (args.join(' ').startsWith('restart')
           ? response('')
-          : response('failed', 0)),
+          : response('failed', 3)),
       },
     });
     const failed = await doctor.executeAction({
@@ -214,7 +214,37 @@ describe('repair planning and execution', () => {
       kind: 'service-restart', target: 'docker.service', requiresRoot: true,
     }, report, unknown, {}, J);
     assert.equal(unverified.verified, false);
-    assert.match(unverified.message, /no verifiable state/);
+    assert.match(unverified.message, /could not be verified/);
+  });
+
+  test('a restart that exits 0 but leaves the unit inactive/failed is never a success', async () => {
+    const report = failedReport();
+    const inactive = createFakeDeps({
+      uid: 0,
+      responses: {
+        systemctl: (args) => (args.join(' ').startsWith('restart') ? response('') : response('inactive', 3)),
+      },
+    });
+    const outcome = await doctor.executeAction({
+      kind: 'service-restart', target: 'citadel.service', requiresRoot: true,
+    }, report, inactive, {}, J);
+    assert.equal(outcome.executed, true);
+    assert.equal(outcome.verified, false);
+    assert.match(outcome.message, /did not report "active"/);
+
+    // The verification helper itself: active is the only success.
+    assert.equal(doctor.verifyServiceRestart(createFakeDeps({
+      responses: { systemctl: response('active') },
+    }), 'citadel.service').verified, true);
+    assert.equal(doctor.verifyServiceRestart(createFakeDeps({
+      responses: { systemctl: response('failed', 3) },
+    }), 'citadel.service').verified, false);
+    assert.equal(doctor.verifyServiceRestart(createFakeDeps({
+      responses: { systemctl: failure('ENOENT') },
+    }), 'citadel.service').verified, false);
+    assert.equal(doctor.verifyServiceRestart(createFakeDeps({
+      responses: { systemctl: response('', 1) },
+    }), 'citadel.service').verified, false);
   });
 
   test('rfkill and saved Wi-Fi reconnect are verified, not assumed', async () => {
@@ -277,7 +307,7 @@ describe('repair planning and execution', () => {
       const deps = createFakeDeps({
         uid: 0,
         responses: {
-          systemctl: (args) => (args.join(' ').startsWith('restart') ? response('') : response('active', 1)),
+          systemctl: (args) => (args.join(' ').startsWith('restart') ? response('') : response('active')),
         },
       });
       const code = await doctor.main([
@@ -448,5 +478,100 @@ describe('Wi-Fi commands', () => {
     assert.equal(code, 1);
     assert.match(JSON.parse(c.out()).message, /hard-blocked/);
     assert.ok(!calls.some((call) => call.join(' ') === 'nmcli connection up id Home'));
+  });
+});
+
+describe('Remote-sensitive service repairs', () => {
+  const REMOTE_ENV = { SSH_CONNECTION: '203.0.113.9 5555 10.0.0.2 22' };
+
+  function failedServiceReport(units) {
+    return {
+      kind: 'doctor',
+      host: host(),
+      findings: [
+        diagnostics.finding('fail', 'services.failed', 'services', 'Failed services', 'failed', { data: { units } }),
+      ],
+      summary: { ok: 0, warn: 0, fail: 1, skip: 0, total: 1 },
+    };
+  }
+
+  test('classifies SSH, network-manager and firewall units as remote-sensitive', () => {
+    const sensitive = [
+      'ssh.service', 'sshd.service', 'NetworkManager.service', 'systemd-networkd.service',
+      'systemd-resolved.service', 'networking.service', 'wpa_supplicant.service', 'dhcpcd.service',
+      'dhclient.service', 'isc-dhcp-server.service', 'ufw.service', 'nftables.service',
+      'firewalld.service', 'iptables.service', 'ip6tables.service', 'netfilter-persistent.service',
+    ];
+    for (const unit of sensitive) assert.equal(doctor.isNetworkUnit(unit), true, `${unit} must be remote-sensitive`);
+    for (const unit of ['docker.service', 'citadel.service', 'nginx.service', 'sshalias.service']) {
+      assert.equal(doctor.isNetworkUnit(unit), false, `${unit} must not be remote-sensitive`);
+    }
+  });
+
+  test('buildRepairPlan marks SSH/network/firewall restarts as remote-sensitive', async () => {
+    const plan = await doctor.buildRepairPlan(
+      doctorDeps(),
+      failedServiceReport(['ssh.service', 'ufw.service', 'docker.service']),
+    );
+    const byId = Object.fromEntries(plan.map((action) => [action.id, action]));
+    assert.equal(byId['restart:ssh.service'].remoteSensitive, true);
+    assert.equal(byId['restart:ufw.service'].remoteSensitive, true);
+    assert.equal(byId['restart:docker.service'].remoteSensitive, false);
+  });
+
+  test('over SSH, restarting a remote-sensitive unit is refused without --confirm-remote and runs nothing', async () => {
+    const original = diagnostics.collectDoctor;
+    const units = ['ssh.service', 'sshd.service', 'NetworkManager.service', 'ufw.service', 'nftables.service'];
+    diagnostics.collectDoctor = () => failedServiceReport(units);
+    try {
+      for (const unit of units) {
+        const calls = [];
+        const deps = createFakeDeps({
+          uid: 0,
+          responses: { systemctl: (args) => { calls.push(args.join(' ')); return response('active'); } },
+        });
+        const c = capture({ env: REMOTE_ENV });
+        const code = await doctor.main(['repair', '--json', '--yes', `--action=restart:${unit}`], { io: c.io, deps });
+        assert.equal(code, 1, `${unit}: expected refusal`);
+        assert.match(JSON.parse(c.out()).message, /confirm-remote/);
+        assert.equal(calls.filter((cmd) => cmd.startsWith('restart')).length, 0, `${unit}: no command may run`);
+      }
+    } finally {
+      diagnostics.collectDoctor = original;
+    }
+  });
+
+  test('the same remote-sensitive restart proceeds only with --confirm-remote', async () => {
+    const original = diagnostics.collectDoctor;
+    diagnostics.collectDoctor = () => failedServiceReport(['ssh.service']);
+    try {
+      const calls = [];
+      const deps = createFakeDeps({
+        uid: 0,
+        responses: {
+          systemctl: (args) => { calls.push(args.join(' ')); return args[0] === 'restart' ? response('') : response('active'); },
+        },
+      });
+      const c = capture({ env: REMOTE_ENV });
+      const code = await doctor.main(
+        ['repair', '--json', '--yes', '--confirm-remote', '--action=restart:ssh.service'],
+        { io: c.io, deps },
+      );
+      assert.equal(code, 0);
+      const result = JSON.parse(c.out());
+      assert.equal(result.applied[0].verified, true);
+      assert.ok(calls.includes('restart ssh.service'));
+      assert.match(c.err(), /SSH session/);
+    } finally {
+      diagnostics.collectDoctor = original;
+    }
+  });
+
+  test('a remote-sensitive interactive confirmation requires typing "yes"', async () => {
+    const parsed = doctor.parseArgs(['repair']);
+    const yes = await doctor.confirmAction({ remoteSensitive: true }, {}, capture({ env: REMOTE_ENV, prompt: async () => 'yes' }).io, parsed);
+    assert.deepEqual(yes, { allowed: true });
+    const y = await doctor.confirmAction({ remoteSensitive: true }, {}, capture({ env: REMOTE_ENV, prompt: async () => 'y' }).io, parsed);
+    assert.equal(y.allowed, false);
   });
 });

@@ -67,13 +67,13 @@ curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | 
 
 ### One-line uninstall
 
-Remove **everything** (service, helper scripts, `/srv/citadel`, the service user **and the local source checkout** the installer ran from):
+Remove the service, helper scripts, `/srv/citadel` (data/projects) and the service user. The local source checkout the installer ran from is **kept** by default:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/scripts/uninstall.sh | sudo bash
 ```
 
-Pass `--keep-data` to preserve `/srv/citadel` (database and projects) or `--keep-source` to keep the local git checkout.
+Pass `--keep-data` to preserve `/srv/citadel` (database and projects). To also delete the local checkout use `--remove-source`, which always asks for an interactive confirmation (a non-interactive shell preserves it). Before any change the installer canonicalises `CITADEL_TARGET_DIR`/`CITADEL_AGENTS_DIR` and refuses protected system paths (`/`, `/etc`, `/usr`, `/var`, …) and directories without Citadel evidence. `--dry-run` (`--check-only`) prints the canonical paths and planned actions without touching anything.
 
 ### Install from a clone
 
@@ -384,11 +384,22 @@ Safety rules:
 ./scripts/update.sh
 sudo /usr/local/sbin/citadel-update --check   # verify the updater without changing anything
 
-# Uninstall everything (service, scripts, /srv/citadel, the user and the local clone)
+# A failing update rolls back both the code and, if the new version may have
+# migrated it, the database. A reliable SQLite snapshot is taken first; if one
+# cannot be produced (or the service cannot be stopped to restore it) the update
+# is refused before the checkout changes. Snapshots live in data/backups/.
+
+# Uninstall (service, scripts, /srv/citadel, the user). The source checkout is kept.
 ./scripts/uninstall.sh
 
 # ...but keep the database and projects
 ./scripts/uninstall.sh --keep-data
+
+# ...also delete the local checkout (asks for interactive confirmation)
+./scripts/uninstall.sh --remove-source
+
+# ...validate paths and show the plan without changing anything
+./scripts/uninstall.sh --dry-run
 ```
 
 ---

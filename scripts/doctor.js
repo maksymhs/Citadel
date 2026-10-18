@@ -599,8 +599,22 @@ function publicAction(action) {
   };
 }
 
+// Units whose restart can interrupt remote access (the SSH session itself) or
+// connectivity. Matching is anchored to concrete systemd unit names, not
+// arbitrary substrings, and is deliberately conservative: over-warning is much
+// safer than silently dropping an operator's SSH session.
+const REMOTE_SENSITIVE_UNIT = new RegExp(
+  `^(${[
+    'ssh', 'sshd',
+    'NetworkManager', 'systemd-networkd', 'systemd-resolved', 'networking',
+    'wpa_supplicant', 'dhcpcd', 'dhclient', 'isc-dhcp',
+    'ufw', 'nftables', 'firewalld', 'iptables', 'ip6tables', 'netfilter-persistent',
+  ].join('|')})([-.@].*)?[.]service$`,
+  'i',
+);
+
 function isNetworkUnit(unit) {
-  return /^(NetworkManager|systemd-networkd|systemd-resolved|networking|wpa_supplicant|dhcpcd|dhclient|isc-dhcp).*\.service$/i.test(unit);
+  return typeof unit === 'string' && REMOTE_SENSITIVE_UNIT.test(unit);
 }
 
 async function buildRepairPlan(deps, report) {
@@ -680,6 +694,44 @@ function elevation(deps) {
   return { ok: false, root: false, command: null };
 }
 
+/**
+ * Read a systemd unit's state with `systemctl <verb> <unit>`. A non-zero exit is
+ * NOT treated as a command failure: `is-active` exits non-zero for `inactive`
+ * and `failed` while still printing the state on stdout. Only a real spawn
+ * error or empty output is "unverifiable".
+ */
+function systemctlState(deps, verb, target) {
+  const res = deps.run('systemctl', [verb, target], { timeout: 5000 });
+  if (res.error) return { ok: false, reason: res.error };
+  const state = String(res.stdout || '').trim().toLowerCase();
+  if (!state) return { ok: false, reason: `systemctl ${verb} ${target} returned an empty state` };
+  return { ok: true, state };
+}
+
+/**
+ * Decide whether a restart actually left the unit healthy. A zero exit status
+ * from `systemctl restart` is not proof on its own: the unit must report
+ * `active`. `failed`, `inactive`, `activating`, empty or an unreadable answer is
+ * never reported as success (a oneshot that is legitimately inactive is
+ * reported as unverified instead of a fabricated green).
+ */
+function verifyServiceRestart(deps, target) {
+  const state = systemctlState(deps, 'is-active', target);
+  if (!state.ok) {
+    return { verified: false, message: `The restart command ran, but the state of ${target} could not be verified (${state.reason}).` };
+  }
+  if (state.state === 'failed') {
+    return { verified: false, message: `${target} is still failed. Check "systemctl status ${target}" and its logs.` };
+  }
+  if (state.state === 'active') {
+    return { verified: true, message: `${target} restarted and is active.` };
+  }
+  return {
+    verified: false,
+    message: `The restart command ran, but ${target} did not report "active" (state: ${state.state}). Verify manually with "systemctl status ${target}".`,
+  };
+}
+
 async function executeAction(action, report, deps, io, parsed = null) {
   const jsonMode = !!(parsed && parsed.flags.has('--json'));
   const runner = jsonMode ? deps.run : (deps.runInteractive || defaultInteractive);
@@ -694,18 +746,8 @@ async function executeAction(action, report, deps, io, parsed = null) {
     const args = elev.root ? ['systemctl', 'restart', action.target] : ['sudo', 'systemctl', 'restart', action.target];
     const res = runner(args[0], args.slice(1), { timeout: 60000 });
     if (!res.ok) return { executed: false, verified: false, message: `systemctl restart failed (${res.error || `exit ${res.status}`}).` };
-    const check = deps.run('systemctl', ['is-failed', action.target], { timeout: 5000 });
-    if (check.error) {
-      return { executed: true, verified: false, message: `The restart command ran, but the result could not be verified (${check.error}).` };
-    }
-    const state = String(check.stdout || '').trim().toLowerCase();
-    if (!state) {
-      return { executed: true, verified: false, message: 'The restart command ran, but systemd returned no verifiable state.' };
-    }
-    const failedNow = state === 'failed';
-    return { executed: true, verified: !failedNow, message: failedNow
-      ? `${action.target} is still failed. Check "systemctl status ${action.target}" and its logs.`
-      : `${action.target} restarted and is no longer failed.` };
+    const verification = verifyServiceRestart(deps, action.target);
+    return { executed: true, verified: verification.verified, message: verification.message };
   }
   if (action.kind === 'wifi-unblock') {
     const args = elev.root ? ['rfkill', 'unblock', 'wifi'] : ['sudo', 'rfkill', 'unblock', 'wifi'];
@@ -912,6 +954,9 @@ module.exports = {
   buildRepairPlan,
   executeAction,
   validateUnit,
+  isNetworkUnit,
+  verifyServiceRestart,
+  systemctlState,
   validateSsid,
   parseSshConnection,
   confirmAction,

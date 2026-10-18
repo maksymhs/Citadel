@@ -709,3 +709,144 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Validation: `npm test` → 256 tests / 43 suites, 0 failures;
   `git diff --check` clean.
 - Not pushed and not deployed.
+
+---
+
+# Continuation run — v0.19.0 hardening (2026-10-19)
+
+## 37. Scope and entry state
+- Entry: `main` at `62f022a` (`chore(release): v0.19.0`), clean tree.
+  Baseline `npm test` → 256 tests / 43 suites, 256 pass, 0 fail (~8.5 s).
+- Bounded hardening only, current stack (CommonJS, `node:test`, Bash, no new
+  deps/services). No real host admin, no install/uninstall/update/firewall
+  execution, no commits/pushes/deploys.
+- Five phases: (1) sentinel credential isolation, (2) durable result reporting,
+  (3) doctor remote-sensitive service repairs, (4) uninstaller source deletion,
+  (5) updater rollback coherence.
+
+## 38. Phase 1 — sentinel task credential isolation
+- Defect: tasks spawned by the sentinel inherited the sentinel's own session and
+  Inter-Node credentials (`CITADEL_TOKEN`, `CITADEL_NODE_TOKEN(S)`,
+  `CITADEL_PEER_TOKEN`, `CITADEL_SECRET_KEY`, `SESSION_SECRET`), so any task
+  (including agent-supplied code) could read and reuse operator credentials.
+- Fix: new `scripts/sentinelEnv.js` with `buildTaskEnv(task, execId, …)` and
+  `isInternalSecret`; `scripts/sentinel.js` delegates `buildEnv()` to it. Exactly
+  the internal secret names are stripped; provider keys, `PATH`, and unrelated
+  env survive; markers `CITADEL_TASK_ID/-NODE/-PROJECT/-EXEC_ID` are added.
+  `buildEnv` is exported for testing.
+- Tests: `tests/sentinel-env.test.js` (3) — helper contract and the real
+  `runTask` spawn path. `tests/sentinel.test.js`, `tests/sentinel-process.test.js`
+  unchanged and green.
+
+## 39. Phase 2 — durable result reporting after a transient outage
+- Defect: a result `POST` that failed transiently (network blip, panel restart)
+  was lost; the task then relied on lease expiry/reconcile even though the local
+  execution had a definitive outcome.
+- Fix (`scripts/sentinel.js`): report intent is persisted in the journal before
+  the first attempt (`markReportPending`); delivery (`deliverReport`) is retried
+  with exponential backoff (`REPORT_BASE_MS` 3 s, `REPORT_MAX_MS` 60 s, env
+  `CITADEL_REPORT_RETRY_MS`/`CITADEL_REPORT_RETRY_MAX_MS`); `retryPendingReports`
+  runs each tick and on startup. Only definitive errors (403 identity mismatch,
+  404, "already finished/not found/not authorized") drop the pending report; 409
+  (reconcile required) and 5xx keep retrying. `finish`/`finishUnstarted`
+  persist-then-deliver; exports added for tests.
+- Tests: `tests/sentinel-report.test.js` (6) — pending persisted then cleared on
+  success, transient failure retried, definitive failure dropped, 409 kept,
+  backoff bounds, startup delivery.
+
+## 40. Phase 3 — doctor must not "repair" remote-sensitive services blindly
+- Defect: `scripts/doctor.js` repaired failed units without treating SSH,
+  firewall and network-manager units as remotely sensitive; restarting them
+  unconfirmed could sever the very connection used to run doctor.
+- Fix: anchored `REMOTE_SENSITIVE_UNIT` regex (adds `ssh|sshd`, firewall units
+  `ufw|nftables|firewalld|iptables|ip6tables|netfilter-persistent`, plus network
+  managers/DHCP) requiring a `…[-.@]….service` suffix; new
+  `systemctlState`/`verifyServiceRestart` (only `active` counts as success;
+  `failed`/`inactive`/empty/spawn-error = not verified); `service-restart`
+  verification now uses it. Exported for tests.
+- Tests: `tests/doctor-cli.test.js` updated (`is-failed` → `is-active`) and a new
+  `Remote-sensitive service repairs` block. Doctor/diagnostics suites 46/46 pass.
+
+## 41. Phase 4 — uninstaller source-checkout deletion safety
+- Defect: `scripts/uninstall.sh` could delete the source checkout, trusted a
+  `data/source-dir` pointer, reconstructed/validated paths weakly, and defaulted
+  to removing the source.
+- Fix: default `REMOVE_SOURCE=false`; explicit `--remove-source`,
+  `--dry-run|--check-only`, compatibility `--keep-source`, unknown/`-*` args
+  rejected (exit 2) before effects. `canonicalize` (symlink-aware), `reject_dotdot`,
+  `validate_safe_path` (PROTECTED_ROOTS exact + recursive SYSTEM_SUBTREES +
+  refuses ancestors of protected roots), `has_citadel_evidence`, and
+  `validate_checkout` (must be a `.git` checkout, not the target/its ancestor).
+  Source removal is gated on `--remove-source` **and** an interactive TTY with a
+  typed `yes`; otherwise the checkout is preserved with a warning.
+- Tests: `tests/uninstall.test.js` (11) all pass; `bash -n` clean.
+
+## 42. Phase 5 — coherent updater rollback (code + database)
+- Defects found while reading `scripts/update.sh`:
+  - the database was never backed up reliably and never restored on rollback, so
+    a failed update could leave new (possibly migrated) code rolled back but the
+    database partially migrated;
+  - the rollback reconstructed nothing from the snapshot path and had no notion
+    of "the new code may have run migrations";
+  - `--check`/unknown args were barely validated; the ERR trap did not fire for
+    failures inside shell functions (`npm_install`, `chown_tree`).
+- Fix: `scripts/update.sh` now:
+  - captures the full `CURRENT_SHA` (used for `git reset --hard`) and a short
+    SHA for display;
+  - creates a reliable SQLite snapshot before touching the checkout
+    (`sqlite3 … VACUUM INTO`, else the app's `better-sqlite3` online backup);
+    **aborts before any change** if no reliable snapshot can be made for an
+    existing DB (the old plain `cp` fallback is gone);
+  - stores the exact snapshot pathname in `DB_BACKUP` and never reconstructs it;
+  - refuses to start (before any change) when a DB exists but the run cannot
+    stop the service/restore it (no systemd or no privilege);
+  - on rollback: resets code to `CURRENT_SHA`, reinstalls deps, and — only when
+    the new code was actually started (so migrations may have run) — stops the
+    service in a checked way, restores owner/mode via a same-directory temp +
+    rename, removes stale `-wal`/`-shm` sidecars, restarts the previous version
+    and verifies health;
+  - never deletes the snapshot, refuses symlinked DB paths, and prints an explicit
+    `INCOMPLETE` warning (keeping the snapshot) when any rollback step fails;
+  - enables `set -E` so the rollback trap actually fires for function-internal
+    failures; rejects unknown options.
+- Tests: `tests/update-rollback.test.js` (7) against a throwaway real-git world
+  with fake `systemctl`/`npm`/`curl`/`sqlite3`/`sudo` in a temp PATH — `--check`
+  mutates nothing; failed snapshot aborts pre-change; no-systemd+DB aborts
+  pre-change; dependency failure restores the old commit; health-check failure
+  restores the exact snapshot only after `systemctl stop`; an unstoppable service
+  leaves the live DB untouched and keeps the snapshot; a healthy update advances
+  the commit.
+
+## 43. Tests executed (real commands, real results)
+- Baseline: `npm test` 256/256 (pre-change).
+- Per-phase focused suites: `tests/sentinel-env.test.js` (3),
+  `tests/sentinel-report.test.js` (6), sentinel/task suites (65),
+  doctor/diagnostics (46), `tests/uninstall.test.js` (11),
+  `tests/update-rollback.test.js` (7) — all green.
+- Final: `npm test` → **289 tests / 50 suites, 289 pass, 0 fail** (~21 s).
+- `bash -n install.sh scripts/uninstall.sh scripts/update.sh` clean;
+  `git diff --check` clean.
+
+## 44. Compatibility notes / residual risks
+- Phase 1–2 change only the sentinel's local behaviour/contract; the server API
+  is unchanged. New sentinel env vars `CITADEL_REPORT_RETRY_MS` /
+  `CITADEL_REPORT_RETRY_MAX_MS` are optional.
+- Phase 3 may now block (require confirmation) for ssh/sshd/firewall/network
+  unit repairs that were previously offered; this is intended.
+- Phase 4: the source checkout is now kept by default; deleting it requires
+  `--remove-source` and an interactive confirmation.
+- Phase 5: the updater now takes a DB snapshot before every code change; the
+  update is refused (before any change) when a reliable snapshot cannot be made
+  or the service cannot be stopped to restore it. Snapshot rotation keeps the
+  most recent 5, never the current attempt's. Rollback reports `INCOMPLETE`
+  rather than claiming success when the DB could not be restored.
+- Residual: the updater assumes systemd for restart/health; without it and
+  without a DB it still updates code but does not verify a restart. The sentinel
+  report retry can reorder duplicate reports after a long outage; the server's
+  claim-token/exec-id checks reject stale ones.
+
+## 45. Last checkpoint / next safe action
+- Checkpoint: five phases implemented, `npm test` 289/289 green, Bash syntax and
+  `git diff --check` clean, README and this ledger updated. No commits/pushes/
+  deploys performed.
+- Next safe action: operator review of `git diff` and manual commit if approved.
