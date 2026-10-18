@@ -169,7 +169,7 @@ When set, triggering an update also asks every peer to update itself. The peer e
 
 ### Distributed task mesh (parallel work across nodes)
 
-The simplest and most solid way to spread work is a **pull queue**: the orchestrator (a smart agent) decides *what* and *how much*; each node is dumb and only pulls when it has a free slot, so load balancing is emergent and no node is a scheduler. A short lease, renewed by the sentinel heartbeat, means a crashed worker's task is retried automatically up to `maxAttempts` (default 3) and then fails explicitly.
+The simplest and most solid way to spread work is a **pull queue**: the orchestrator (a smart agent) decides *what* and *how much*; each node is dumb and only pulls when it has a free slot, so load balancing is emergent and no node is a scheduler. A short lease, renewed by the sentinel heartbeat, means a crashed worker's task is retried automatically up to `maxAttempts` (default 3) and then fails explicitly. The heartbeat reports the attempts the node is actually executing, with their claim tokens, and only those are renewed: a task whose process disappeared while the node keeps beating stops being renewed and is reclaimed at lease expiry instead of holding `running` forever.
 
 **Control plane (HTTP).** Orchestrator routes need an authenticated session; worker routes (claim/result/heartbeat) also accept the scoped `X-Citadel-Node-Token` header when `CITADEL_NODE_TOKEN` is set on the server:
 
@@ -179,21 +179,25 @@ POST /api/tasks/claim        {node}                                       # pull
 POST /api/tasks/:id/result   {status, exitCode?, resultRef?, error?, result?, claimToken}  # report + captured output
 POST /api/tasks/:id/cancel                                                # request cancel (queued or running)
 GET  /api/tasks?status=&node=                                             # progress
-POST /api/nodes/heartbeat    {node, capacity, active, load, tags?, running?}  # liveness + lease renewal
+POST /api/nodes/heartbeat    {node, capacity, active, load, tags?, running?: [{id, claimToken}]}  # liveness + lease renewal
 GET  /api/nodes                                                           # list nodes and load
 ```
 
+The heartbeat `running` list is a *witness list*: the server renews exactly those attempts and only while the reported claim token still matches the stored one (plain id strings are still accepted for compatibility). A running task that stops being reported is not renewed and expires through the normal reclaim path; a delayed or duplicated heartbeat cannot resurrect a finished task or extend an older attempt. An omitted `running` list is treated as a legacy client and renews node-wide (with a one-time `node_heartbeat_legacy` warning), because refusing to renew would requeue tasks that are still executing.
+
 **Claim tokens and retries.** Every claim mints a random `claimToken` and bumps `attempt`; reporting a result requires that exact token, so a worker whose lease expired (and whose task was retried elsewhere) can never overwrite the newer attempt's result. Expired leases requeue the task while attempts remain (`task_lease_expired` event) and mark it failed once `maxAttempts` is reached (`task_attempts_exhausted`).
+
+**Lease authority.** A result is accepted only while the attempt still holds a valid lease *and* presents the current claim token; both checks and the write happen atomically with the ownership guard. Once the lease has expired the attempt has no authority even if nobody has reclaimed the task yet: the result is rejected (`task_result_rejected_expired` event) and the task is requeued — or failed when `maxAttempts` is reached — in the same transaction. Cancelling a running task whose lease already expired finalises it as `cancelled` immediately, and a late result can never reopen a terminal state.
 
 **Agent tasks.** Instead of a raw command, enqueue `{"agent":"claude|codex|opencode","prompt":"..."}` and Citadel builds the headless invocation from the agent registry (`opencode run`, `claude -p --output-format json`, `codex exec --json`), so the orchestrator never needs to know each CLI's flags.
 
 **Result and cancellation.** The sentinel captures a bounded tail of the task's stdout/stderr and stores it in `result` (readable via `GET /api/tasks/:id`), and exports `CITADEL_TASK_ID`, `CITADEL_TASK_NODE` and `CITADEL_TASK_PROJECT` to the child so agents can name worktrees/branches idempotently. Cancelling a running task is a *request*: the task moves to `cancelling`, the sentinel receives it on the next heartbeat (SIGTERM, then SIGKILL after 10s), and the task becomes `cancelled` only when the worker confirms termination with its claim token (or the lease expires first).
 
-**Sentinel (one per node).** Run it inside a Citadel terminal so tmux keeps it alive across restarts, or as a systemd unit. Prefer the scoped node token (set `CITADEL_NODE_TOKEN` in `.env` and give the same value to every sentinel); `CITADEL_TOKEN=<session id>` still works but grants the node a full panel session:
+**Sentinel (one per node).** Run it inside a Citadel terminal so tmux keeps it alive across restarts, or as a systemd unit. Prefer **per-node credentials**: set `CITADEL_NODE_TOKENS="vps-2:<random>,vps-3:<random>"` on the server and give each sentinel its own value in `CITADEL_NODE_TOKEN`. The credential is bound to that node id, so a node cannot claim, heartbeat or report as another node, and the shared token is ignored while per-node tokens are configured (no silent downgrade). The legacy installation-wide `CITADEL_NODE_TOKEN` shared by every node still works — any holder may declare any node id — and is only appropriate when all nodes are inside the same operator's trust perimeter. `CITADEL_TOKEN=<session id>` also still works but grants the node a full panel session. Rotate or revoke by editing the map and restarting the server:
 
 ```
 CITADEL_URL=https://panel.example.com \
-CITADEL_NODE_TOKEN=<shared node secret> \
+CITADEL_NODE_TOKEN=<this node's secret> \
 CITADEL_NODE=vps-2 \
 CITADEL_CAPACITY=2 \
 node scripts/sentinel.js

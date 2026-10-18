@@ -66,4 +66,44 @@ describe('Sentinel polling loop', () => {
       restore();
     }
   });
+
+  test('the heartbeat reports the witness list with each attempt claim token', async () => {
+    let beatBody = null;
+    const restore = stubFetch(async (url, options) => {
+      const target = String(url);
+      if (target.endsWith('/api/nodes/heartbeat')) {
+        beatBody = JSON.parse(options.body);
+        return { status: 200, ok: true, text: async () => JSON.stringify({ node: { cancel: [] } }) };
+      }
+      if (target.endsWith('/api/tasks/claim')) {
+        return { status: 204, ok: true };
+      }
+      if (target.includes('/result')) {
+        return { status: 200, ok: true, text: async () => JSON.stringify({ task: {} }) };
+      }
+      throw new Error(`unexpected request: ${target}`);
+    });
+
+    const entry = sentinel.runTask({
+      id: 'witness-task-1',
+      cmd: process.execPath,
+      args: ['-e', 'setTimeout(() => {}, 30000)'],
+      claimToken: 'claim-token-witness',
+    });
+
+    try {
+      await sentinel.tickCycle();
+      assert.ok(beatBody, 'the heartbeat must have been sent');
+      assert.deepEqual(beatBody.running, [
+        { id: 'witness-task-1', claimToken: 'claim-token-witness' },
+      ]);
+    } finally {
+      const exited = new Promise((resolve) => entry.child.once('exit', resolve));
+      entry.child.kill('SIGKILL');
+      await exited;
+      // Let the async result report (finish handler) drain before the stub goes.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      restore();
+    }
+  });
 });

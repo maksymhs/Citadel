@@ -10,14 +10,16 @@
  * systemd unit:
  *
  *   CITADEL_URL=https://panel.example.com \
- *   CITADEL_NODE_TOKEN=<shared node secret> \
+ *   CITADEL_NODE_TOKEN=<this node's secret> \
  *   CITADEL_NODE=vps-2 \
  *   CITADEL_CAPACITY=2 \
  *   node scripts/sentinel.js
  *
- * Prefer CITADEL_NODE_TOKEN (scoped to claim/result/heartbeat) when the server
- * has CITADEL_NODE_TOKEN configured; CITADEL_TOKEN (a full session id) is still
- * supported as a fallback but grants panel-wide privileges.
+ * CITADEL_NODE_TOKEN is the scoped worker credential (claim/result/heartbeat).
+ * When the server configures per-node CITADEL_NODE_TOKENS, this value is bound
+ * to CITADEL_NODE and cannot act as another node; the legacy shared-token mode
+ * (one secret for every sentinel) still works. CITADEL_TOKEN (a full session
+ * id) is supported as a fallback but grants panel-wide privileges.
  *
  * A task's `cmd` is executed directly (no shell); for shell one-liners use
  * cmd="bash" and args=["-lc", "..."].
@@ -129,6 +131,7 @@ function runTask(task) {
 
   child.on('error', (err) => finish(-1, `spawn error: ${err.message}`));
   child.on('exit', (code, signal) => finish(code === null ? -1 : code, signal ? `signal ${signal}` : null));
+  return entry;
 }
 
 let tickInFlight = false;
@@ -157,7 +160,11 @@ async function tickCycle() {
         capacity: CAPACITY,
         active,
         load: os.loadavg()[0],
-        running: [...running.keys()],
+        // Witness list: the attempts this node is really executing, with the
+        // claim token held for each. The server renews exactly these (and only
+        // while the token still matches), so a dead process loses its stale
+        // lease at expiry instead of being renewed forever by a healthy node.
+        running: [...running.entries()].map(([id, entry]) => ({ id, claimToken: entry.claimToken })),
       },
     });
   } catch (err) {

@@ -89,7 +89,43 @@ const SERVICE_NAME = process.env.CITADEL_SERVICE || 'citadel';
 // worker endpoints (claim/result/heartbeat) accept the X-Citadel-Node-Token
 // header instead of a full admin session, so a compromised node does not hold
 // panel-wide privileges. Unset keeps the previous session-based behaviour.
+// This is a single installation-wide secret: every node authenticates with the
+// same value and the node id it declares is taken on trust (shared-perimeter
+// model). Prefer CITADEL_NODE_TOKENS below when nodes are not all trusted.
 const NODE_TOKEN = process.env.CITADEL_NODE_TOKEN || null;
+
+// Optional per-node worker credentials, "nodeId:token" pairs separated by
+// commas, semicolons or newlines (e.g. "vps-1:<secret>,vps-2:<secret>"). When
+// configured, each sentinel proves which node id it is: a credential can no
+// longer claim, heartbeat or report for another node, and the shared
+// CITADEL_NODE_TOKEN is ignored for worker endpoints (enabling identity binding
+// must never silently fall back to the shared secret). Malformed or short
+// entries are ignored with a warning that never contains the token itself.
+// Rotation/revocation = edit this value and restart; nothing is persisted.
+function parseNodeTokens(value) {
+  const map = new Map();
+  if (!value) return map;
+  const entries = String(value).split(/[,;\n]+/).map((e) => e.trim()).filter(Boolean);
+  entries.forEach((entry, index) => {
+    const sep = entry.indexOf(':');
+    if (sep <= 0 || sep === entry.length - 1) {
+      console.warn(`[Config] Ignoring malformed CITADEL_NODE_TOKENS entry #${index + 1} (expected nodeId:token); token value never logged.`);
+      return;
+    }
+    const nodeId = entry.slice(0, sep).trim();
+    const token = entry.slice(sep + 1).trim();
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(nodeId) || token.length < 16) {
+      console.warn(`[Config] Ignoring invalid CITADEL_NODE_TOKENS entry #${index + 1} (node id must be [A-Za-z0-9._-]{1,64}, token at least 16 chars).`);
+      return;
+    }
+    map.set(nodeId, token);
+  });
+  return map;
+}
+const NODE_TOKENS = parseNodeTokens(process.env.CITADEL_NODE_TOKENS);
+if (NODE_TOKENS.size > 0 && NODE_TOKEN) {
+  console.warn('[Config] CITADEL_NODE_TOKENS is set: the shared CITADEL_NODE_TOKEN is ignored for worker endpoints.');
+}
 
 // Synchronized updates across hosts. CITADEL_PEERS is a comma-separated list of
 // peer base URLs (e.g. https://vps2.example.com). When CITADEL_PEER_TOKEN is
@@ -129,6 +165,7 @@ module.exports = {
   NODE_ENV,
   TRUST_PROXY,
   NODE_TOKEN,
+  NODE_TOKENS,
   DATA_DIR,
   DATABASE_PATH,
   PROJECTS_DIR,

@@ -54,6 +54,17 @@ describe('Config validation (fail closed)', () => {
     const cfg = withConfigEnv({ CITADEL_NODE_TOKEN: 'node-secret-123' }, (c) => c);
     assert.equal(cfg.NODE_TOKEN, 'node-secret-123');
   });
+
+  test('CITADEL_NODE_TOKENS binds credentials to valid node ids only', () => {
+    const cfg = withConfigEnv({
+      CITADEL_NODE_TOKENS: 'alpha:alpha-secret-0123456789,beta:short,broken,gamma:gamma-secret-0123456789,bad id:long-enough-secret-123',
+    }, (c) => c);
+    assert.equal(cfg.NODE_TOKENS.get('alpha'), 'alpha-secret-0123456789');
+    assert.equal(cfg.NODE_TOKENS.get('gamma'), 'gamma-secret-0123456789');
+    assert.equal(cfg.NODE_TOKENS.has('beta'), false, 'short tokens must be ignored');
+    assert.equal(cfg.NODE_TOKENS.has('bad id'), false, 'invalid node ids must be ignored');
+    assert.equal(cfg.NODE_TOKENS.size, 2);
+  });
 });
 
 describe('Updater helper safety', () => {
