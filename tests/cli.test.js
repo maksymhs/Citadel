@@ -18,5 +18,5 @@ test('citadel help lists the available commands', () => {
   const out = execFileSync('bash', [path.join(ROOT, 'scripts', 'citadel'), 'help'], { encoding: 'utf8' });
   assert.match(out, /citadel status/);
   assert.match(out, /citadel qr/);
-  assert.match(out, /citadel kiosk/);
+  assert.match(out, /citadel update/);
 });

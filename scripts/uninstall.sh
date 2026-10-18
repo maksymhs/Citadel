@@ -53,13 +53,6 @@ $SUDO rm -f /usr/local/sbin/citadel-update /usr/local/sbin/.citadel-update.new
 $SUDO rm -f /usr/local/bin/citadel-git-credential
 $SUDO rm -f /usr/local/bin/citadel
 
-# Undo the kiosk (autologin, launcher, logind drop-in, shell hook) if present.
-KIOSK_SCRIPT="/srv/citadel/app/scripts/kiosk-setup.sh"
-if [ -f "$KIOSK_SCRIPT" ]; then
-  echo "Removing kiosk configuration (if any)..."
-  $SUDO bash "$KIOSK_SCRIPT" --remove >/dev/null 2>&1 || true
-fi
-
 if command -v git >/dev/null 2>&1; then
   HELPER="$($SUDO git config --system --get credential.helper 2>/dev/null || true)"
   if [ "$HELPER" = "/usr/local/bin/citadel-git-credential" ]; then

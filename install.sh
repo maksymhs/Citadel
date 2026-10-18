@@ -21,7 +21,6 @@ echo -e "${NC}"
 CHECK_ONLY=false
 ADMIN_TERMINAL_USER=""
 ENABLE_UPDATER=false
-KIOSK_USER=""
 LAN_ACCESS=true
 LOCAL_ONLY=false
 LAN_EXPOSED=false
@@ -44,12 +43,6 @@ for arg in "$@"; do
       ;;
     --enable-updater)
       ENABLE_UPDATER=true
-      ;;
-    --kiosk)
-      KIOSK_USER="${KIOSK_USER:-${SUDO_USER:-ubuntu}}"
-      ;;
-    --kiosk=*)
-      KIOSK_USER="${arg#*=}"
       ;;
     --local|--localhost-only)
       LOCAL_ONLY=true
@@ -76,10 +69,6 @@ fi
 
 if [ "$ENABLE_UPDATER" = true ]; then
   echo -e "${YELLOW}[UPDATER] Installing the privileged in-panel updater (root-owned helper).${NC}\n"
-fi
-
-if [ -n "$KIOSK_USER" ]; then
-  echo -e "${YELLOW}[KIOSK] Configuring a full-screen panel on this machine's display for user '$KIOSK_USER'.${NC}\n"
 fi
 
 if [ "$LAN_ACCESS" = true ]; then
@@ -163,7 +152,7 @@ detect_lan_ip() {
 }
 
 # Install the friendly `citadel` launcher as early as possible so that
-# `citadel status|url|qr|kiosk|...` works right after this run. It is a thin
+# `citadel status|url|qr|...` works right after this run. It is a thin
 # shim pointing at the repository script (so code updates take effect at once).
 if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ "$CHECK_ONLY" = false ] \
    && [ -f "$APP_DIR/scripts/citadel" ]; then
@@ -429,7 +418,7 @@ EOF
     $SUDO git config --system credential.helper /usr/local/bin/citadel-git-credential
   fi
 
-  # Friendly management CLI: `citadel status|url|qr|logs|restart|update|kiosk`.
+  # Friendly management CLI: `citadel status|url|qr|logs|restart|update`.
   # A thin launcher so repository updates to scripts/citadel take effect at once.
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/citadel" ]; then
     $SUDO tee /usr/local/bin/citadel >/dev/null <<EOF
@@ -438,19 +427,7 @@ EOF
 exec bash "$APP_DIR/scripts/citadel" "\$@"
 EOF
     $SUDO chmod 0755 /usr/local/bin/citadel
-    echo "      Management CLI installed: citadel status | url | qr | kiosk | update"
-  fi
-
-  # Optional: dedicated full-screen kiosk panel (opt-in via --kiosk). Installs a
-  # minimal Wayland compositor + browser and autostarts the panel on tty1.
-  if [ -n "$KIOSK_USER" ]; then
-    echo "      Configuring kiosk display for '$KIOSK_USER'..."
-    if [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/kiosk-setup.sh" ]; then
-      $SUDO bash "$APP_DIR/scripts/kiosk-setup.sh" --user "$KIOSK_USER" \
-        || echo -e "${YELLOW}      Kiosk setup skipped (see errors above).${NC}"
-    else
-      echo -e "${YELLOW}      Skipping kiosk setup (requires Linux + systemd + scripts/kiosk-setup.sh).${NC}"
-    fi
+    echo "      Management CLI installed: citadel status | url | qr | update"
   fi
 fi
 
@@ -486,30 +463,6 @@ if [ "$CHECK_ONLY" = true ]; then
   echo "  Run the installer without --check-only to perform the installation."
   echo "=================================================================="
 else
-  # Offer to set up the full-screen kiosk on the spot. Reads the answer from the
-  # controlling terminal so it still works with `curl | sudo bash`. Only offered
-  # when there is a real display (a DRM device) and it wasn't already requested.
-  if [ -z "$KIOSK_USER" ] && [ "$OS" = "Linux" ] && [ -c /dev/tty ] \
-     && ls /dev/dri/card* >/dev/null 2>&1; then
-    printf "  This machine has a display. Set up the full-screen kiosk now? [y/N] "
-    KIOSK_ANSWER=""
-    read -r KIOSK_ANSWER </dev/tty 2>/dev/null || KIOSK_ANSWER=""
-    case "$KIOSK_ANSWER" in
-      y|Y|yes|YES|s|S|si|SI|sí|SÍ)
-        KIOSK_USER="${SUDO_USER:-$(id -un)}"
-        echo "  Configuring the kiosk for '$KIOSK_USER'..."
-        if command -v systemctl >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/kiosk-setup.sh" ]; then
-          $SUDO bash "$APP_DIR/scripts/kiosk-setup.sh" --user "$KIOSK_USER" \
-            || echo -e "${YELLOW}  Kiosk setup skipped (see errors above).${NC}"
-        fi
-        ;;
-      *)
-        echo "  Skipping kiosk. Enable it later with: citadel kiosk"
-        ;;
-    esac
-    echo ""
-  fi
-
   echo -e "\n${GREEN}=================================================================="
   echo "          Citadel Installation Completed Successfully             "
   echo "=================================================================="
@@ -540,9 +493,6 @@ else
   if [ "$ENABLE_UPDATER" = true ]; then
     echo "  In-panel Updater:      enabled (System view → Update)"
   fi
-  if [ -n "$KIOSK_USER" ]; then
-    echo "  Kiosk Display:         enabled for '$KIOSK_USER' (reboot to show the panel)"
-  fi
   echo "=================================================================="
 
   # Scan-to-start: a QR for the phone, rendered locally (no CDNs / no extra deps).
@@ -557,6 +507,5 @@ else
   echo "  $ACCESS_URL"
   echo ""
   echo "  Open it and create your administrator account to finish setup."
-  echo "  Optional full-screen kiosk on this machine:  citadel kiosk"
   echo "=================================================================="
 fi

@@ -66,7 +66,7 @@ Both methods are idempotent. The installer:
 3. Prepares the layout under `/srv/citadel` (`app`, `data`, `projects`, `logs`).
 4. Configures and starts the `citadel.service` systemd unit.
 
-When it finishes, the installer prints a **QR code**; scan it with your phone (same Wi-Fi) to open the panel and create the administrator account. The full-screen kiosk is optional and can be added anytime with `citadel kiosk`.
+When it finishes, the installer prints a **QR code**; scan it with your phone (same Wi-Fi) to open the panel and create the administrator account.
 
 You can override the source repository or branch with the `CITADEL_REPO_URL` and `CITADEL_REPO_BRANCH` environment variables.
 
@@ -91,10 +91,9 @@ citadel qr         # scannable QR code for the panel URL
 citadel logs       # follow the service logs
 citadel restart    # restart the service
 citadel update     # update to the latest version
-citadel kiosk      # set up the full-screen kiosk (add --remove to undo)
 ```
 
-`citadel update` and `citadel kiosk` need root and re-invoke `sudo` automatically.
+`citadel update` needs root and re-invokes `sudo` automatically.
 
 ### Privileged System Terminal (opt-in)
 
@@ -116,19 +115,6 @@ sudo bash install.sh --enable-updater
 ```
 
 This installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. It is disabled by default; without it the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.
-
-### Kiosk display (opt-in)
-
-To turn a GUI-less machine into a dedicated full-screen panel, install with:
-
-```bash
-sudo bash install.sh --kiosk            # autologins the calling user on tty1
-sudo bash install.sh --kiosk=ubuntu     # or a specific OS user
-```
-
-This installs a minimal Wayland compositor (`cage`) and a browser, autologins the chosen user on `tty1`, autostarts the panel full-screen, and disables idle/suspend. `scripts/kiosk-setup.sh` is idempotent and also supports `--check` and `--remove`.
-
-On a machine with a display, the installer also **asks at the end** whether to set this up now; you can enable it later with `citadel kiosk`.
 
 ### Local network access
 

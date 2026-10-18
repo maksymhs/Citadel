@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Citadel — friendly management CLI
-#   citadel status | url | qr | logs | restart | update | kiosk | help
+#   citadel status | url | qr | logs | restart | update | help
 # Installed as /usr/local/bin/citadel (a thin launcher for this file).
 # ==============================================================================
 set -euo pipefail
@@ -32,7 +32,6 @@ Citadel CLI
   citadel logs           Follow the service logs (journalctl -f)
   citadel restart        Restart the service
   citadel update         Update to the latest version
-  citadel kiosk          Set up the full-screen kiosk (add --remove to undo)
   citadel help           Show this help
 
 Environment overrides: CITADEL_APP_DIR, CITADEL_SERVICE, CITADEL_UPDATER_PATH, PORT
@@ -91,10 +90,6 @@ case "$cmd" in
 
   update)
     as_root "$UPDATER" "$@"
-    ;;
-
-  kiosk)
-    as_root bash "$APP_DIR/scripts/kiosk-setup.sh" "$@"
     ;;
 
   help|--help|-h|"")
