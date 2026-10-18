@@ -6,6 +6,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { getDatabase } = require('../database/db');
+const { TERMINAL_ADMIN_USER } = require('../config');
 const terminalManager = require('./terminalManager');
 const projectService = require('./projectService');
 
@@ -29,6 +30,7 @@ class AgentRegistry {
         description: "Anthropic's CLI coding and engineering agent",
         defaultArgs: [],
         versionArg: '--version',
+        installCommand: 'curl -fsSL https://claude.ai/install.sh | bash',
       },
       {
         id: 'codex',
@@ -37,6 +39,7 @@ class AgentRegistry {
         description: 'CLI tool for code assistance and generation',
         defaultArgs: [],
         versionArg: '--version',
+        installCommand: 'npm install -g --prefix "$HOME/.local" @openai/codex',
       },
       {
         id: 'opencode',
@@ -45,6 +48,7 @@ class AgentRegistry {
         description: 'Open-source interactive coding agent for developers',
         defaultArgs: [],
         versionArg: '--version',
+        installCommand: 'curl -fsSL https://opencode.ai/install | bash',
       },
     ];
   }
@@ -70,16 +74,37 @@ class AgentRegistry {
       // Fall through to manual check
     }
 
-    // Common user and system paths
-    const home = os.homedir();
-    const candidatePaths = [
-      path.join(home, '.local', 'bin', binaryName),
-      path.join(home, '.npm-global', 'bin', binaryName),
-      path.join(home, '.cargo', 'bin', binaryName),
+    // Common user and system paths. Check the service user's home and, when a
+    // privileged System Terminal user is configured, that user's home too (the
+    // one-line installers often drop binaries in ~/.local/bin or ~/.opencode/bin).
+    const homes = new Set([os.homedir()]);
+    if (TERMINAL_ADMIN_USER) {
+      try {
+        const res = spawnSync('getent', ['passwd', TERMINAL_ADMIN_USER], { encoding: 'utf8' });
+        if (res.status === 0 && res.stdout) {
+          const home = res.stdout.trim().split(':')[5];
+          if (home) homes.add(home);
+        }
+      } catch {
+        // Ignore: fall back to the service user's home only.
+      }
+    }
+
+    const candidatePaths = [];
+    for (const home of homes) {
+      candidatePaths.push(
+        path.join(home, '.local', 'bin', binaryName),
+        path.join(home, '.npm-global', 'bin', binaryName),
+        path.join(home, '.opencode', 'bin', binaryName),
+        path.join(home, '.cargo', 'bin', binaryName),
+        path.join(home, 'bin', binaryName)
+      );
+    }
+    candidatePaths.push(
       `/usr/local/bin/${binaryName}`,
       `/usr/bin/${binaryName}`,
-      `/bin/${binaryName}`,
-    ];
+      `/bin/${binaryName}`
+    );
 
     for (const p of candidatePaths) {
       if (fs.existsSync(p)) {
@@ -142,6 +167,7 @@ class AgentRegistry {
         path: resolvedPath,
         version,
         defaultArgs: def.defaultArgs || [],
+        installCommand: def.installCommand || null,
       };
     });
   }
@@ -206,6 +232,41 @@ class AgentRegistry {
         name: project.name,
         path: project.path,
       },
+    };
+  }
+
+  /**
+   * Install a CLI agent by running its official one-line installer inside a
+   * fresh System Terminal session, so the user can watch the output live. The
+   * command is a fixed server-side string (never user input), so there is no
+   * shell-injection surface.
+   */
+  installAgent({ agentId }) {
+    const agent = this.getAgent(agentId);
+    if (!agent) {
+      throw new Error(`Agent "${agentId}" not found in registry.`);
+    }
+    if (agent.installed) {
+      throw new Error(`Agent "${agent.name}" is already installed.`);
+    }
+    if (!agent.installCommand) {
+      throw new Error(`No automatic installer is available for "${agent.name}".`);
+    }
+
+    const session = terminalManager.createSession({
+      projectId: null,
+      name: `Install ${agent.name}`,
+      agentId: null,
+    });
+
+    const activeSession = terminalManager.activePtySessions.get(session.sessionId);
+    if (activeSession) {
+      activeSession.ptyProcess.write(`${agent.installCommand}\r`);
+    }
+
+    return {
+      session,
+      agent: { id: agent.id, name: agent.name, installCommand: agent.installCommand },
     };
   }
 }

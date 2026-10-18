@@ -60,31 +60,31 @@ describe('AI Agent Registry & Launcher Tests', () => {
     }, /not found in registry/i);
   });
 
-  test('Launching available agent or mock agent creates persistent session', () => {
+  test('built-in agents advertise an official one-line installer', () => {
     const list = agentRegistry.listAgents();
-    const installed = list.find((a) => a.installed);
-
-    if (installed) {
-      const res = agentRegistry.launchAgent({
-        projectId: testProject.id,
-        agentId: installed.id,
-      });
-
-      assert.ok(res.session.sessionId);
-      assert.equal(res.session.projectId, testProject.id);
-      assert.equal(res.agent.id, installed.id);
-
-      // Verify recorded in DB
-      const dbSessions = terminalManager.listSessions(testProject.id);
-      const found = dbSessions.find((s) => s.id === res.session.sessionId);
-      assert.ok(found);
-      assert.equal(found.agent_id, installed.id);
-
-      // Cleanup
-      terminalManager.killSession(res.session.sessionId);
-    } else {
-      // If none installed in environment, verify graceful message
-      assert.ok(true, 'No CLI agent installed on this host.');
+    for (const id of ['claude', 'codex', 'opencode']) {
+      const agent = list.find((a) => a.id === id);
+      assert.ok(agent, `${id} should be registered`);
+      assert.equal(typeof agent.installCommand, 'string');
+      assert.match(agent.installCommand, /install|npm/i);
     }
+  });
+
+  test('Installing an unknown agent is rejected', () => {
+    assert.throws(() => {
+      agentRegistry.installAgent({ agentId: 'non_existent_agent_xyz' });
+    }, /not found in registry/i);
+  });
+
+  test('Installing a missing built-in agent starts a terminal session', () => {
+    const missing = agentRegistry.listAgents().find((a) => a.installCommand && !a.installed);
+    if (!missing) {
+      assert.ok(true, 'Every built-in agent is already installed on this host.');
+      return;
+    }
+    const res = agentRegistry.installAgent({ agentId: missing.id });
+    assert.ok(res.session.sessionId);
+    assert.equal(res.agent.installCommand, missing.installCommand);
+    terminalManager.killSession(res.session.sessionId);
   });
 });

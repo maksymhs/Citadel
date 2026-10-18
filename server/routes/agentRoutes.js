@@ -16,8 +16,7 @@ async function agentRoutes(fastify) {
   });
 
   // Launch an agent inside a persistent terminal session for a project
-  fastify.post('/api/agents/launch', async (request, reply) => {
-    const { projectId, agentId, extraArgs } = request.body || {};
+  fastify.post('/api/agents/launch', async (request, reply) => {    const { projectId, agentId, extraArgs } = request.body || {};
 
     if (!projectId || !agentId) {
       return reply.status(400).send({ error: 'Both projectId and agentId are required.' });
@@ -31,6 +30,31 @@ async function agentRoutes(fastify) {
         targetType: 'project',
         targetId: projectId,
         details: { agentId, sessionId: result.session.sessionId },
+        ip: request.ip,
+      });
+
+      return result;
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+
+  // Install a CLI agent by running its official one-line installer in a terminal
+  fastify.post('/api/agents/install', async (request, reply) => {
+    const { agentId } = request.body || {};
+
+    if (!agentId) {
+      return reply.status(400).send({ error: 'agentId is required.' });
+    }
+
+    try {
+      const result = agentRegistry.installAgent({ agentId });
+      auditService.logAction({
+        userId: request.user.id,
+        action: 'agent_install_started',
+        targetType: 'agent',
+        targetId: agentId,
+        details: { sessionId: result.session.sessionId, command: result.agent.installCommand },
         ip: request.ip,
       });
 

@@ -2046,14 +2046,24 @@
                 </div>
               ` : `
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">
-                  Install it on your VPS (e.g. npm i -g @anthropic-ai/claude-code) to enable it directly.
+                  Not installed. Click <strong>Install</strong> to run the official one-line installer in a terminal.
                 </div>
               `}
             </div>
             <div>
-              <button class="btn btn-primary btn-sm launch-agent-btn" data-agent-id="${a.id}" ${!a.installed ? 'disabled' : ''} style="width:100%;justify-content:center;">
-                Launch in Project...
-              </button>
+              ${a.installed ? `
+                <button class="btn btn-primary btn-sm launch-agent-btn" data-agent-id="${a.id}" style="width:100%;justify-content:center;">
+                  Launch in Project...
+                </button>
+              ` : (a.installCommand ? `
+                <button class="btn btn-primary btn-sm install-agent-btn" data-agent-id="${a.id}" style="width:100%;justify-content:center;">
+                  Install
+                </button>
+              ` : `
+                <button class="btn btn-secondary btn-sm" disabled style="width:100%;justify-content:center;">
+                  Manual install required
+                </button>
+              `)}
             </div>
           </div>
         `).join('')}
@@ -2066,6 +2076,28 @@
         showLaunchAgentModal(state.activeProjectId, agentId);
       };
     });
+
+    document.querySelectorAll('.install-agent-btn').forEach((btn) => {
+      btn.onclick = () => installAgent(btn.getAttribute('data-agent-id'));
+    });
+  }
+
+  // Kick off an agent's official installer in a new System Terminal and switch
+  // to it so the user can follow the output live.
+  async function installAgent(agentId) {
+    const agent = state.agents.find((a) => a.id === agentId) || {};
+    try {
+      const res = await api('/api/agents/install', {
+        method: 'POST',
+        body: { agentId },
+      });
+      showToast(`Installing ${res.agent.name}… watch the terminal.`, 'success');
+      state.activeSysTerminalId = res.session.sessionId;
+      saveUiState({ activeSysTerminalId: res.session.sessionId });
+      navigateTo('terminal');
+    } catch (err) {
+      showToast(`Install failed: ${err.message}`, 'error');
+    }
   }
 
   function showLaunchAgentModal(preselectedProjectId = null, preselectedAgentId = null) {
