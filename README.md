@@ -55,13 +55,13 @@ curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | 
 
 ### One-line uninstall
 
-Remove **everything** (service, helper scripts, `/srv/citadel` and the service user):
+Remove **everything** (service, helper scripts, `/srv/citadel`, the service user **and the local source checkout** the installer ran from):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/scripts/uninstall.sh | sudo bash
 ```
 
-Pass `--keep-data` to preserve `/srv/citadel` (database and projects).
+Pass `--keep-data` to preserve `/srv/citadel` (database and projects) or `--keep-source` to keep the local git checkout.
 
 ### Install from a clone
 
@@ -250,7 +250,7 @@ node scripts/doctor.js
 ./scripts/update.sh
 sudo /usr/local/sbin/citadel-update --check   # verify the updater without changing anything
 
-# Uninstall everything (service, scripts, /srv/citadel and the service user)
+# Uninstall everything (service, scripts, /srv/citadel, the user and the local clone)
 ./scripts/uninstall.sh
 
 # ...but keep the database and projects

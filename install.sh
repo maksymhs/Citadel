@@ -294,6 +294,18 @@ else
     echo "      Code already present in $APP_DIR (skipping download)."
   fi
 
+  # Remember the local checkout (if any) so `uninstall` can delete it too, giving
+  # a truly clean slate. Skipped when the source is the installed tree itself.
+  if [ -n "$SRC_DIR" ] && [ -d "$SRC_DIR/.git" ] && [ "$SRC_DIR" != "$APP_DIR" ]; then
+    case "$SRC_DIR" in
+      "$TARGET_DIR"|"$TARGET_DIR"/*) : ;;
+      *)
+        echo "      Recording local source checkout: $SRC_DIR"
+        printf '%s\n' "$SRC_DIR" | $SUDO tee "$DATA_DIR/source-dir" >/dev/null 2>&1 || true
+        ;;
+    esac
+  fi
+
   # Ensure an editable .env exists for optional configuration (e.g. ALLOWED_ORIGINS
   # when served behind a domain/proxy). Never overwrite an existing .env.
   if ! $SUDO test -f "$APP_DIR/.env" && $SUDO test -f "$APP_DIR/.env.example"; then
