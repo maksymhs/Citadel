@@ -17,6 +17,7 @@ class TerminalManager {
     this._tmuxChecked = false;
     this._tmuxAvailable = false;
     this._resolvedTmuxPath = null;
+    this._tmuxEnvConfigured = false;
   }
 
   /**
@@ -106,6 +107,70 @@ class TerminalManager {
     }
     const fallback = `/home/${user}`;
     return fs.existsSync(fallback) ? fallback : null;
+  }
+
+  /**
+   * Resolve the home directory of the account a session will actually run as:
+   * the configured admin user for System sessions, otherwise the service user.
+   */
+  _effectiveHome(command, args) {
+    let user = null;
+    if (command === 'sudo' && Array.isArray(args) && args[0] === '-u') {
+      user = args[1];
+    }
+    if (!user) {
+      try {
+        return os.homedir();
+      } catch {
+        return null;
+      }
+    }
+    return this._homeForUser(user);
+  }
+
+  /**
+   * Build a PATH that also includes the usual per-user binary directories (where
+   * the one-line CLI installers drop their executables, e.g. ~/.opencode/bin or
+   * ~/.local/bin). Without this, a freshly installed agent is not found by the
+   * shell even though the panel can launch it by absolute path.
+   */
+  _buildPath(home) {
+    const base = process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+    if (!home) return base;
+    const dirs = [
+      path.join(home, '.local', 'bin'),
+      path.join(home, '.opencode', 'bin'),
+      path.join(home, '.npm-global', 'bin'),
+      path.join(home, '.cargo', 'bin'),
+      path.join(home, 'bin'),
+    ].filter((dir) => {
+      try {
+        return fs.existsSync(dir);
+      } catch {
+        return false;
+      }
+    });
+    return [...dirs, base].join(':');
+  }
+
+  /**
+   * Ask the (possibly long-running) tmux server to refresh PATH/LANG/LC_ALL for
+   * new sessions from the client environment. Without this, sessions spawned by
+   * an existing tmux server keep its original PATH and miss freshly installed
+   * per-user binaries.
+   */
+  _ensureTmuxUpdateEnvironment() {
+    if (this._tmuxEnvConfigured) return;
+    this._tmuxEnvConfigured = true;
+    try {
+      const tmux = this.getTmuxPath();
+      const current = spawnSync(tmux, ['show-options', '-gv', 'update-environment'], { encoding: 'utf8' });
+      const parts = new Set(String(current.stdout || '').split(/\s+/).filter(Boolean));
+      for (const name of ['PATH', 'LANG', 'LC_ALL']) parts.add(name);
+      spawnSync(tmux, ['set-option', '-g', 'update-environment', [...parts].join(' ')], { stdio: 'ignore' });
+    } catch {
+      // Best effort: ignore if the running tmux does not support it.
+    }
   }
 
   /**
@@ -242,8 +307,8 @@ class TerminalManager {
     let spawnArgs;
 
     const env = {
-      PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
       ...process.env,
+      PATH: this._buildPath(this._effectiveHome(command, args)),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       LANG: 'en_US.UTF-8',
@@ -251,6 +316,7 @@ class TerminalManager {
     };
 
     if (useTmux) {
+      this._ensureTmuxUpdateEnvironment();
       file = this.getTmuxPath();
       // Start or attach to tmux session, setting the initial directory
       if (command) {

@@ -259,9 +259,25 @@ class AgentRegistry {
       agentId: null,
     });
 
+    // After the installer finishes, make the binary reachable on the system PATH
+    // (/usr/local/bin). This matters because System Terminal sessions run under
+    // sudo, which resets PATH — and the one-line installers drop the binary in a
+    // per-user directory (e.g. ~/.opencode/bin) that is not otherwise visible.
+    const linkablePaths = [
+      `"$HOME/.opencode/bin/${agent.binaryName}"`,
+      `"$HOME/.local/bin/${agent.binaryName}"`,
+      `"$HOME/.npm-global/bin/${agent.binaryName}"`,
+      `"$HOME/bin/${agent.binaryName}"`,
+    ].join(' ');
+    const linkCommand = `for b in ${linkablePaths}; do if [ -x "$b" ]; then `
+      + `sudo ln -sf "$b" "/usr/local/bin/${agent.binaryName}" 2>/dev/null `
+      + `|| { mkdir -p "$HOME/.local/bin"; ln -sf "$b" "$HOME/.local/bin/${agent.binaryName}"; }; `
+      + `break; fi; done`;
+    const fullCommand = `${agent.installCommand}; ${linkCommand}`;
+
     const activeSession = terminalManager.activePtySessions.get(session.sessionId);
     if (activeSession) {
-      activeSession.ptyProcess.write(`${agent.installCommand}\r`);
+      activeSession.ptyProcess.write(`${fullCommand}\r`);
     }
 
     return {
