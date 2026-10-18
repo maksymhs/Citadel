@@ -23,6 +23,9 @@
     integrations: null,
     deployments: [],
     plugins: [],
+    fleetHosts: [],
+    fleetAgents: {}, // hostId -> agents[]
+    fleetStatus: {}, // hostId -> { ok, version, commit } | { error }
     docker: null,
     containers: [],
     dashboardTimer: null,
@@ -36,7 +39,7 @@
   const UI_STATE_KEY = 'citadel.uiState';
   const KNOWN_VIEWS = [
     'dashboard', 'projects', 'repos', 'files', 'workspace', 'terminal',
-    'agents', 'deployments', 'docker', 'plugins', 'system',
+    'agents', 'deployments', 'docker', 'plugins', 'fleet', 'system',
   ];
 
   function loadUiState() {
@@ -352,6 +355,10 @@
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>
               <span>Plugins</span>
             </a>
+            <a class="nav-item" data-view="fleet">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/></svg>
+              <span>Fleet</span>
+            </a>
             <a class="nav-item" data-view="system">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
               <span>System & Audit</span>
@@ -524,6 +531,9 @@
     } else if (view === 'plugins') {
       titleEl.textContent = 'Extensions & Plugins';
       renderPluginsView();
+    } else if (view === 'fleet') {
+      titleEl.textContent = 'Fleet — Remote Hosts';
+      renderFleetView();
     } else if (view === 'system') {
       titleEl.textContent = 'System Diagnostics & Audit';
       renderSystemView();
@@ -2147,6 +2157,217 @@
         navigateTo('workspace');
         await activateTerminalSession(res.session.sessionId, res.session.name);
         showToast('Agent launched in persistent terminal.', 'success');
+      },
+    });
+  }
+
+  // 4b. Fleet — manage and control remote Citadel instances
+  async function renderFleetView() {
+    const content = document.getElementById('main-content');
+    const actions = document.getElementById('top-bar-actions');
+    actions.innerHTML = '<button class="btn btn-primary btn-sm" id="fleet-add-btn">+ Add Host</button>';
+    document.getElementById('fleet-add-btn').onclick = () => showFleetHostModal();
+
+    content.innerHTML = '<div style="color:var(--text-secondary);">Loading fleet...</div>';
+    await loadFleetHosts();
+    renderFleetHosts(content);
+  }
+
+  async function loadFleetHosts() {
+    try {
+      const res = await api('/api/fleet/hosts');
+      state.fleetHosts = res.hosts || [];
+    } catch (err) {
+      state.fleetHosts = [];
+      showToast(`Failed to load fleet: ${err.message}`, 'error');
+    }
+  }
+
+  function fleetHostName(hostId) {
+    const h = state.fleetHosts.find((x) => x.id === hostId);
+    return h ? h.name : hostId;
+  }
+
+  function fleetStatusBadge(hostId) {
+    const st = state.fleetStatus[hostId];
+    if (!st) return '<span class="badge badge-muted">Unknown</span>';
+    if (st.error) return `<span class="badge badge-danger" title="${escapeHtml(st.error)}">Offline</span>`;
+    return `<span class="badge badge-success">Online · v${escapeHtml(st.version || '?')}</span>`;
+  }
+
+  function renderFleetHosts(content) {
+    if (state.fleetHosts.length === 0) {
+      content.innerHTML = `
+        <div style="text-align:center;padding:40px;">
+          <h3>No remote hosts yet</h3>
+          <p style="color:var(--text-secondary);">Add another Citadel instance (base URL + a session token) to manage it from here.</p>
+          <button class="btn btn-primary" id="fleet-empty-add" style="margin-top:16px;">+ Add Host</button>
+        </div>`;
+      document.getElementById('fleet-empty-add').onclick = () => showFleetHostModal();
+      return;
+    }
+
+    content.innerHTML = `
+      <p style="color:var(--text-secondary);margin-bottom:20px;">
+        Check status, list/install AI agents and trigger updates on other Citadel panels. Tokens are stored encrypted on this host only.
+      </p>
+      <div class="grid-cards">
+        ${state.fleetHosts.map((h) => {
+          const agents = state.fleetAgents[h.id];
+          const st = state.fleetStatus[h.id];
+          return `
+            <div class="card">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                <h3 style="font-size:16px;font-weight:600;">${escapeHtml(h.name)}</h3>
+                ${fleetStatusBadge(h.id)}
+              </div>
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-bottom:14px;">${escapeHtml(h.baseUrl)}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+                <button class="btn btn-secondary btn-sm" data-fleet-action="status" data-host-id="${h.id}">Check</button>
+                <button class="btn btn-secondary btn-sm" data-fleet-action="agents" data-host-id="${h.id}">Agents</button>
+                <button class="btn btn-secondary btn-sm" data-fleet-action="update" data-host-id="${h.id}">Update Citadel</button>
+                <button class="btn btn-secondary btn-sm" data-fleet-action="edit" data-host-id="${h.id}">Edit</button>
+                <button class="btn btn-secondary btn-sm" data-fleet-action="remove" data-host-id="${h.id}">Remove</button>
+              </div>
+              ${st && !st.error && st.commit ? `<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-bottom:10px;">commit ${escapeHtml(st.commit)}</div>` : ''}
+              ${agents ? renderFleetAgents(h.id, agents) : ''}
+            </div>`;
+        }).join('')}
+      </div>
+    `;
+
+    content.querySelectorAll('[data-fleet-action]').forEach((btn) => {
+      const hostId = btn.getAttribute('data-host-id');
+      const action = btn.getAttribute('data-fleet-action');
+      btn.onclick = () => {
+        if (action === 'status') return fleetCheck(hostId);
+        if (action === 'agents') return fleetLoadAgents(hostId);
+        if (action === 'update') return fleetUpdate(hostId);
+        if (action === 'edit') return showFleetHostModal(hostId);
+        if (action === 'remove') return fleetRemove(hostId);
+      };
+    });
+
+    content.querySelectorAll('[data-fleet-install]').forEach((btn) => {
+      btn.onclick = () => fleetInstallAgent(btn.getAttribute('data-host-id'), btn.getAttribute('data-fleet-install'));
+    });
+  }
+
+  function renderFleetAgents(hostId, agents) {
+    if (agents.length === 0) {
+      return '<div style="color:var(--text-muted);font-size:12px;">No agents reported.</div>';
+    }
+    return `
+      <div style="border-top:1px solid var(--border-color);padding-top:10px;">
+        ${agents.map((a) => `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0;">
+            <span style="font-size:13px;">${escapeHtml(a.name)}
+              <span class="badge ${a.installed ? 'badge-success' : 'badge-muted'}" style="margin-left:6px;">${a.installed ? 'Installed' : 'Missing'}</span>
+            </span>
+            ${a.installed ? '' : (a.installCommand
+              ? `<button class="btn btn-primary btn-sm" data-fleet-install="${a.id}" data-host-id="${hostId}">Install</button>`
+              : '')}
+          </div>
+        `).join('')}
+      </div>`;
+  }
+
+  async function fleetCheck(hostId) {
+    try {
+      const res = await api(`/api/fleet/hosts/${hostId}/status`);
+      const v = res.version || {};
+      state.fleetStatus[hostId] = { version: v.version, commit: v.commit };
+      showToast(`${fleetHostName(hostId)}: online (v${v.version || '?'})`, 'success');
+    } catch (err) {
+      state.fleetStatus[hostId] = { error: err.message };
+      showToast(`${fleetHostName(hostId)}: ${err.message}`, 'error');
+    }
+    renderFleetHosts(document.getElementById('main-content'));
+  }
+
+  async function fleetLoadAgents(hostId) {
+    try {
+      const res = await api(`/api/fleet/hosts/${hostId}/agents`);
+      state.fleetAgents[hostId] = res.agents || [];
+      showToast(`${fleetHostName(hostId)}: ${state.fleetAgents[hostId].length} agents detected.`, 'info');
+    } catch (err) {
+      showToast(`Agents failed: ${err.message}`, 'error');
+    }
+    renderFleetHosts(document.getElementById('main-content'));
+  }
+
+  async function fleetInstallAgent(hostId, agentId) {
+    try {
+      await api(`/api/fleet/hosts/${hostId}/agents/install`, { method: 'POST', body: { agentId } });
+      showToast(`Installing ${agentId} on ${fleetHostName(hostId)}… watch its System Terminal there.`, 'success');
+      await fleetLoadAgents(hostId);
+    } catch (err) {
+      showToast(`Install failed: ${err.message}`, 'error');
+    }
+  }
+
+  async function fleetUpdate(hostId) {
+    try {
+      await api(`/api/fleet/hosts/${hostId}/update`, { method: 'POST' });
+      showToast(`Update started on ${fleetHostName(hostId)}.`, 'success');
+    } catch (err) {
+      showToast(`Update failed: ${err.message}`, 'error');
+    }
+  }
+
+  function fleetRemove(hostId) {
+    const host = state.fleetHosts.find((h) => h.id === hostId) || {};
+    openModal({
+      title: 'Remove host',
+      bodyHtml: `<p>Remove <strong>${escapeHtml(host.name || '')}</strong> from the fleet? The remote host is not affected.</p>`,
+      confirmText: 'Remove',
+      onConfirm: async () => {
+        await api(`/api/fleet/hosts/${hostId}`, { method: 'DELETE' });
+        delete state.fleetAgents[hostId];
+        delete state.fleetStatus[hostId];
+        await loadFleetHosts();
+        renderFleetHosts(document.getElementById('main-content'));
+        showToast('Host removed.', 'success');
+      },
+    });
+  }
+
+  function showFleetHostModal(hostId = null) {
+    const host = hostId ? state.fleetHosts.find((h) => h.id === hostId) : null;
+    openModal({
+      title: host ? 'Edit remote host' : 'Add remote host',
+      bodyHtml: `
+        <div class="form-group">
+          <label class="form-label">Name</label>
+          <input class="form-input" id="fleet-name" value="${host ? escapeHtml(host.name) : ''}" placeholder="vps-2" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Base URL</label>
+          <input class="form-input" id="fleet-url" value="${host ? escapeHtml(host.baseUrl) : ''}" placeholder="https://vps2.example.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Access token ${host ? '(leave empty to keep current)' : ''}</label>
+          <input class="form-input" id="fleet-token" type="password" autocomplete="off" placeholder="remote session id" />
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+            On the remote host, copy the <code>session_id</code> cookie after logging in (or use an admin token). Stored encrypted on this host.
+          </div>
+        </div>
+      `,
+      confirmText: host ? 'Save' : 'Add Host',
+      onConfirm: async () => {
+        const name = document.getElementById('fleet-name').value.trim();
+        const baseUrl = document.getElementById('fleet-url').value.trim();
+        const token = document.getElementById('fleet-token').value.trim();
+        if (host) {
+          const body = { name, baseUrl };
+          if (token) body.token = token;
+          await api(`/api/fleet/hosts/${host.id}`, { method: 'PUT', body });
+        } else {
+          await api('/api/fleet/hosts', { method: 'POST', body: { name, baseUrl, token } });
+        }
+        await loadFleetHosts();
+        renderFleetHosts(document.getElementById('main-content'));
+        showToast(host ? 'Host updated.' : 'Host added.', 'success');
       },
     });
   }

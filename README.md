@@ -19,6 +19,7 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
   - Audit log with automatic credential redaction.
 - **Domain Publishing (Optional)**: Caddy integration through its local admin API for reverse proxying and automatic HTTPS via Let's Encrypt.
 - **Docker Monitoring (Optional)**: Container inspection over a protected Unix socket. The core works 100% without Docker or Caddy.
+- **Fleet (Multi-Host)**: Register other Citadel instances (URL + token, encrypted at rest) and manage them from one panel — check status/version, list and install AI agents and trigger self-updates remotely. The token is a bearer session id accepted by the remote API.
 - **Plugin System**: Standardized `plugin.json` manifests with fault isolation so no plugin can take down the core.
 - **Idempotent Installation**: An `install.sh` installer and a systemd unit for Debian/Ubuntu and POSIX environments.
 

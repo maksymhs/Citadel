@@ -154,6 +154,15 @@ function initDatabase(customPath = null) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS fleet_hosts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      token_encrypted TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
