@@ -114,4 +114,15 @@ describe('System, Metrics & Audit Trail Tests', () => {
     assert.equal(testLog.details.token, '[REDACTED]');
     assert.equal(testLog.details.publicNote, 'Hello VPS');
   });
+
+  test('GET / serves index.html with a versioned, no-store asset token', async () => {
+    const pkg = require('../package.json');
+    const res = await app.inject({ method: 'GET', url: '/' });
+
+    assert.equal(res.statusCode, 200);
+    assert.match(res.headers['cache-control'] || '', /no-store/);
+    assert.ok(res.payload.includes(`/js/app.js?v=${pkg.version}`));
+    assert.ok(res.payload.includes(`/css/app.css?v=${pkg.version}`));
+    assert.ok(!res.payload.includes('?v=mobile18'));
+  });
 });

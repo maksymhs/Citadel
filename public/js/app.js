@@ -720,6 +720,20 @@
           </div>
         </div>
 
+        <div class="card" id="dash-fleet-card" style="margin-bottom:24px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
+            <div>
+              <h3 style="font-size:14px;font-weight:600;">Fleet — Remote Hosts</h3>
+              <div id="dash-fleet-summary" style="font-size:12px;color:var(--text-muted);margin-top:2px;">Checking all devices…</div>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button class="btn btn-secondary btn-sm" id="dash-fleet-check-all">Check All</button>
+              <button class="btn btn-secondary btn-sm" id="dash-fleet-update-all">Update All</button>
+            </div>
+          </div>
+          <div id="dash-fleet-body"><div style="color:var(--text-muted);font-size:13px;">Loading…</div></div>
+        </div>
+
         <div class="card" style="margin-bottom:24px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;">
             <div>
@@ -752,6 +766,8 @@
 
       document.getElementById('dash-new-project-btn')?.addEventListener('click', showCreateProjectModal);
       document.getElementById('dash-clone-btn')?.addEventListener('click', showCloneProjectModal);
+      document.getElementById('dash-fleet-check-all')?.addEventListener('click', () => refreshDashboardFleet(true));
+      document.getElementById('dash-fleet-update-all')?.addEventListener('click', fleetUpdateAll);
 
       const pauseBtn = document.getElementById('process-pause-btn');
       pauseBtn?.addEventListener('click', () => {
@@ -760,6 +776,7 @@
       });
 
       await refreshProcessTable();
+      refreshDashboardFleet();
       if (state.dashboardTimer) clearInterval(state.dashboardTimer);
       state.dashboardTimer = setInterval(() => {
         if (state.dashboardPaused || document.hidden) return;
@@ -2165,12 +2182,18 @@
   async function renderFleetView() {
     const content = document.getElementById('main-content');
     const actions = document.getElementById('top-bar-actions');
-    actions.innerHTML = '<button class="btn btn-primary btn-sm" id="fleet-add-btn">+ Add Host</button>';
+    actions.innerHTML = `
+      <button class="btn btn-secondary btn-sm" id="fleet-check-all-btn">Check All</button>
+      <button class="btn btn-secondary btn-sm" id="fleet-update-all-btn">Update All</button>
+      <button class="btn btn-primary btn-sm" id="fleet-add-btn">+ Add Host</button>`;
     document.getElementById('fleet-add-btn').onclick = () => showFleetHostModal();
+    document.getElementById('fleet-check-all-btn').onclick = () => fleetCheckAll();
+    document.getElementById('fleet-update-all-btn').onclick = () => fleetUpdateAll();
 
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading fleet...</div>';
     await loadFleetHosts();
     renderFleetHosts(content);
+    if (state.fleetHosts.length > 0) fleetCheckAll(true);
   }
 
   async function loadFleetHosts() {
@@ -2183,6 +2206,65 @@
     }
   }
 
+  // One request fans out a status probe to every host; store the outcome so all
+  // views (Fleet and Dashboard) render the same aggregate state.
+  function applyFleetOverview(hosts) {
+    hosts.forEach((h) => {
+      if (h.online) {
+        state.fleetStatus[h.id] = {
+          version: h.version,
+          commit: h.commit,
+          updateAvailable: Boolean(h.updateAvailable),
+          latest: h.latest,
+          agentsInstalled: h.agentsInstalled,
+          agentsTotal: h.agentsTotal,
+        };
+      } else {
+        state.fleetStatus[h.id] = { error: h.error || 'Unreachable' };
+      }
+    });
+  }
+
+  async function fleetCheckAll(quiet = false) {
+    if (state.fleetHosts.length === 0) return;
+    const btn = document.getElementById('fleet-check-all-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    try {
+      const res = await api('/api/fleet/overview');
+      const hosts = res.hosts || [];
+      applyFleetOverview(hosts);
+      if (!quiet) {
+        const online = hosts.filter((h) => h.online).length;
+        showToast(`Checked ${hosts.length} host(s): ${online} online.`, 'info');
+      }
+    } catch (err) {
+      showToast(`Check all failed: ${err.message}`, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Check All'; }
+    }
+    renderFleetHosts(document.getElementById('main-content'));
+  }
+
+  function fleetUpdateAll() {
+    if (state.fleetHosts.length === 0) return;
+    openModal({
+      title: 'Update all hosts',
+      bodyHtml: `<p>Trigger the self-updater on <strong>${state.fleetHosts.length}</strong> host(s) at once?</p>`,
+      confirmText: 'Update All',
+      onConfirm: async () => {
+        try {
+          const res = await api('/api/fleet/update-all', { method: 'POST' });
+          const results = res.results || [];
+          const ok = results.filter((r) => r.ok).length;
+          results.filter((r) => !r.ok).forEach((r) => showToast(`${r.name}: ${r.error}`, 'error'));
+          showToast(`Update triggered on ${ok}/${results.length} host(s).`, ok === results.length ? 'success' : 'warning');
+        } catch (err) {
+          showToast(`Update all failed: ${err.message}`, 'error');
+        }
+      },
+    });
+  }
+
   function fleetHostName(hostId) {
     const h = state.fleetHosts.find((x) => x.id === hostId);
     return h ? h.name : hostId;
@@ -2192,7 +2274,10 @@
     const st = state.fleetStatus[hostId];
     if (!st) return '<span class="badge badge-muted">Unknown</span>';
     if (st.error) return `<span class="badge badge-danger" title="${escapeHtml(st.error)}">Offline</span>`;
-    return `<span class="badge badge-success">Online · v${escapeHtml(st.version || '?')}</span>`;
+    const upd = st.updateAvailable
+      ? ` <span class="badge badge-warning" title="Newer commit ${escapeHtml(st.latest || '')} available">Update available</span>`
+      : '';
+    return `<span class="badge badge-success">Online · v${escapeHtml(st.version || '?')}</span>${upd}`;
   }
 
   function renderFleetHosts(content) {
@@ -2230,7 +2315,7 @@
                 <button class="btn btn-secondary btn-sm" data-fleet-action="remove" data-host-id="${h.id}">Remove</button>
               </div>
               ${st && !st.error && st.commit ? `<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-bottom:10px;">commit ${escapeHtml(st.commit)}</div>` : ''}
-              ${agents ? renderFleetAgents(h.id, agents) : ''}
+              ${agents ? renderFleetAgents(h.id, agents) : (st && !st.error && typeof st.agentsTotal === 'number' ? `<div style="font-size:12px;color:var(--text-muted);">${st.agentsInstalled}/${st.agentsTotal} agents installed</div>` : '')}
             </div>`;
         }).join('')}
       </div>
@@ -2270,6 +2355,65 @@
           </div>
         `).join('')}
       </div>`;
+  }
+
+  // Dashboard widget: a compact per-device row, refreshed from one overview call.
+  async function refreshDashboardFleet(notify = false) {
+    const body = document.getElementById('dash-fleet-body');
+    if (!body) return;
+    if (state.fleetHosts.length === 0) await loadFleetHosts();
+    if (state.fleetHosts.length === 0) {
+      const summary = document.getElementById('dash-fleet-summary');
+      if (summary) summary.textContent = 'No remote hosts configured';
+      body.innerHTML = `<div style="color:var(--text-muted);font-size:13px;">No remote hosts yet. <a href="#" id="dash-fleet-goto" style="color:var(--accent-color);">Add one in Fleet</a> to control multiple devices from here.</div>`;
+      document.getElementById('dash-fleet-goto')?.addEventListener('click', (e) => { e.preventDefault(); navigateTo('fleet'); });
+      return;
+    }
+    body.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Checking hosts…</div>';
+    try {
+      const res = await api('/api/fleet/overview');
+      const hosts = res.hosts || [];
+      applyFleetOverview(hosts);
+      renderDashboardFleetRows(hosts);
+      if (notify) {
+        const online = hosts.filter((h) => h.online).length;
+        showToast(`Checked ${hosts.length} host(s): ${online} online.`, 'info');
+      }
+    } catch (err) {
+      body.innerHTML = `<div style="color:var(--danger-color);font-size:13px;">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderDashboardFleetRows(hosts) {
+    const body = document.getElementById('dash-fleet-body');
+    const summary = document.getElementById('dash-fleet-summary');
+    if (!body) return;
+    const online = hosts.filter((h) => h.online).length;
+    const updates = hosts.filter((h) => h.updateAvailable).length;
+    if (summary) summary.textContent = `${online}/${hosts.length} online${updates ? ` · ${updates} update(s) available` : ''}`;
+    body.innerHTML = hosts.map((h) => {
+      const status = h.online
+        ? `<span class="badge badge-success">Online · v${escapeHtml(h.version || '?')}</span>${h.updateAvailable ? ' <span class="badge badge-warning">Update</span>' : ''}`
+        : `<span class="badge badge-danger" title="${escapeHtml(h.error || '')}">Offline</span>`;
+      const meta = h.online
+        ? `${h.agentsInstalled ?? 0}/${h.agentsTotal ?? 0} agents${h.commit ? ` · ${escapeHtml(String(h.commit).slice(0, 7))}` : ''}`
+        : escapeHtml(h.error || '');
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:8px;">
+          <div style="min-width:0;">
+            <strong style="color:var(--accent-color);">${escapeHtml(h.name)}</strong>
+            <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(h.baseUrl)}</div>
+            <div style="font-size:11px;color:var(--text-secondary);">${meta}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+            ${status}
+            <button class="btn btn-secondary btn-sm dash-fleet-manage">Manage</button>
+          </div>
+        </div>`;
+    }).join('');
+    body.querySelectorAll('.dash-fleet-manage').forEach((btn) => {
+      btn.onclick = () => navigateTo('fleet');
+    });
   }
 
   async function fleetCheck(hostId) {

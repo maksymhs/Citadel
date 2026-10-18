@@ -38,6 +38,28 @@ async function fleetRoutes(fastify) {
 
   fastify.get('/api/fleet/hosts', async () => ({ hosts: fleetService.listHosts() }));
 
+  // Aggregated status for every host, for the single-pane-of-glass dashboard.
+  fastify.get('/api/fleet/overview', async (request, reply) => {
+    try {
+      const hosts = await fleetService.overview();
+      audit(request, 'fleet_overview', null, { count: hosts.length });
+      return { hosts };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+
+  // Trigger the self-updater on every host at once (best-effort per host).
+  fastify.post('/api/fleet/update-all', async (request, reply) => {
+    try {
+      const results = await fleetService.updateAll();
+      audit(request, 'fleet_update_all', null, { count: results.length });
+      return { results };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+
   fastify.post('/api/fleet/hosts', async (request, reply) => {
     const { name, baseUrl, token } = request.body || {};
     try {

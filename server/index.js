@@ -4,6 +4,7 @@
 const Fastify = require('fastify');
 const path = require('node:path');
 const fs = require('node:fs');
+const pkg = require('../package.json');
 
 const {
   PORT,
@@ -100,7 +101,18 @@ async function buildServer(options = {}) {
   await fastify.register(require('@fastify/static'), {
     root: publicDir,
     prefix: '/',
+    index: false,
   });
+
+  // Serve index.html fresh on every load, stamping the asset cache-bust token
+  // with the running version so browsers/CDNs never serve a stale app.js.
+  const indexPath = path.join(publicDir, 'index.html');
+  function serveIndex(request, reply) {
+    const html = fs.readFileSync(indexPath, 'utf8').replace(/\?v=[A-Za-z0-9._-]+/g, `?v=${pkg.version}`);
+    reply.header('Cache-Control', 'no-store').type('text/html').send(html);
+  }
+  fastify.get('/', serveIndex);
+  fastify.get('/index.html', serveIndex);
 
   // 7. Register API routes
   await fastify.register(authRoutes);

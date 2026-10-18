@@ -172,6 +172,67 @@ async function remoteRequest(id, apiPath, { method = 'GET', body = null } = {}) 
   }
 }
 
+/**
+ * Fan out a lightweight status probe to every host and aggregate the result,
+ * so the dashboard can show one row per device from a single request.
+ */
+async function overview() {
+  const hosts = listHosts();
+  return Promise.all(hosts.map(async (h) => {
+    const base = { id: h.id, name: h.name, baseUrl: h.baseUrl };
+    try {
+      const version = await remoteRequest(h.id, '/api/system/version');
+      if (!version.ok) {
+        throw new Error((version.data && version.data.error) || `HTTP ${version.status}`);
+      }
+      const v = (version.data && version.data.version) || {};
+
+      const [updates, agents] = await Promise.all([
+        remoteRequest(h.id, '/api/system/updates').catch(() => null),
+        remoteRequest(h.id, '/api/agents').catch(() => null),
+      ]);
+
+      const agentList = (agents && agents.data && agents.data.agents) || [];
+      const upd = updates && updates.data && updates.data.updates;
+
+      return {
+        ...base,
+        online: true,
+        version: v.version || null,
+        commit: v.commit || null,
+        updateAvailable: Boolean(upd && upd.updateAvailable),
+        latest: upd ? upd.latest : null,
+        agentsInstalled: agentList.filter((a) => a.installed).length,
+        agentsTotal: agentList.length,
+        error: null,
+      };
+    } catch (err) {
+      return { ...base, online: false, error: err.message };
+    }
+  }));
+}
+
+/**
+ * Trigger the self-updater on every registered host. Best-effort: a host that is
+ * unreachable does not block the others.
+ */
+async function updateAll() {
+  const hosts = listHosts();
+  const settled = await Promise.allSettled(hosts.map(async (h) => {
+    const res = await remoteRequest(h.id, '/api/system/update', { method: 'POST', body: {} });
+    return {
+      id: h.id,
+      name: h.name,
+      ok: res.ok,
+      status: res.status,
+      error: res.ok ? null : (res.data && res.data.error) || `HTTP ${res.status}`,
+    };
+  }));
+  return settled.map((r, i) => (r.status === 'fulfilled'
+    ? r.value
+    : { id: hosts[i].id, name: hosts[i].name, ok: false, error: String(r.reason) }));
+}
+
 module.exports = {
   normalizeBaseUrl,
   listHosts,
@@ -180,4 +241,6 @@ module.exports = {
   updateHost,
   deleteHost,
   remoteRequest,
+  overview,
+  updateAll,
 };

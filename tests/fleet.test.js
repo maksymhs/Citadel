@@ -92,7 +92,17 @@ describe('Fleet HTTP routes (auth + forwarding)', () => {
       }
       if (req.url === '/api/agents') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ agents: [{ id: 'opencode', installed: false, installCommand: 'x' }] }));
+        res.end(JSON.stringify({ agents: [{ id: 'opencode', installed: true }] }));
+        return;
+      }
+      if (req.url === '/api/system/updates') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ updates: { updateAvailable: true, latest: 'def5678' } }));
+        return;
+      }
+      if (req.url === '/api/system/update') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
         return;
       }
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -176,5 +186,43 @@ describe('Fleet HTTP routes (auth + forwarding)', () => {
       headers: { cookie },
     });
     assert.equal(status.statusCode, 401);
+  });
+
+  test('overview aggregates every host into a single response', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/fleet/overview',
+      headers: { cookie },
+    });
+    assert.equal(res.statusCode, 200);
+    const { hosts } = JSON.parse(res.payload);
+    assert.ok(hosts.length >= 2);
+
+    const remote = hosts.find((h) => h.name === 'remote');
+    assert.equal(remote.online, true);
+    assert.equal(remote.version, '0.12.0');
+    assert.equal(remote.updateAvailable, true);
+    assert.equal(remote.latest, 'def5678');
+    assert.equal(remote.agentsInstalled, 1);
+    assert.equal(remote.agentsTotal, 1);
+
+    const offline = hosts.find((h) => h.name === 'bad-token');
+    assert.equal(offline.online, false);
+    assert.ok(offline.error);
+  });
+
+  test('update-all triggers the updater on reachable hosts', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/fleet/update-all',
+      headers: { cookie },
+      payload: {},
+    });
+    assert.equal(res.statusCode, 200);
+    const { results } = JSON.parse(res.payload);
+    const remote = results.find((r) => r.name === 'remote');
+    assert.equal(remote.ok, true);
+    const offline = results.find((r) => r.name === 'bad-token');
+    assert.equal(offline.ok, false);
   });
 });
