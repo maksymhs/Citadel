@@ -2316,9 +2316,10 @@
 
       const connectNote = {
         configured: 'Using the public URL configured via <code>CITADEL_PUBLIC_URL</code>.',
+        tunnel: 'Public Cloudflare Quick Tunnel — works from anywhere. The URL changes when the tunnel restarts.',
         tailscale: 'Reachable from anywhere over your Tailscale network. Install Tailscale on the phone and sign in to the same account.',
-        lan: '<span style="color:var(--warning-color);">This is a LAN address — it only works on the same Wi-Fi.</span> For access from anywhere, set up Tailscale (<code>tailscale serve</code>) or define <code>CITADEL_PUBLIC_URL</code>.',
-        localhost: '<span style="color:var(--warning-color);">Only reachable on this machine.</span> Set up Tailscale or define <code>CITADEL_PUBLIC_URL</code> for remote access.',
+        lan: '<span style="color:var(--warning-color);">This is a LAN address — it only works on the same Wi-Fi.</span> For access from anywhere, run <code>citadel tunnel</code> (public, one command) or set up Tailscale (<code>tailscale serve</code>).',
+        localhost: '<span style="color:var(--warning-color);">Only reachable on this machine.</span> Run <code>citadel tunnel</code> or set up Tailscale for remote access.',
       }[connect.source] || '';
 
       content.innerHTML = `

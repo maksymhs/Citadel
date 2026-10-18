@@ -3,6 +3,7 @@ const { spawnSync } = require('node:child_process');
 const qrcode = require('qrcode-generator');
 
 const { PUBLIC_URL, PORT, HOST } = require('../config');
+const { getTunnelUrl } = require('./tunnelService');
 
 const CACHE_TTL_MS = 60 * 1000;
 let cache = null;
@@ -65,8 +66,11 @@ function resolve() {
 
   let result;
   const configured = normalizeUrl(PUBLIC_URL);
+  const tunnel = getTunnelUrl();
   if (configured) {
     result = { url: configured, source: 'configured' };
+  } else if (tunnel) {
+    result = { url: tunnel, source: 'tunnel' };
   } else {
     result = detectTailscale();
     if (!result && !isLoopbackHost(HOST)) {

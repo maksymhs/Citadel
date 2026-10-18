@@ -4,6 +4,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { PROJECTS_DIR, ALLOWED_ORIGINS } = require('../config');
+const { getTunnelUrl } = require('../services/tunnelService');
 
 /**
  * True when `target` is `base` itself or lives inside it. Uses path.relative
@@ -105,6 +106,18 @@ function isAllowedOrigin(originHeader) {
         return true;
       }
     }
+
+    // A Cloudflare Quick Tunnel URL changes on every restart, so it cannot be
+    // pre-listed. Accept the *current* tunnel host only (still cookie-gated).
+    const tunnel = getTunnelUrl();
+    if (tunnel) {
+      try {
+        if (new URL(tunnel).host === originUrl.host) return true;
+      } catch {
+        // ignore malformed tunnel URL
+      }
+    }
+
     return false;
   } catch {
     return false;

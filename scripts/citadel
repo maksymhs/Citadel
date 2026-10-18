@@ -32,6 +32,7 @@ Citadel CLI
   citadel logs           Follow the service logs (journalctl -f)
   citadel restart        Restart the service
   citadel update         Update to the latest version
+  citadel tunnel         Expose the panel globally via a Cloudflare Quick Tunnel
   citadel help           Show this help
 
 Environment overrides: CITADEL_APP_DIR, CITADEL_SERVICE, CITADEL_UPDATER_PATH, PORT
@@ -90,6 +91,10 @@ case "$cmd" in
 
   update)
     as_root "$UPDATER" "$@"
+    ;;
+
+  tunnel)
+    as_root bash "$APP_DIR/scripts/tunnel.sh" "$@"
     ;;
 
   help|--help|-h|"")

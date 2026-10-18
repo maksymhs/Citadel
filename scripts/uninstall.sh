@@ -45,6 +45,13 @@ if command -v systemctl >/dev/null 2>&1; then
   $SUDO rm -rf "/etc/systemd/system/${SERVICE}.service.d"
   $SUDO systemctl daemon-reload 2>/dev/null || true
   $SUDO systemctl reset-failed "$SERVICE" 2>/dev/null || true
+
+  echo "Stopping and removing the Cloudflare tunnel (if any)..."
+  $SUDO systemctl stop citadel-tunnel 2>/dev/null || true
+  $SUDO systemctl disable citadel-tunnel 2>/dev/null || true
+  $SUDO rm -f /etc/systemd/system/citadel-tunnel.service
+  $SUDO rm -f /srv/citadel/data/tunnel-url 2>/dev/null || true
+  $SUDO systemctl daemon-reload 2>/dev/null || true
 fi
 
 echo "Removing sudoers rules..."

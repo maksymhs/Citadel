@@ -38,6 +38,7 @@ LAN_EXPOSED=false
 HOST_ADDR=""
 PANEL_PORT=3000
 UPDATE_MODE=false
+TUNNEL=false
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
@@ -72,6 +73,9 @@ for arg in "$@"; do
       HOST_ADDR="${arg#*=}"
       LAN_ACCESS=true
       ;;
+    --tunnel)
+      TUNNEL=true
+      ;;
   esac
 done
 
@@ -93,6 +97,11 @@ fi
 if [ "$LAN_ACCESS" = true ]; then
   echo -e "${YELLOW}[LAN] The panel will be reachable on your local network so you can scan the QR and start from your phone."
   echo -e "      Keep it local-only with --local.${NC}\n"
+fi
+
+if [ "$TUNNEL" = true ]; then
+  echo -e "${YELLOW}[TUNNEL] Setting up a public Cloudflare Quick Tunnel (global URL, no account needed)."
+  echo -e "         The URL is public and changes on restart.${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)
@@ -437,7 +446,7 @@ EOF
     $SUDO git config --system credential.helper /usr/local/bin/citadel-git-credential
   fi
 
-  # Friendly management CLI: `citadel status|url|qr|logs|restart|update`.
+  # Friendly management CLI: `citadel status|url|qr|logs|restart|update|tunnel`.
   # A thin launcher so repository updates to scripts/citadel take effect at once.
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/citadel" ]; then
     $SUDO tee /usr/local/bin/citadel >/dev/null <<EOF
@@ -446,7 +455,14 @@ EOF
 exec bash "$APP_DIR/scripts/citadel" "\$@"
 EOF
     $SUDO chmod 0755 /usr/local/bin/citadel
-    echo "      Management CLI installed: citadel status | url | qr | update"
+    echo "      Management CLI installed: citadel status | url | qr | update | tunnel"
+  fi
+
+  # Optional: global access via a Cloudflare Quick Tunnel (opt-in with --tunnel;
+  # also available anytime as `citadel tunnel`). No account or domain required.
+  if [ "$TUNNEL" = true ] && [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/tunnel.sh" ]; then
+    echo "      Setting up a global Cloudflare Quick Tunnel..."
+    $SUDO bash "$APP_DIR/scripts/tunnel.sh" up || echo -e "${YELLOW}      Tunnel setup skipped (see errors above).${NC}"
   fi
 fi
 
