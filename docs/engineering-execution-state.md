@@ -455,3 +455,121 @@ README/.env.example/architecture. No commits/pushes/deploys.
   locally.
 - Push not performed here: publish with `git push origin main --tags`.
 - No deploy performed (release = git version/tag only).
+
+## 28. v0.18.0 — tracked executions, reconciliation and process lifecycle (this run)
+### Context and baseline
+- Repository was 81 commits behind `origin/main`; operator approved a fast-forward.
+  HEAD after sync: `e74ac17` (`chore(release): v0.17.2`). Baseline `npm test`:
+  180 tests / 32 suites, 180 pass, 0 fail, exit 0 (~8.7 s).
+- Objective: make lease expiry stop being a proxy for process death, give the
+  sentinel a real execution identity, and make cancellation/recovery observable
+  and safe across sentinel restarts. No commits/pushes/tags were requested.
+
+### Design decisions implemented
+- Protocol 2 negotiation on claim. `worker_protocol` defaults to 1 so every
+  existing client keeps the previous semantics; a v1 claim still requeues on
+  expiry. A v2 claim promises a durable local journal.
+- Execution identity is `execId + pid + pgid + startToken + startedAt`; the
+  server stores it with the attempt (migration 004). A tracked attempt's result
+  must present the matching `execId`, so an older/foreign execution cannot
+  resolve a newer attempt.
+- An expired lease with execution evidence (`exec_pid` or `worker_protocol >= 2`)
+  becomes `reconcile_state='uncertain'` and is never requeued on time alone.
+  Only the owning node can resolve it via `POST /api/tasks/:id/reconcile`:
+  `alive` re-authorizes the exact execution and renews its lease, `terminated`
+  finalizes (exit code known) or requeues (provably gone, outcome unknown),
+  `unknown` keeps it blocked. Reconcile is idempotent and requires both the
+  attempt claim token and the execution id.
+- Cancellation is idempotent (`cancelling`/`cancelled` → current state, HTTP
+  200). Tracked cancellations renew only with claim token + execId; an expired
+  tracked cancellation becomes uncertain, never a false `cancelled`.
+- The sentinel spawns detached (own process group), writes the journal before
+  and after spawn, escalates SIGTERM → grace → SIGKILL → bounded confirmation,
+  and confirms the whole group. On startup it reconciles the journal before
+  polling: live → re-adopt/re-authorize, provably dead → report terminated,
+  unverifiable → `unknown`.
+- One sentinel per node/state directory via a lock; journal and lock are 0600
+  inside a 0700 directory. The journal is durable (temp + fsync + rename) and
+  auto-loads before mutation so a fresh instance cannot overwrite existing
+  records.
+
+### Files changed
+- `server/database/db.js`: migration `004_task_execution_identity` (additive,
+  nullable; columns `worker_protocol`, `exec_id`, `exec_pid`, `exec_pgid`,
+  `exec_started_at`, `exec_reported_at`, `reconcile_state`; index
+  `idx_tasks_reconcile`), plus the fresh-install schema.
+- `server/services/taskService.js`: protocol-aware claims, execution evidence in
+  reclaim/cancel, `reconcileTask`, heartbeat witness entries with exec identity,
+  idempotent cancellation, uncertain state handling, public fields (no secrets).
+- `server/routes/taskRoutes.js`: `protocol` on claim, worker-only reconcile
+  route with node-identity binding, `discard`/`reconcile` error hints.
+- `scripts/sentinel.js`: rewritten supervisor (journal, detached spawn,
+  heartbeat witness, reconciliation, cancellation/abandon/unknown paths, lock).
+- `scripts/sentinelProcess.js` (new): PID/start-token/process-group inspection,
+  safe signalling, environment-marker scan, restart recovery.
+- `scripts/sentinelJournal.js` (new): durable per-node journal + lock.
+- Tests: new `tests/task-execution.test.js` (20) and
+  `tests/sentinel-process.test.js` (16, real processes); updated
+  `tests/sentinel.test.js` (witness identity) and `tests/tasks.test.js`
+  (idempotent cancellation expectations).
+- Docs: `README.md` task mesh section, `docs/architecture.md` §6,
+  `docs/decisions.md` ADR-008, this ledger. `package.json`/lock bumped to
+  `0.18.0` (no commit/tag created).
+
+### Defects caught and fixed while testing
+- `reconcileAssigned` built termination/unknown reports from `{...item}` (field
+  `id`), while `safeReconcileRecord` requires `taskId`; it silently skipped the
+  report. Fixed by mapping `id → taskId`.
+- `signalTree` previously signalled the recorded group on a PID-reuse mismatch if
+  the group still existed. A reused PID could therefore kill an unrelated
+  process. Reuse now returns without signalling; only an execution-marker match
+  can attribute survivors, and only on Linux.
+- `terminateRecord` returned "gone" when a record had neither pid nor pgid;
+  cancellation could claim an unverified termination. It now returns
+  `no-execution-identity`.
+- `Journal.put/update/remove` wrote without loading first, so a fresh instance
+  could overwrite existing records. Mutators now load first; corrupt journals
+  are renamed to `*.corrupt-<ts>` and started empty.
+- Lock acquisition could steal a lock file that was created but not yet written;
+  a fresh unreadable lock is now refused for 5 s before being treated as stale.
+- `recordFor` now merges the live child identity during the spawn→journal-update
+  window, so a cancel in that window still targets the real process.
+
+### Tests executed (real commands, real results)
+- `npm test` (full, after all changes) → **216 tests / 36 suites, 216 pass,
+  0 fail**, exit 0 (~9.4 s); 180 baseline + 36 new.
+- `node --test tests/task-execution.test.js` → 20/20 pass.
+- `node --test tests/sentinel-process.test.js` → 16/16 pass (real detached
+  children: group-leader identity, descendant termination, SIGTERM-ignoring
+  escalation, PID-reuse safety, journal reload/corruption, lock races, startup
+  reconciliation, marker adoption, unknown throttling).
+- `node --test tests/sentinel-process.test.js tests/sentinel.test.js` → 20/20.
+- `git diff --check` → clean at the time of writing.
+
+### Compatibility and residual risks
+- Migration is additive and nullable; old rows are protocol 1. Downgrading the
+  binary leaves unused columns; no destructive change. Claim `protocol` is
+  optional (default 1). Repeated cancellation now returns 200 with the current
+  state instead of 400 — intended and covered by updated tests.
+- Protocol-1 clients keep the old "expiry implies gone" assumption; duplicate
+  execution remains possible for them if a process survives a lease expiry.
+- macOS: start token and process group are verified, but descendants that
+  outlive their leader cannot be found by `CITADEL_EXEC_ID` scanning, so they
+  remain `unknown` rather than being killed. Windows is not supported for the
+  sentinel (no negative-PID group signalling).
+- Shared `CITADEL_NODE_TOKEN` mode still trusts the declared node id; only
+  per-node tokens bind identity cryptographically.
+- A node that never returns leaves its attempt `uncertain`; there is no
+  admin-only force-resolve endpoint in this release (the worker reconcile route
+  is the only resolver). Operators must wait for the node or intervene in the
+  database. This is documented rather than hidden.
+- A task whose child exits but leaves descendant processes is logged
+  (`child exited but descendants remain`) but is reported with the child's exit
+  code; the result is not silently rewritten to success.
+
+### Last checkpoint / next safe action
+- Checkpoint: all changes implemented, full suite 216/216 green, docs and
+  ledger updated, version bumped to `0.18.0`, no commit/push/tag performed.
+- Next safe action: operator review of the diff and commit. If the release is
+  approved, create `chore(release): v0.18.0` and tag `v0.18.0`, then push with
+  `git push origin main --tags`. No deploy was performed.

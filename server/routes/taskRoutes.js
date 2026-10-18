@@ -76,7 +76,10 @@ function assertNodeIdentity(request, declaredNode) {
 }
 
 function sendError(reply, err) {
-  return reply.status(err.statusCode || 400).send({ error: err.message });
+  const body = { error: err.message };
+  if (err.discard) body.discard = true;
+  if (err.reconcile) body.reconcile = true;
+  return reply.status(err.statusCode || 400).send(body);
 }
 
 function audit(request, action, taskId, details) {
@@ -107,10 +110,10 @@ async function taskRoutes(fastify) {
 
   // Static route declared before the :id param route for clarity.
   fastify.post('/api/tasks/claim', { preHandler: requireWorkerAuth }, async (request, reply) => {
-    const { node } = request.body || {};
+    const { node, protocol } = request.body || {};
     try {
       assertNodeIdentity(request, node);
-      const task = taskService.claimTask(node);
+      const task = taskService.claimTask(node, { protocol });
       if (!task) return reply.status(204).send();
       audit(request, 'task_claimed', task.id, { node: task.node });
       return { task };
@@ -136,6 +139,33 @@ async function taskRoutes(fastify) {
         resultRef: task.resultRef,
       });
       return { task };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  fastify.post('/api/tasks/:id/reconcile', { preHandler: requireWorkerAuth }, async (request, reply) => {
+    try {
+      // A per-node credential may only reconcile tasks assigned to that node.
+      const expectedNode = request.nodeAuth ? request.nodeIdentity : null;
+      const result = taskService.reconcileTask(request.params.id, {
+        ...(request.body || {}),
+        expectedNode,
+      });
+      audit(request, 'task_reconciled', request.params.id, {
+        state: result.state,
+        requeued: result.requeued,
+        discarded: result.discarded,
+      });
+      return {
+        task: result.task,
+        reconciliation: {
+          state: result.state,
+          requeued: result.requeued,
+          discarded: result.discarded,
+          reason: result.reason,
+        },
+      };
     } catch (err) {
       return sendError(reply, err);
     }

@@ -43,6 +43,24 @@ const MIGRATIONS = [
       if (!columnExists(db, 'tasks', 'claim_token')) db.exec('ALTER TABLE tasks ADD COLUMN claim_token TEXT');
     },
   },
+  {
+    name: '004_task_execution_identity',
+    up: (db) => {
+      // Correlate an authorized attempt with the concrete local execution its
+      // sentinel spawned. Additive and nullable: pre-existing rows keep their
+      // current semantics (worker_protocol 1 = legacy, no tracked execution).
+      // `reconcile_state` marks attempts whose process state is not known
+      // (alive/uncertain/terminated) so an expired lease never silently
+      // authorises a duplicate run.
+      if (!columnExists(db, 'tasks', 'worker_protocol')) db.exec('ALTER TABLE tasks ADD COLUMN worker_protocol INTEGER NOT NULL DEFAULT 1');
+      if (!columnExists(db, 'tasks', 'exec_id')) db.exec('ALTER TABLE tasks ADD COLUMN exec_id TEXT');
+      if (!columnExists(db, 'tasks', 'exec_pid')) db.exec('ALTER TABLE tasks ADD COLUMN exec_pid INTEGER');
+      if (!columnExists(db, 'tasks', 'exec_pgid')) db.exec('ALTER TABLE tasks ADD COLUMN exec_pgid INTEGER');
+      if (!columnExists(db, 'tasks', 'exec_started_at')) db.exec('ALTER TABLE tasks ADD COLUMN exec_started_at TEXT');
+      if (!columnExists(db, 'tasks', 'exec_reported_at')) db.exec('ALTER TABLE tasks ADD COLUMN exec_reported_at TEXT');
+      if (!columnExists(db, 'tasks', 'reconcile_state')) db.exec('ALTER TABLE tasks ADD COLUMN reconcile_state TEXT');
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -202,6 +220,13 @@ function initDatabase(customPath = null) {
       claim_token TEXT,
       attempt INTEGER NOT NULL DEFAULT 0,
       max_attempts INTEGER NOT NULL DEFAULT 3,
+      worker_protocol INTEGER NOT NULL DEFAULT 1,
+      exec_id TEXT,
+      exec_pid INTEGER,
+      exec_pgid INTEGER,
+      exec_started_at TEXT,
+      exec_reported_at TEXT,
+      reconcile_state TEXT,
       result_ref TEXT,
       result TEXT,
       exit_code INTEGER,
@@ -257,6 +282,7 @@ function initDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
     CREATE INDEX IF NOT EXISTS idx_tasks_lease ON tasks(lease_until);
+    CREATE INDEX IF NOT EXISTS idx_tasks_reconcile ON tasks(status, reconcile_state);
     CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
     CREATE INDEX IF NOT EXISTS idx_events_level ON events(level);
     CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);

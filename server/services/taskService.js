@@ -22,6 +22,11 @@ const LEASE_MS = parseInt(process.env.CITADEL_TASK_LEASE_MS, 10) || 90000;
 const MAX_RESULT_CHARS = 20000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const MAX_MAX_ATTEMPTS = 10;
+// Worker protocol 2 promises: a durable local execution journal, exec identity
+// in the heartbeat and startup reconciliation. Such an attempt is never
+// auto-requeued on lease expiry without a confirmed process outcome, because
+// the process may still be running on a node that lost contact.
+const WORKER_PROTOCOL_JOURNAL = 2;
 
 // Headless (non-interactive) invocation per builtin agent. Kept here so an
 // orchestrator can enqueue {agent, prompt} without knowing each CLI's flags,
@@ -55,6 +60,10 @@ function toPublicTask(row, { includeClaimToken = false } = {}) {
     prompt: row.prompt || null,
     attempt: row.attempt || 0,
     maxAttempts: row.max_attempts || DEFAULT_MAX_ATTEMPTS,
+    workerProtocol: row.worker_protocol || 1,
+    execPid: row.exec_pid || null,
+    execStartedAt: row.exec_started_at || null,
+    reconcileState: row.reconcile_state || null,
     resultRef: row.result_ref,
     result: row.result || null,
     exitCode: row.exit_code,
@@ -190,40 +199,66 @@ function getTask(id) {
 }
 
 /**
- * Apply lease expiry rules:
- *   - `running` past its lease: requeue for another attempt while attempts
- *     remain, otherwise mark failed (explicit, bounded retry semantics).
- *   - `cancelling` past its lease: the worker never confirmed the kill, so the
- *     process is considered dead and the cancellation becomes final.
+ * Apply lease expiry rules.
  *
- * A `running`/`cancelling` row with NO lease (NULL or empty) is treated exactly
- * like an expired one: the current code never stores that state, so its only
- * possible origin is a legacy/manually repaired database. Requeueing it (rather
- * than granting it indefinite authority, or leaving it stuck forever) restores
- * the invariant that every running attempt holds a valid, expiring lease.
+ *   - `running` past its lease, WITHOUT execution evidence: requeue for another
+ *     attempt while attempts remain, otherwise mark failed (legacy behaviour).
+ *   - `running` past its lease WITH execution evidence: the attempt loses all
+ *     authority (results are rejected) but the task is NOT requeued. The local
+ *     process may still be alive (sentinel crash/restart, network partition).
+ *     It moves to `reconcile_state = 'uncertain'` and waits for the owning node
+ *     to prove the process terminated (`reconcileTask`) or to re-adopt it.
+ *     Protocol-2 workers are treated the same even before they report a pid:
+ *     they journal the execution before spawning, so "no pid yet" is not proof
+ *     that nothing was spawned.
+ *   - `cancelling` past its lease: same rule. A tracked/unreported execution is
+ *     never marked `cancelled` from expiry alone; it becomes uncertain. Only a
+ *     legacy attempt with no execution evidence is finalised as cancelled.
+ *
+ * A `running`/`cancelling` row with NO lease (NULL or empty) from a legacy
+ * worker is treated exactly like an expired one (legacy rows never store that
+ * state). Missing execution evidence + no lease keeps the historical recovery.
  *
  * Returns a summary so callers can emit trace events outside the transaction.
  */
 function reclaimExpired(db, now) {
   const expired = db.prepare(`
-    SELECT id, node, attempt, max_attempts FROM tasks
+    SELECT id, node, attempt, max_attempts, exec_pid, worker_protocol FROM tasks
     WHERE status = 'running'
       AND (lease_until IS NULL OR lease_until = '' OR lease_until < ?)
   `).all(now);
 
   const requeued = [];
   const exhausted = [];
+  const uncertain = [];
   const requeueStmt = db.prepare(`
-    UPDATE tasks SET status = 'queued', node = NULL, claim_token = NULL, lease_until = NULL, updated_at = ?
+    UPDATE tasks SET status = 'queued', node = NULL, claim_token = NULL, lease_until = NULL,
+                     exec_id = NULL, exec_pid = NULL, exec_pgid = NULL,
+                     exec_started_at = NULL, exec_reported_at = NULL, reconcile_state = NULL,
+                     updated_at = ?
     WHERE id = ? AND status = 'running'
   `);
   const failStmt = db.prepare(`
-    UPDATE tasks SET status = 'failed', claim_token = NULL, lease_until = NULL, error = ?, finished_at = ?, updated_at = ?
+    UPDATE tasks SET status = 'failed', claim_token = NULL, lease_until = NULL,
+                     reconcile_state = NULL, error = ?, finished_at = ?, updated_at = ?
     WHERE id = ? AND status = 'running'
+  `);
+  // Only flip to uncertain once, so repeated reclaims stay idempotent and do
+  // not spam the event log.
+  const uncertainStmt = db.prepare(`
+    UPDATE tasks SET reconcile_state = 'uncertain', updated_at = ?
+    WHERE id = ? AND status IN ('running', 'cancelling')
+      AND (reconcile_state IS NULL OR reconcile_state <> 'uncertain')
   `);
 
   for (const row of expired) {
-    if ((row.attempt || 0) >= (row.max_attempts || DEFAULT_MAX_ATTEMPTS)) {
+    const hasExecutionEvidence = Number.isInteger(row.exec_pid)
+      || (row.worker_protocol || 1) >= WORKER_PROTOCOL_JOURNAL;
+    if (hasExecutionEvidence) {
+      if (uncertainStmt.run(now, row.id).changes === 1) {
+        uncertain.push({ id: row.id, node: row.node, status: 'running' });
+      }
+    } else if ((row.attempt || 0) >= (row.max_attempts || DEFAULT_MAX_ATTEMPTS)) {
       if (failStmt.run(`Lease expired after ${row.attempt} attempt(s); max attempts reached.`, now, now, row.id).changes === 1) {
         exhausted.push({ id: row.id, node: row.node });
       }
@@ -233,20 +268,29 @@ function reclaimExpired(db, now) {
   }
 
   const cancelling = db.prepare(`
-    SELECT id, node FROM tasks
+    SELECT id, node, exec_pid, worker_protocol FROM tasks
     WHERE status = 'cancelling'
       AND (lease_until IS NULL OR lease_until = '' OR lease_until < ?)
   `).all(now);
   const finalizeStmt = db.prepare(`
-    UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL, finished_at = ?, updated_at = ?
+    UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL,
+                     reconcile_state = NULL, finished_at = ?, updated_at = ?
     WHERE id = ? AND status = 'cancelling'
   `);
   const cancelled = [];
   for (const row of cancelling) {
-    if (finalizeStmt.run(now, now, row.id).changes === 1) cancelled.push(row.id);
+    const hasExecutionEvidence = Number.isInteger(row.exec_pid)
+      || (row.worker_protocol || 1) >= WORKER_PROTOCOL_JOURNAL;
+    if (hasExecutionEvidence) {
+      if (uncertainStmt.run(now, row.id).changes === 1) {
+        uncertain.push({ id: row.id, node: row.node, status: 'cancelling' });
+      }
+    } else if (finalizeStmt.run(now, now, row.id).changes === 1) {
+      cancelled.push(row.id);
+    }
   }
 
-  return { requeued, exhausted, cancelled };
+  return { requeued, exhausted, cancelled, uncertain };
 }
 
 function recordReclaim(summary) {
@@ -279,6 +323,18 @@ function recordReclaim(summary) {
       message: 'Cancellation confirmed: worker lease expired while cancelling.',
     });
   }
+  for (const item of summary.uncertain || []) {
+    logService.record({
+      level: 'warn',
+      category: 'task',
+      taskId: item.id,
+      node: item.node,
+      action: 'task_reconcile_required',
+      message: item.status === 'cancelling'
+        ? 'Cancellation lease expired with a tracked execution; waiting for the owning node to confirm termination.'
+        : 'Lease expired with a tracked execution; the task is not requeued until the owning node confirms the process outcome.',
+    });
+  }
 }
 
 /**
@@ -288,9 +344,16 @@ function recordReclaim(summary) {
  * claim the same one. Each successful claim bumps `attempt` and mints a fresh
  * random `claim_token`.
  */
-function claimTask(node) {
+function claimTask(node, { protocol } = {}) {
   const cleanNode = String(node || '').trim();
   if (!cleanNode) throw new Error('A node id is required to claim a task.');
+
+  // A worker that declares protocol >= 2 promises a durable execution journal
+  // and reconciliation. Store it so lease expiry can distinguish "crashed and
+  // definitely nothing is running" from "contact lost, process may be alive".
+  const workerProtocol = Number.isFinite(protocol)
+    ? Math.max(1, Math.min(Math.trunc(protocol), 99))
+    : 1;
 
   const db = getDatabase();
   const claimToken = crypto.randomBytes(24).toString('hex');
@@ -310,9 +373,12 @@ function claimTask(node) {
     const res = db.prepare(`
       UPDATE tasks
       SET status = 'running', node = ?, started_at = COALESCE(started_at, ?),
-          lease_until = ?, claim_token = ?, attempt = attempt + 1, updated_at = ?
+          lease_until = ?, claim_token = ?, attempt = attempt + 1,
+          worker_protocol = ?, exec_id = NULL, exec_pid = NULL, exec_pgid = NULL,
+          exec_started_at = NULL, exec_reported_at = NULL, reconcile_state = NULL,
+          updated_at = ?
       WHERE id = ? AND status = 'queued'
-    `).run(cleanNode, now, leaseUntil, claimToken, now, candidate.id);
+    `).run(cleanNode, now, leaseUntil, claimToken, workerProtocol, now, candidate.id);
 
     if (res.changes !== 1) return { row: null, reclaim };
     return { row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(candidate.id), reclaim };
@@ -353,7 +419,7 @@ function claimTask(node) {
  * Errors carry `statusCode` 403 when the credential is valid but bound to a
  * different node; every other rejection keeps the 400 convention of the API.
  */
-function completeTask(id, { status, exitCode, resultRef, error, result, claimToken, expectedNode } = {}) {
+function completeTask(id, { status, exitCode, resultRef, error, result, claimToken, expectedNode, execId } = {}) {
   if (typeof claimToken !== 'string' || claimToken === '') {
     throw new Error('A claim token is required to report a result.');
   }
@@ -373,6 +439,18 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
       const err = new Error('Node credential is not authorized for this task.');
       err.statusCode = 403;
       throw err;
+    }
+
+    // Executions tracked by a protocol-2 sentinel must present the execution
+    // id recorded with the claim, so a stale worker (or a different process
+    // that somehow learned the token) cannot report for another execution.
+    if (row.exec_id) {
+      if (typeof execId !== 'string' || execId === '') {
+        throw new Error('This attempt has a tracked execution; the result must include its execId.');
+      }
+      if (execId !== row.exec_id) {
+        throw new Error('Execution identity mismatch; refusing a result from another execution.');
+      }
     }
 
     const isCancelReport = status === 'cancelled';
@@ -402,7 +480,8 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
     const res = db.prepare(`
       UPDATE tasks
       SET status = ?, exit_code = ?, result_ref = ?, error = ?, result = ?,
-          lease_until = NULL, claim_token = NULL, finished_at = ?, updated_at = ?
+          lease_until = NULL, claim_token = NULL, reconcile_state = 'terminated',
+          finished_at = ?, updated_at = ?
       WHERE id = ? AND claim_token = ? AND status = ?
         AND lease_until >= ?
     `).run(
@@ -433,16 +512,31 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
   if (outcome.reclaim) recordReclaim(outcome.reclaim);
   if (outcome.leaseInvalid) {
     const missing = outcome.leaseInvalid === 'missing';
+    // A tracked execution that lost its lease is not requeued: its process may
+    // still be alive. Tell the caller that reconciliation (not a blind retry)
+    // is required; the owning sentinel must prove the process outcome.
+    const after = getDatabase().prepare('SELECT status, reconcile_state FROM tasks WHERE id = ?').get(id);
+    const needsReconcile = !!after && after.status === 'running' && after.reconcile_state === 'uncertain';
     logService.record({
       level: 'warn',
       category: 'task',
       taskId: id,
       node: outcome.node,
-      action: missing ? 'task_result_rejected_no_lease' : 'task_result_rejected_expired',
-      message: missing
-        ? 'Result rejected: the running attempt had no lease; the task was reclaimed.'
-        : 'Result rejected: the attempt lease had already expired; the task was reclaimed.',
+      action: needsReconcile
+        ? 'task_result_rejected_reconcile'
+        : (missing ? 'task_result_rejected_no_lease' : 'task_result_rejected_expired'),
+      message: needsReconcile
+        ? 'Result rejected: the attempt lease was invalid and its execution state is uncertain; it was not requeued automatically.'
+        : (missing
+          ? 'Result rejected: the running attempt had no lease; the task was reclaimed.'
+          : 'Result rejected: the attempt lease had already expired; the task was reclaimed.'),
     });
+    if (needsReconcile) {
+      const err = new Error('Task attempt lease is invalid and its execution state is uncertain; reconciliation is required.');
+      err.statusCode = 409;
+      err.reconcile = true;
+      throw err;
+    }
     throw new Error(missing
       ? 'Task attempt has no lease; the result was rejected and the task reclaimed.'
       : 'Task lease expired; the result was rejected and the task reclaimed.');
@@ -471,22 +565,32 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
 /**
  * Request cancellation of a queued or running task.
  *
- * A queued task is finalised immediately. A running task whose lease has
- * already expired — or is missing altogether — is also finalised immediately:
- * no worker holds authority to keep running, so there is nothing to wait for.
- * A running task with a valid lease moves to `cancelling` (a *request*, not a
- * confirmed kill): its node
- * keeps the claim and the next heartbeat returns it in the `cancel` list so the
- * sentinel terminates the child and confirms with
- * `completeTask(..., {status:'cancelled', claimToken})`. If the worker never
- * confirms, lease expiry finalises it as `cancelled`.
+ * Idempotent: cancelling an already `cancelling`/`cancelled` task returns its
+ * current state instead of failing, so retries and concurrent HTTP requests are
+ * harmless.
+ *
+ * A queued task is finalised immediately. For a running task the server only
+ * *requests* termination: the owning node must kill the execution and confirm
+ * it. A protocol-1 attempt with no execution evidence and an invalid lease keeps
+ * the historical immediate finalisation. A tracked execution (or any
+ * protocol-2 worker, which may have spawned before its first heartbeat) is
+ * never marked `cancelled` from the server side, even if its lease expired:
+ * there may still be a live process. It moves to `cancelling`; expiry turns it
+ * into `reconcile_state='uncertain'`, and only a confirmed termination
+ * (`reconcileTask`) or a legacy no-execution expiry finalises it.
  */
 function cancelTask(id) {
   const db = getDatabase();
   const tx = db.transaction(() => {
     const now = new Date().toISOString();
     const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-    if (!row || !['queued', 'running'].includes(row.status)) {
+    if (!row) throw new Error('Task not found or already finished.');
+
+    // Idempotent cancellation: a repeated request observes the same state.
+    if (row.status === 'cancelling' || row.status === 'cancelled') {
+      return { row, idempotent: true };
+    }
+    if (!['queued', 'running'].includes(row.status)) {
       throw new Error('Task not found or already finished.');
     }
 
@@ -495,31 +599,40 @@ function cancelTask(id) {
         UPDATE tasks SET status = 'cancelled', finished_at = ?, updated_at = ?
         WHERE id = ? AND status = 'queued'
       `).run(now, now, id);
-    } else if (!hasValidLease(row.lease_until, now)) {
-      db.prepare(`
-        UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL,
-                         finished_at = ?, updated_at = ?
-        WHERE id = ? AND status = 'running'
-      `).run(now, now, id);
     } else {
-      db.prepare(`
-        UPDATE tasks SET status = 'cancelling', updated_at = ?
-        WHERE id = ? AND status = 'running'
-      `).run(now, id);
+      const hasExecutionEvidence = Number.isInteger(row.exec_pid)
+        || (row.worker_protocol || 1) >= WORKER_PROTOCOL_JOURNAL;
+      if (hasExecutionEvidence || hasValidLease(row.lease_until, now)) {
+        // Request in flight; the node confirms the actual termination.
+        db.prepare(`
+          UPDATE tasks SET status = 'cancelling', updated_at = ?
+          WHERE id = ? AND status = 'running'
+        `).run(now, id);
+      } else {
+        // Legacy attempt, no tracked process, no authority left: safe to finalise.
+        db.prepare(`
+          UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL,
+                           reconcile_state = NULL, finished_at = ?, updated_at = ?
+          WHERE id = ? AND status = 'running'
+        `).run(now, now, id);
+      }
     }
 
-    return toPublicTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
+    return { row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(id), idempotent: false };
   });
-  const task = tx();
+  const { row, idempotent } = tx();
+  const task = toPublicTask(row);
   logService.record({
     level: 'warn',
     category: 'task',
     taskId: id,
     node: task.node,
-    action: 'task_cancelled',
-    message: task.status === 'cancelling'
-      ? 'Cancellation requested; waiting for the worker to confirm termination.'
-      : 'Task cancelled.',
+    action: idempotent ? 'task_cancel_idempotent' : 'task_cancelled',
+    message: idempotent
+      ? `Cancellation already ${task.status}; no further action.`
+      : (task.status === 'cancelling'
+        ? 'Cancellation requested; waiting for the worker to confirm termination.'
+        : 'Task cancelled.'),
   });
   return task;
 }
@@ -547,18 +660,255 @@ function cancelTask(id) {
  * caller falls back to node-wide renewal so live tasks are not requeued under a
  * running process, and logs a one-time warning.
  */
+const TERMINAL_STATUSES = new Set(['done', 'failed', 'cancelled']);
+
+/**
+ * Reconcile the stored attempt with the local execution that the owning node
+ * actually observed. This is the only path that can resolve an attempt whose
+ * lease expired while its process state was unknown; it never creates a new
+ * attempt and never resurrects a terminal task.
+ *
+ * Evidence required: the current claim token AND the execution id recorded for
+ * this attempt (or, if none was recorded yet, the id the worker presents, which
+ * is persisted as part of the decision). Both are per-attempt, so an execution
+ * from an older attempt can never resolve a newer one.
+ *
+ * States:
+ *   - `alive`      : the exact execution is still running. The attempt keeps
+ *                    its authority and receives a fresh lease (no requeue).
+ *   - `terminated` : the process is gone. The task is finalised (exit code
+ *                    known) or requeued while attempts remain (outcome unknown,
+ *                    e.g. after a reboot). A cancellation becomes `cancelled`.
+ *   - `unknown`    : the node cannot determine the process state. The task stays
+ *                    uncertain and is never auto-requeued; an operator must
+ *                    decide. Returns the task for observability.
+ */
+function reconcileTask(id, { claimToken, execId, state, exitCode, signal, expectedNode, pid, pgid, startedAt } = {}) {
+  if (!['alive', 'terminated', 'unknown'].includes(state)) {
+    throw new Error('Reconciliation state must be one of alive, terminated, unknown.');
+  }
+  if (typeof claimToken !== 'string' || claimToken === '') {
+    throw new Error('A claim token is required to reconcile a task.');
+  }
+  if (typeof execId !== 'string' || execId === '') {
+    throw new Error('An execution id is required to reconcile a task.');
+  }
+
+  const db = getDatabase();
+  const tx = db.transaction(() => {
+    const now = new Date().toISOString();
+    const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+    if (!row) {
+      const err = new Error('Task not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (expectedNode && row.node !== expectedNode) {
+      const err = new Error('Node credential is not authorized for this task.');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    if (!tokensMatch(row.claim_token, claimToken)) {
+      // A terminal or requeued task no longer holds any claim token: an old
+      // execution reporting after the fact is a safe, observable no-op.
+      if (TERMINAL_STATUSES.has(row.status) || row.status === 'queued') {
+        return { row, discarded: true, reason: 'stale-attempt' };
+      }
+      const err = new Error('Attempt is not authoritative for this task.');
+      err.statusCode = 409;
+      err.discard = true;
+      throw err;
+    }
+
+    if (row.exec_id && row.exec_id !== execId) {
+      const err = new Error('Execution identity mismatch; refusing reconciliation from another execution.');
+      err.statusCode = 409;
+      err.discard = true;
+      throw err;
+    }
+
+    if (TERMINAL_STATUSES.has(row.status)) {
+      return { row, discarded: true, reason: 'terminal' };
+    }
+
+    if (state === 'alive') {
+      const leaseUntil = new Date(Date.now() + LEASE_MS).toISOString();
+      db.prepare(`
+        UPDATE tasks SET lease_until = ?, reconcile_state = 'alive', exec_id = ?,
+                         exec_pid = COALESCE(?, exec_pid), exec_pgid = COALESCE(?, exec_pgid),
+                         exec_started_at = COALESCE(exec_started_at, ?), exec_reported_at = ?,
+                         updated_at = ?
+        WHERE id = ? AND claim_token = ? AND status IN ('running', 'cancelling')
+      `).run(
+        leaseUntil, execId, pid, pgid, startedAt, now, now,
+        id, claimToken
+      );
+      return { row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(id), state };
+    }
+
+    if (state === 'unknown') {
+      db.prepare(`
+        UPDATE tasks SET reconcile_state = 'uncertain', exec_id = COALESCE(exec_id, ?),
+                         updated_at = ?
+        WHERE id = ? AND claim_token = ? AND status IN ('running', 'cancelling')
+      `).run(execId, now, id, claimToken);
+      return { row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(id), state };
+    }
+
+    // state === 'terminated'
+    if (row.status === 'cancelling') {
+      db.prepare(`
+        UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL,
+                         reconcile_state = 'terminated', finished_at = ?, updated_at = ?
+        WHERE id = ? AND claim_token = ? AND status = 'cancelling'
+      `).run(now, now, id, claimToken);
+      return {
+        row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(id),
+        state,
+        finalStatus: 'cancelled',
+      };
+    }
+
+    if (Number.isFinite(exitCode)) {
+      const finalStatus = exitCode === 0 ? 'done' : 'failed';
+      const finalError = exitCode === 0 ? null
+        : (signal ? `Execution terminated by signal ${signal}.` : `Execution exited with code ${exitCode}.`);
+      db.prepare(`
+        UPDATE tasks SET status = ?, exit_code = ?, error = ?, claim_token = NULL,
+                         lease_until = NULL, reconcile_state = 'terminated',
+                         finished_at = ?, updated_at = ?
+        WHERE id = ? AND claim_token = ? AND status = 'running'
+      `).run(finalStatus, Math.trunc(exitCode), finalError, now, now, id, claimToken);
+      return {
+        row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(id),
+        state,
+        finalStatus,
+      };
+    }
+
+    if ((row.attempt || 0) < (row.max_attempts || DEFAULT_MAX_ATTEMPTS)) {
+      // The process is confirmed gone but its outcome was never reported (for
+      // example, the whole host rebooted). Retrying is safe now: there is no
+      // concurrent execution. It remains bounded by max_attempts.
+      db.prepare(`
+        UPDATE tasks SET status = 'queued', node = NULL, claim_token = NULL, lease_until = NULL,
+                         exec_id = NULL, exec_pid = NULL, exec_pgid = NULL,
+                         exec_started_at = NULL, exec_reported_at = NULL, reconcile_state = NULL,
+                         error = ?, updated_at = ?
+        WHERE id = ? AND claim_token = ? AND status = 'running'
+      `).run('Execution ended without a reported result; task requeued.', now, id, claimToken);
+      return {
+        row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(id),
+        state,
+        requeued: true,
+      };
+    }
+
+    db.prepare(`
+      UPDATE tasks SET status = 'failed', claim_token = NULL, lease_until = NULL,
+                       reconcile_state = 'terminated',
+                       error = ?, finished_at = ?, updated_at = ?
+      WHERE id = ? AND claim_token = ? AND status = 'running'
+    `).run('Execution ended without a reported result; max attempts reached.', now, now, id, claimToken);
+    return {
+      row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(id),
+      state,
+      finalStatus: 'failed',
+    };
+  });
+
+  const outcome = tx();
+  const task = toPublicTask(outcome.row);
+  if (outcome.discarded) {
+    logService.record({
+      level: 'warn',
+      category: 'task',
+      taskId: id,
+      node: task ? task.node : null,
+      action: 'task_reconcile_discarded',
+      message: `Reconciliation ignored: ${outcome.reason}.`,
+    });
+  } else if (outcome.state === 'alive') {
+    logService.record({
+      category: 'task',
+      taskId: id,
+      node: task.node,
+      action: 'task_reconciled_alive',
+      message: 'Execution confirmed alive by the owning node; attempt re-authorized.',
+    });
+  } else if (outcome.state === 'unknown') {
+    logService.record({
+      level: 'warn',
+      category: 'task',
+      taskId: id,
+      node: task.node,
+      action: 'task_reconcile_unknown',
+      message: 'Node could not determine the execution state; automatic requeue stays blocked.',
+    });
+  } else {
+    logService.record({
+      level: outcome.finalStatus === 'failed' ? 'error' : 'info',
+      category: 'task',
+      taskId: id,
+      node: task.node,
+      action: 'task_reconciled_terminated',
+      message: outcome.requeued
+        ? 'Execution confirmed terminated; task requeued for a new attempt.'
+        : `Execution confirmed terminated; task ${outcome.finalStatus || 'finalised'}.`,
+    });
+  }
+
+  return {
+    task,
+    state: outcome.state || null,
+    requeued: !!outcome.requeued,
+    discarded: !!outcome.discarded,
+    reason: outcome.reason || null,
+  };
+}
+
+
+/**
+ * Normalise the heartbeat `running` field into `{ present, entries }`, where an
+ * entry is `{ id, claimToken, execId, pid, pgid, startedAt }`.
+ *
+ * `running` is a *witness list*: the attempts this node says it is executing
+ * right now. A protocol-2 sentinel sends object entries with the claim token
+ * and the execution identity it recorded locally, so the server can renew
+ * exactly those attempts, persist the execution correlation, and tell the node
+ * to abandon executions that no longer own the current attempt.
+ *
+ * Plain id strings (and objects without claimToken) are still accepted for
+ * compatibility with older clients, but their guarantee is explicitly weaker:
+ * renewal is bound only to id + node + running status, so a delayed beat from
+ * an earlier attempt of the same node can extend a newer attempt's lease. Two
+ * bounds remain even for them: `reclaimExpired` runs before renewal in the same
+ * transaction, so an already-expired attempt is requeued/failed and cannot be
+ * resurrected; and a task re-claimed by a different node is protected by the
+ * node guard. The heartbeat logs a one-time warning when it sees unbound
+ * entries so operators know to upgrade the client.
+ *
+ * A missing/!array value means a legacy client that only reports liveness: the
+ * caller falls back to node-wide renewal so live tasks are not requeued under a
+ * running process, and logs a one-time warning.
+ */
 function parseRunningEntries(running) {
   if (!Array.isArray(running)) return { present: false, entries: [] };
   const entries = [];
   for (const item of running) {
     if (typeof item === 'string') {
       const id = item.trim();
-      if (id) entries.push({ id, claimToken: null });
+      if (id) entries.push({ id, claimToken: null, execId: null, pid: null, pgid: null, startedAt: null });
     } else if (item && typeof item === 'object' && typeof item.id === 'string') {
       const id = item.id.trim();
       if (!id) continue;
       const claimToken = typeof item.claimToken === 'string' && item.claimToken ? item.claimToken : null;
-      entries.push({ id, claimToken });
+      const execId = typeof item.execId === 'string' && item.execId ? item.execId : null;
+      const pid = Number.isInteger(item.pid) && item.pid > 1 ? item.pid : null;
+      const pgid = Number.isInteger(item.pgid) && item.pgid > 1 ? item.pgid : null;
+      const startedAt = typeof item.startedAt === 'string' && item.startedAt ? item.startedAt : null;
+      entries.push({ id, claimToken, execId, pid, pgid, startedAt });
     }
   }
   return { present: true, entries };
@@ -606,8 +956,11 @@ function warnUnboundHeartbeat(node) {
  *   - witness list absent (legacy client): renew every running attempt on the
  *     node and warn once; refusing to renew would requeue tasks that are still
  *     executing and cause duplicate work.
- *   - `cancelling` attempts are never renewed in either mode: an unconfirmed
- *     kill must finalise via lease expiry.
+ *   - `cancelling` attempts are renewed only when the entry carries a claim
+ *     token and an execution id (the node proves the same process is alive and
+ *     still needs to be stopped). Legacy/unbound cancelling entries are never
+ *     renewed, so an unconfirmed kill finalises via expiry. A tracked expiry
+ *     becomes `reconcile_state='uncertain'`, never a false `cancelled`.
  */
 function heartbeat({ node, url, tags, capacity, active, load, running } = {}) {
   const cleanNode = String(node || '').trim();
@@ -642,16 +995,39 @@ function heartbeat({ node, url, tags, capacity, active, load, running } = {}) {
     const reclaim = reclaimExpired(db, now);
 
     if (runningInfo.present) {
-      // Guarded per-attempt renewal: id + node + running status, plus the claim
-      // token when the client reports one. Any mismatch (finished, requeued,
-      // re-claimed by a newer attempt) is a silent no-op.
-      const renewStmt = db.prepare(`
+      // Guarded per-attempt renewal: id + node + status, plus the claim token
+      // and (when present) the execution id. A tracked entry may renew both a
+      // `running` attempt and a `cancelling` one: the node is proving that the
+      // same execution is still alive and must be able to keep trying to stop
+      // it. Anything else (finished, requeued, re-claimed, different execution)
+      // is a silent no-op, and the caller is told to abandon it.
+      const renewTracked = db.prepare(`
+        UPDATE tasks SET lease_until = ?, updated_at = ?, exec_id = ?,
+                         exec_pid = COALESCE(?, exec_pid), exec_pgid = COALESCE(?, exec_pgid),
+                         exec_started_at = COALESCE(exec_started_at, ?),
+                         exec_reported_at = ?, reconcile_state = 'alive'
+        WHERE id = ? AND node = ? AND status IN ('running', 'cancelling')
+          AND claim_token = ? AND (exec_id IS NULL OR exec_id = ?)
+      `);
+      const renewBound = db.prepare(`
+        UPDATE tasks SET lease_until = ?, updated_at = ?
+        WHERE id = ? AND node = ? AND status = 'running' AND claim_token = ?
+      `);
+      const renewLegacy = db.prepare(`
         UPDATE tasks SET lease_until = ?, updated_at = ?
         WHERE id = ? AND node = ? AND status = 'running'
-          AND (? IS NULL OR claim_token = ?)
       `);
       for (const entry of runningInfo.entries) {
-        renewStmt.run(leaseUntil, now, entry.id, cleanNode, entry.claimToken, entry.claimToken);
+        if (entry.claimToken && entry.execId) {
+          renewTracked.run(
+            leaseUntil, now, entry.execId, entry.pid, entry.pgid, entry.startedAt, now,
+            entry.id, cleanNode, entry.claimToken, entry.execId
+          );
+        } else if (entry.claimToken) {
+          renewBound.run(leaseUntil, now, entry.id, cleanNode, entry.claimToken);
+        } else {
+          renewLegacy.run(leaseUntil, now, entry.id, cleanNode);
+        }
       }
     } else {
       db.prepare(`
@@ -673,17 +1049,56 @@ function heartbeat({ node, url, tags, capacity, active, load, running } = {}) {
   // `cancelling` (kill in flight) and `cancelled` are returned so the sentinel
   // retries until the process is gone and it can confirm termination.
   const cancel = [];
+  const abandon = [];
   if (runningInfo.entries.length > 0) {
     const ids = runningInfo.entries.map((e) => e.id);
     const placeholders = ids.map(() => '?').join(',');
     const rows = db.prepare(`
-      SELECT id FROM tasks WHERE status IN ('cancelling', 'cancelled') AND node = ? AND id IN (${placeholders})
+      SELECT id, status, claim_token, exec_id FROM tasks
+      WHERE node = ? AND id IN (${placeholders})
     `).all(cleanNode, ...ids);
-    cancel.push(...rows.map((r) => r.id));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    for (const row of rows) {
+      if (row.status === 'cancelling' || row.status === 'cancelled') cancel.push(row.id);
+    }
+    const cancelSet = new Set(cancel);
+
+    // The node still reports an execution that no longer belongs to the
+    // current attempt (or whose task is terminal/queued). It must stop the
+    // local process; it must not report a result. The execution id lets the
+    // sentinel target only the exact process it owns, never a newer attempt.
+    for (const entry of runningInfo.entries) {
+      if (cancelSet.has(entry.id)) continue;
+      const row = byId.get(entry.id);
+      if (!row) continue;
+      const tokenMismatch = entry.claimToken && !tokensMatch(row.claim_token, entry.claimToken);
+      const execMismatch = entry.execId && row.exec_id && entry.execId !== row.exec_id;
+      const notCurrent = ['queued', 'done', 'failed', 'cancelled'].includes(row.status);
+      if (tokenMismatch || execMismatch || notCurrent) {
+        abandon.push({ id: row.id, execId: entry.execId || row.exec_id || null });
+      }
+    }
   }
 
+  // Attempts whose process state is unknown and which the server deliberately
+  // did not requeue. The owning node must prove alive/terminated (see
+  // reconcileTask); the claim token is scoped to this node's authenticated
+  // worker credential.
+  const reconcile = db.prepare(`
+    SELECT id, attempt, claim_token, exec_id, status FROM tasks
+    WHERE node = ? AND status IN ('running', 'cancelling')
+      AND (reconcile_state = 'uncertain' OR lease_until IS NULL OR lease_until = '' OR lease_until < ?)
+  `).all(cleanNode, now).map((r) => ({
+    id: r.id,
+    attempt: r.attempt,
+    claimToken: r.claim_token,
+    execId: r.exec_id,
+    status: r.status,
+  }));
+
   const row = db.prepare('SELECT * FROM nodes WHERE id = ?').get(cleanNode);
-  return { ...toPublicNode(row), cancel };
+  return { ...toPublicNode(row), cancel, abandon, reconcile };
 }
 
 function listNodes() {
@@ -699,6 +1114,7 @@ module.exports = {
   claimTask,
   completeTask,
   cancelTask,
+  reconcileTask,
   heartbeat,
   listNodes,
 };

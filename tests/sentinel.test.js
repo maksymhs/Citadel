@@ -1,10 +1,19 @@
-const { test, describe } = require('node:test');
+const { test, describe, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
-// Point the sentinel at a fake base URL before loading it. The module exports
-// its tick function and does not start the polling loop when required.
+// Point the sentinel at a fake base URL and an isolated journal before loading
+// it. The module exports its tick function and does not start the loop.
 process.env.CITADEL_URL = 'http://sentinel.test';
+const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-sentinel-test-'));
+process.env.CITADEL_SENTINEL_STATE_DIR = stateDir;
 const sentinel = require('../scripts/sentinel.js');
+
+after(() => {
+  fs.rmSync(stateDir, { recursive: true, force: true });
+});
 
 function stubFetch(handler) {
   const original = global.fetch;
@@ -94,9 +103,14 @@ describe('Sentinel polling loop', () => {
     try {
       await sentinel.tickCycle();
       assert.ok(beatBody, 'the heartbeat must have been sent');
-      assert.deepEqual(beatBody.running, [
-        { id: 'witness-task-1', claimToken: 'claim-token-witness' },
-      ]);
+      assert.equal(beatBody.running.length, 1);
+      const witness = beatBody.running[0];
+      assert.equal(witness.id, 'witness-task-1');
+      assert.equal(witness.claimToken, 'claim-token-witness');
+      assert.equal(typeof witness.execId, 'string');
+      assert.ok(witness.execId.length > 0, 'the execution id must be reported');
+      assert.equal(typeof witness.pid, 'number');
+      assert.ok(witness.pid > 0, 'the real child pid must be reported');
     } finally {
       const exited = new Promise((resolve) => entry.child.once('exit', resolve));
       entry.child.kill('SIGKILL');

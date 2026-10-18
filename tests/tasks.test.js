@@ -183,7 +183,8 @@ describe('Task service (pull queue with leases)', () => {
     assert.equal(confirmed.status, 'cancelled');
     assert.ok(confirmed.finishedAt);
 
-    assert.throws(() => taskService.cancelTask(task.id), /not found or already finished/i);
+    // Repeating a cancellation is idempotent: it observes the terminal state.
+    assert.equal(taskService.cancelTask(task.id).status, 'cancelled');
   });
 
   test('a queued task is cancelled immediately', () => {
@@ -329,7 +330,8 @@ describe('Task mesh HTTP routes', () => {
       headers: { cookie },
       payload: {},
     });
-    assert.equal(again.statusCode, 400);
+    assert.equal(again.statusCode, 200);
+    assert.equal(JSON.parse(again.payload).task.status, 'cancelled');
   });
 
   test('node heartbeat and listing reflect reported load', async () => {
