@@ -128,6 +128,8 @@ sudo bash install.sh --kiosk=ubuntu     # or a specific OS user
 
 This installs a minimal Wayland compositor (`cage`) and a browser, autologins the chosen user on `tty1`, autostarts the panel full-screen, and disables idle/suspend. `scripts/kiosk-setup.sh` is idempotent and also supports `--check` and `--remove`.
 
+On a machine with a display, the installer also **asks at the end** whether to set this up now; you can enable it later with `citadel kiosk`.
+
 ### Local network access
 
 By default the installer exposes the panel on your local network so you can scan the QR it prints and start from your phone right away. It sets `HOST`, whitelists the LAN origin in `ALLOWED_ORIGINS` (required by the terminal WebSocket) and opens the port in `ufw` when active.

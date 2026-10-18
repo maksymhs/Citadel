@@ -475,6 +475,30 @@ if [ "$CHECK_ONLY" = true ]; then
   echo "  Run the installer without --check-only to perform the installation."
   echo "=================================================================="
 else
+  # Offer to set up the full-screen kiosk on the spot. Reads the answer from the
+  # controlling terminal so it still works with `curl | sudo bash`. Only offered
+  # when there is a real display (a DRM device) and it wasn't already requested.
+  if [ -z "$KIOSK_USER" ] && [ "$OS" = "Linux" ] && [ -c /dev/tty ] \
+     && ls /dev/dri/card* >/dev/null 2>&1; then
+    printf "  This machine has a display. Set up the full-screen kiosk now? [y/N] "
+    KIOSK_ANSWER=""
+    read -r KIOSK_ANSWER </dev/tty 2>/dev/null || KIOSK_ANSWER=""
+    case "$KIOSK_ANSWER" in
+      y|Y|yes|YES|s|S|si|SI|sí|SÍ)
+        KIOSK_USER="${SUDO_USER:-$(id -un)}"
+        echo "  Configuring the kiosk for '$KIOSK_USER'..."
+        if command -v systemctl >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/kiosk-setup.sh" ]; then
+          $SUDO bash "$APP_DIR/scripts/kiosk-setup.sh" --user "$KIOSK_USER" \
+            || echo -e "${YELLOW}  Kiosk setup skipped (see errors above).${NC}"
+        fi
+        ;;
+      *)
+        echo "  Skipping kiosk. Enable it later with: citadel kiosk"
+        ;;
+    esac
+    echo ""
+  fi
+
   echo -e "\n${GREEN}=================================================================="
   echo "          Citadel Installation Completed Successfully             "
   echo "=================================================================="
