@@ -21,6 +21,23 @@ const PORT = parseInt(process.env.PORT, 10) || 3000;
 const HOST = process.env.HOST || '127.0.0.1'; // Listen on localhost by default for security
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
+// Which direct peers may set X-Forwarded-* headers (proxy trust). Only connections
+// from these addresses have their forwarded headers honoured; anything else uses
+// the real socket address. Defaults to loopback so a local reverse proxy
+// (cloudflared, caddy, ssh -L) works while a direct/LAN client can never spoof
+// its IP (rate limits) or protocol (cookie Secure flag). Set to `false`/`none` to
+// ignore forwarded headers entirely. `true` trusts everyone and is NOT safe on a
+// directly reachable panel.
+function parseTrustProxy(value) {
+  if (value === undefined || value === null || String(value).trim() === '') return 'loopback';
+  const v = String(value).trim();
+  const normalized = v.toLowerCase();
+  if (['0', 'false', 'off', 'none', 'no'].includes(normalized)) return false;
+  if (['1', 'true', 'on', 'yes'].includes(normalized)) return true;
+  return v; // 'loopback', a CIDR or a comma-separated list of addresses/CIDRs
+}
+const TRUST_PROXY = parseTrustProxy(process.env.CITADEL_TRUST_PROXY);
+
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT_DIR, 'data');
 const DATABASE_PATH = process.env.DATABASE_PATH || path.join(DATA_DIR, 'citadel.db');
 const PROJECTS_DIR = process.env.PROJECTS_DIR || path.join(DATA_DIR, 'projects');
@@ -38,8 +55,17 @@ const SESSION_SECRET = process.env.SESSION_SECRET || null; // Will auto-generate
 // Optional privileged user for the in-panel System Terminal. When set (e.g.
 // "ubuntu"), non-project sessions are spawned as that OS user via sudo, which
 // makes the panel root-capable. Empty keeps terminals as the unprivileged
-// service user (secure default).
-const TERMINAL_ADMIN_USER = process.env.TERMINAL_ADMIN_USER || null;
+// service user (secure default). Values that are not a valid local username are
+// rejected (fail closed) instead of being passed to sudo.
+const TERMINAL_ADMIN_USER_RAW = process.env.TERMINAL_ADMIN_USER || null;
+let TERMINAL_ADMIN_USER = null;
+if (TERMINAL_ADMIN_USER_RAW) {
+  if (/^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/.test(TERMINAL_ADMIN_USER_RAW)) {
+    TERMINAL_ADMIN_USER = TERMINAL_ADMIN_USER_RAW;
+  } else {
+    console.warn('[Config] Ignoring invalid TERMINAL_ADMIN_USER; privileged System Terminal stays disabled.');
+  }
+}
 
 // Shared, world-readable directory used as the installation HOME for CLI agents
 // (the one-line installers honour $HOME). Keeping them outside any user home
@@ -58,6 +84,12 @@ const UPDATE_REPO = process.env.CITADEL_REPO || 'maksymhs/Citadel'; // "owner/na
 const UPDATE_BRANCH = process.env.CITADEL_REPO_BRANCH || 'main';
 const UPDATER_PATH = process.env.CITADEL_UPDATER_PATH || '/usr/local/sbin/citadel-update';
 const SERVICE_NAME = process.env.CITADEL_SERVICE || 'citadel';
+
+// Scoped credential for task-mesh worker nodes (sentinels). When set, the
+// worker endpoints (claim/result/heartbeat) accept the X-Citadel-Node-Token
+// header instead of a full admin session, so a compromised node does not hold
+// panel-wide privileges. Unset keeps the previous session-based behaviour.
+const NODE_TOKEN = process.env.CITADEL_NODE_TOKEN || null;
 
 // Synchronized updates across hosts. CITADEL_PEERS is a comma-separated list of
 // peer base URLs (e.g. https://vps2.example.com). When CITADEL_PEER_TOKEN is
@@ -95,6 +127,8 @@ module.exports = {
   PORT,
   HOST,
   NODE_ENV,
+  TRUST_PROXY,
+  NODE_TOKEN,
   DATA_DIR,
   DATABASE_PATH,
   PROJECTS_DIR,

@@ -45,16 +45,36 @@ function getCurrentCommit() {
   return null;
 }
 
+/**
+ * Check that the privileged updater helper is safe to execute as root: it must
+ * exist, be a regular file, belong to root and not be writable by group/other.
+ * A world-writable (or non-root-owned) helper would let anyone who can write it
+ * execute arbitrary code as root through the panel's sudo rule.
+ */
+function checkUpdaterHelper() {
+  let st;
+  try {
+    st = fs.statSync(UPDATER_PATH);
+  } catch {
+    return { ok: false, reason: 'not installed' };
+  }
+  if (!st.isFile()) return { ok: false, reason: 'not a regular file' };
+  if (st.uid !== 0) return { ok: false, reason: 'not owned by root' };
+  if ((st.mode & 0o022) !== 0) return { ok: false, reason: 'group/other writable' };
+  return { ok: true, reason: null };
+}
+
 function getVersionInfo() {
-  const updaterInstalled = fs.existsSync(UPDATER_PATH);
+  const check = checkUpdaterHelper();
   return {
     version: APP_VERSION,
     commit: getCurrentCommit(),
     repo: UPDATE_REPO,
     branch: UPDATE_BRANCH,
     service: SERVICE_NAME,
-    updaterAvailable: updaterInstalled,
-    updaterPath: updaterInstalled ? UPDATER_PATH : null,
+    updaterAvailable: check.ok,
+    updaterProblem: check.ok ? null : check.reason,
+    updaterPath: check.ok ? UPDATER_PATH : null,
     peers: PEER_URLS,
     peerSync: Boolean(PEER_TOKEN && PEER_URLS.length > 0),
   };
@@ -216,8 +236,12 @@ async function notifyPeers() {
  * (default) and peers are configured, also ask each peer to update.
  */
 async function triggerUpdate({ fanout = true } = {}) {
-  if (!fs.existsSync(UPDATER_PATH)) {
-    throw new Error('Updater is not installed on this host. Re-run the installer to enable updates.');
+  const check = checkUpdaterHelper();
+  if (!check.ok) {
+    if (check.reason === 'not installed') {
+      throw new Error('Updater is not installed on this host. Re-run the installer to enable updates.');
+    }
+    throw new Error(`Refusing to run the updater: helper is ${check.reason}. Re-run install.sh.`);
   }
 
   const precheck = spawnSync('sudo', ['-n', UPDATER_PATH, '--check'], { encoding: 'utf8' });
@@ -244,6 +268,7 @@ module.exports = {
   stripV,
   compareVersions,
   getVersionInfo,
+  checkUpdaterHelper,
   checkForUpdates,
   triggerUpdate,
 };

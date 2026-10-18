@@ -31,6 +31,18 @@ const MIGRATIONS = [
       if (!columnExists(db, 'tasks', 'prompt')) db.exec('ALTER TABLE tasks ADD COLUMN prompt TEXT');
     },
   },
+  {
+    name: '003_task_attempt_claims',
+    up: (db) => {
+      // Per-claim identity and retry accounting: a claim gets a fresh random
+      // `claim_token` and bumps `attempt`; only the holder of the current token
+      // may report a result, so a stale worker can never overwrite a newer
+      // attempt. `max_attempts` bounds automatic lease-expiry retries.
+      if (!columnExists(db, 'tasks', 'attempt')) db.exec('ALTER TABLE tasks ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
+      if (!columnExists(db, 'tasks', 'max_attempts')) db.exec('ALTER TABLE tasks ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3');
+      if (!columnExists(db, 'tasks', 'claim_token')) db.exec('ALTER TABLE tasks ADD COLUMN claim_token TEXT');
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -187,6 +199,9 @@ function initDatabase(customPath = null) {
       agent TEXT,
       prompt TEXT,
       lease_until TEXT,
+      claim_token TEXT,
+      attempt INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
       result_ref TEXT,
       result TEXT,
       exit_code INTEGER,

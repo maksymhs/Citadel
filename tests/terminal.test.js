@@ -102,6 +102,56 @@ describe('Terminal & Persistent Session Tests', () => {
     assert.ok(res.error);
   });
 
+  test('createSession marks the row closed when the PTY cannot spawn', () => {
+    const pty = require('node-pty');
+    const original = pty.spawn;
+    pty.spawn = () => { throw new Error('simulated pty failure'); };
+    try {
+      assert.throws(
+        () => terminalManager.createSession({ name: 'Broken Session', cwd: projectDir1 }),
+        /simulated pty failure/,
+      );
+    } finally {
+      pty.spawn = original;
+    }
+
+    const { getDatabase } = require('../server/database/db');
+    const row = getDatabase()
+      .prepare("SELECT status FROM term_sessions WHERE name = 'Broken Session'")
+      .get();
+    assert.ok(row);
+    assert.equal(row.status, 'closed');
+  });
+
+  test('an explicitly requested command never silently falls back to /bin/sh', () => {
+    const pty = require('node-pty');
+    const original = pty.spawn;
+    let calls = 0;
+    pty.spawn = (...args) => {
+      calls += 1;
+      if (calls === 1) throw new Error('simulated tmux failure');
+      return original(...args);
+    };
+    try {
+      assert.throws(
+        () => terminalManager._spawnPty({
+          sessionId: 'test-no-fallback',
+          tmuxSessionName: 'citadel_test_no_fallback',
+          cwd: projectDir1,
+          cols: 80,
+          rows: 24,
+          command: '/bin/true',
+          args: [],
+        }),
+        /Failed to spawn terminal session/,
+      );
+      // Exactly one attempt: no silent unprivileged fallback.
+      assert.equal(calls, 1);
+    } finally {
+      pty.spawn = original;
+    }
+  });
+
   test('tmuxCopyMode enter/exit works on a tmux-backed session', async () => {
     if (!terminalManager.isTmuxAvailable()) return;
 

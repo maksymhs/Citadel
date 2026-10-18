@@ -48,7 +48,16 @@ Run the installer directly from the repository:
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | sudo bash
 ```
 
-That single command installs **everything** with no extra flags: the service, a **global Cloudflare Quick Tunnel** (so the printed QR works from any network), the privileged System Terminal and the in-panel updater. Opt out with `--no-tunnel`, `--no-admin-terminal`, `--no-updater` or `--local` if you prefer a minimal/private setup.
+That command installs the service **local-only and unprivileged by default**. Every additional capability is opt-in:
+
+| Flag | Effect |
+| --- | --- |
+| `--lan` (or `--host=ADDR`) | Reachable on your local network (QR from your phone) |
+| `--tunnel` | Public Cloudflare Quick Tunnel URL |
+| `--admin-terminal[=user]` | Root-capable System Terminal (privileged) |
+| `--enable-updater` | Root-owned in-panel updater |
+
+The panel listens on `127.0.0.1` unless you pass `--lan`/`--host`, and nothing privileged is enabled until a flag asks for it. **Until you create the administrator account, whoever reaches the panel first can claim it** — so prefer the local QR flow, set up the admin, and only then add a tunnel if you need one.
 
 Preview what it will do without changing the system:
 
@@ -81,7 +90,7 @@ Both methods are idempotent. The installer:
 3. Prepares the layout under `/srv/citadel` (`app`, `data`, `projects`, `logs`).
 4. Configures and starts the `citadel.service` systemd unit.
 
-When it finishes, the installer prints a **QR code**; scan it with your phone (same Wi-Fi) to open the panel and create the administrator account.
+When it finishes, the installer prints the panel address (a **QR code** too). With the default local-only install, open it on this machine and create the administrator account; install with `--lan` if you want to scan the QR from your phone on the same Wi-Fi.
 
 You can override the source repository or branch with the `CITADEL_REPO_URL` and `CITADEL_REPO_BRANCH` environment variables.
 
@@ -111,39 +120,41 @@ citadel tunnel     # global URL via a Cloudflare Quick Tunnel
 
 `citadel update` and `citadel tunnel` need root and re-invoke `sudo` automatically.
 
-### Privileged System Terminal (enabled by default)
+### Privileged System Terminal (opt-in)
 
-The **System Terminal** runs as a privileged account so you can administer the whole host from the panel. The installer picks the user that ran it (`$SUDO_USER`, falling back to `ubuntu`); override or disable it:
+The **System Terminal** can run as a privileged account so you can administer the whole host from the panel. It is **disabled by default**; enable it explicitly:
 
 ```bash
+sudo bash install.sh --admin-terminal            # run terminals as the installing user
 sudo bash install.sh --admin-terminal=deploy     # run terminals as 'deploy'
-sudo bash install.sh --no-admin-terminal         # unprivileged service user only
+sudo bash install.sh --no-admin-terminal         # unprivileged service user only (default)
 ```
 
-It installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. **Security warning:** it makes the panel root-equivalent — anyone able to log into the panel can obtain a root shell on the host. Only enable it on a personal, single-admin server.
+The named user must exist on the host; the installer validates it and refuses to continue otherwise. It installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. **Security warning:** it makes the panel root-equivalent — anyone able to log into the panel can obtain a root shell on the host. Only enable it on a personal, single-admin server.
 
-### In-panel Updater (enabled by default)
+### In-panel Updater (opt-in)
 
-Citadel checks GitHub for new releases (System view) and can update itself with one click. To turn it off:
+Citadel checks GitHub for new releases (System view) and — when the updater is installed — can update itself with one click. It is **disabled by default**; enable it explicitly:
 
 ```bash
-sudo bash install.sh --no-updater
+sudo bash install.sh --enable-updater
 ```
 
-It installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. Without it the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.
+It installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. Before running it the panel verifies the helper is a regular, root-owned file that is not group/world-writable, and refuses otherwise. Without the helper the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.
 
-### Local network access
+### Local network access (opt-in)
 
-By default the installer exposes the panel on your local network so you can scan the QR it prints and start from your phone right away. It sets `HOST`, whitelists the LAN origin in `ALLOWED_ORIGINS` (required by the terminal WebSocket) and opens the port in `ufw` when active.
-
-Keep it private to this machine instead:
+The panel listens on `127.0.0.1` only unless you ask for network access. To reach it from your phone on the same Wi-Fi (the installer then whitelists the LAN origin in `ALLOWED_ORIGINS`, required by the terminal WebSocket, and opens the port in `ufw` when active):
 
 ```bash
-sudo bash install.sh --local              # listen on 127.0.0.1 only
-sudo bash install.sh --host=192.168.1.10  # or bind a specific address
+sudo bash install.sh --lan                 # listen on 0.0.0.0 (QR works on your LAN)
+sudo bash install.sh --host=192.168.1.10   # or bind a specific address
+sudo bash install.sh --local              # explicit local-only (the default)
 ```
 
 For access from **any** network without exposing the host, prefer Tailscale (see *Access from your phone* below).
+
+Reverse-proxy trust: by default only loopback peers may set `X-Forwarded-*` headers (`CITADEL_TRUST_PROXY`, default `loopback`). A directly connected client can therefore never spoof its IP to bypass rate limits. If you put Citadel behind a proxy on another host, set `CITADEL_TRUST_PROXY` to that proxy's IP/CIDR (comma-separated); `true` trusts every client and should only be used when the app is not directly reachable.
 
 ### Synchronized updates across hosts
 
@@ -158,29 +169,31 @@ When set, triggering an update also asks every peer to update itself. The peer e
 
 ### Distributed task mesh (parallel work across nodes)
 
-The simplest and most solid way to spread work is a **pull queue**: the orchestrator (a smart agent) decides *what* and *how much*; each node is dumb and only pulls when it has a free slot, so load balancing is emergent and no node is a scheduler. A short lease, renewed by the sentinel heartbeat, means a crashed worker's task returns to the queue automatically.
+The simplest and most solid way to spread work is a **pull queue**: the orchestrator (a smart agent) decides *what* and *how much*; each node is dumb and only pulls when it has a free slot, so load balancing is emergent and no node is a scheduler. A short lease, renewed by the sentinel heartbeat, means a crashed worker's task is retried automatically up to `maxAttempts` (default 3) and then fails explicitly.
 
-**Control plane (HTTP, session-authenticated):**
+**Control plane (HTTP).** Orchestrator routes need an authenticated session; worker routes (claim/result/heartbeat) also accept the scoped `X-Citadel-Node-Token` header when `CITADEL_NODE_TOKEN` is set on the server:
 
 ```
-POST /api/tasks              {cmd,args} OR {agent,prompt} + projectPath?, priority?, node?  # enqueue
-POST /api/tasks/claim        {node}                                       # pull one (204 if none)
-POST /api/tasks/:id/result   {status, exitCode?, resultRef?, error?, result?}  # report + captured output
-POST /api/tasks/:id/cancel                                                # cancel queued or running
+POST /api/tasks              {cmd,args} OR {agent,prompt} + projectPath?, priority?, node?, maxAttempts?  # enqueue
+POST /api/tasks/claim        {node}                                       # pull one (204 if none) → returns claimToken
+POST /api/tasks/:id/result   {status, exitCode?, resultRef?, error?, result?, claimToken}  # report + captured output
+POST /api/tasks/:id/cancel                                                # request cancel (queued or running)
 GET  /api/tasks?status=&node=                                             # progress
 POST /api/nodes/heartbeat    {node, capacity, active, load, tags?, running?}  # liveness + lease renewal
 GET  /api/nodes                                                           # list nodes and load
 ```
 
+**Claim tokens and retries.** Every claim mints a random `claimToken` and bumps `attempt`; reporting a result requires that exact token, so a worker whose lease expired (and whose task was retried elsewhere) can never overwrite the newer attempt's result. Expired leases requeue the task while attempts remain (`task_lease_expired` event) and mark it failed once `maxAttempts` is reached (`task_attempts_exhausted`).
+
 **Agent tasks.** Instead of a raw command, enqueue `{"agent":"claude|codex|opencode","prompt":"..."}` and Citadel builds the headless invocation from the agent registry (`opencode run`, `claude -p --output-format json`, `codex exec --json`), so the orchestrator never needs to know each CLI's flags.
 
-**Result and cancellation.** The sentinel captures a bounded tail of the task's stdout/stderr and stores it in `result` (readable via `GET /api/tasks/:id`), and exports `CITADEL_TASK_ID`, `CITADEL_TASK_NODE` and `CITADEL_TASK_PROJECT` to the child so agents can name worktrees/branches idempotently. Cancelling a running task makes the sentinel terminate it on its next heartbeat.
+**Result and cancellation.** The sentinel captures a bounded tail of the task's stdout/stderr and stores it in `result` (readable via `GET /api/tasks/:id`), and exports `CITADEL_TASK_ID`, `CITADEL_TASK_NODE` and `CITADEL_TASK_PROJECT` to the child so agents can name worktrees/branches idempotently. Cancelling a running task is a *request*: the task moves to `cancelling`, the sentinel receives it on the next heartbeat (SIGTERM, then SIGKILL after 10s), and the task becomes `cancelled` only when the worker confirms termination with its claim token (or the lease expires first).
 
-**Sentinel (one per node).** Run it inside a Citadel terminal so tmux keeps it alive across restarts, or as a systemd unit:
+**Sentinel (one per node).** Run it inside a Citadel terminal so tmux keeps it alive across restarts, or as a systemd unit. Prefer the scoped node token (set `CITADEL_NODE_TOKEN` in `.env` and give the same value to every sentinel); `CITADEL_TOKEN=<session id>` still works but grants the node a full panel session:
 
 ```
 CITADEL_URL=https://panel.example.com \
-CITADEL_TOKEN=<session id> \
+CITADEL_NODE_TOKEN=<shared node secret> \
 CITADEL_NODE=vps-2 \
 CITADEL_CAPACITY=2 \
 node scripts/sentinel.js
@@ -232,7 +245,7 @@ citadel tunnel stop     # stop it
 citadel tunnel remove   # stop and delete the service
 ```
 
-It gives you a public `https://<random>.trycloudflare.com` URL that works everywhere. The installer starts it by default (so the QR it prints is already global); disable it with `--no-tunnel` or, once installed, `citadel tunnel stop`. The URL **changes on every restart**, so the panel reads it dynamically and the QR always shows the current one (no need to touch `.env`). Because it is a **public** URL, make sure you use a strong administrator password.
+It gives you a public `https://<random>.trycloudflare.com` URL that works everywhere. The installer no longer starts it by default: pass `--tunnel` at install time, or run `citadel tunnel` afterwards. The URL **changes on every restart**, so the panel reads it dynamically and the QR always shows the current one (no need to touch `.env`). Because it is a **public** URL, create your administrator account before starting the tunnel and use a strong password.
 
 To reach the panel privately instead (only your own devices), use Tailscale:
 

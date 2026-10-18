@@ -278,17 +278,27 @@ class TerminalManager {
       VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
     `).run(sessionId, projectId, name, tmuxSessionName, agentId, now, now);
 
-    // Spawn the PTY
-    this._spawnPty({
-      sessionId,
-      projectId,
-      tmuxSessionName,
-      cwd: targetCwd,
-      cols,
-      rows,
-      command: runAs ? runAs.command : null,
-      args: runAs ? runAs.args : [],
-    });
+    // Spawn the PTY. If the spawn fails the DB row must not be left claiming an
+    // active session that has no process behind it.
+    try {
+      this._spawnPty({
+        sessionId,
+        projectId,
+        tmuxSessionName,
+        cwd: targetCwd,
+        cols,
+        rows,
+        command: runAs ? runAs.command : null,
+        args: runAs ? runAs.args : [],
+      });
+    } catch (err) {
+      try {
+        db.prepare("UPDATE term_sessions SET status = 'closed' WHERE id = ?").run(sessionId);
+      } catch {
+        // Ignore DB error; the original spawn error is what matters.
+      }
+      throw err;
+    }
 
     return {
       sessionId,
@@ -353,7 +363,13 @@ class TerminalManager {
       });
     } catch (err) {
       console.error(`[TerminalManager] Failed to spawn PTY: ${err.message}`);
-      // Fallback to /bin/sh if custom shell/tmux failed
+      if (command) {
+        // An explicitly requested command (e.g. the privileged System Terminal
+        // via sudo) must never silently fall back to an unprivileged /bin/sh:
+        // surface the failure instead of downgrading the caller's identity.
+        throw new Error(`Failed to spawn terminal session: ${err.message}`);
+      }
+      // Plain shells may fall back to /bin/sh if the custom shell/tmux failed.
       ptyProcess = pty.spawn('/bin/sh', [], {
         name: 'xterm-256color',
         cols: cols || 80,
@@ -482,14 +498,24 @@ class TerminalManager {
       }
 
       // Re-spawn PTY attached to existing or new tmux session
-      sessionData = this._spawnPty({
-        sessionId: sessionRow.id,
-        projectId: sessionRow.project_id,
-        tmuxSessionName: sessionRow.tmux_session,
-        cwd,
-        command: runAs ? runAs.command : null,
-        args: runAs ? runAs.args : [],
-      });
+      try {
+        sessionData = this._spawnPty({
+          sessionId: sessionRow.id,
+          projectId: sessionRow.project_id,
+          tmuxSessionName: sessionRow.tmux_session,
+          cwd,
+          command: runAs ? runAs.command : null,
+          args: runAs ? runAs.args : [],
+        });
+      } catch (err) {
+        try {
+          ws.send(JSON.stringify({ type: 'error', message: err.message }));
+          ws.close();
+        } catch {
+          // Socket already gone; nothing to report to.
+        }
+        return;
+      }
 
       // Reattaching revives the record even if it had been marked closed.
       try {

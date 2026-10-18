@@ -10,10 +10,14 @@
  * systemd unit:
  *
  *   CITADEL_URL=https://panel.example.com \
- *   CITADEL_TOKEN=<session id> \
+ *   CITADEL_NODE_TOKEN=<shared node secret> \
  *   CITADEL_NODE=vps-2 \
  *   CITADEL_CAPACITY=2 \
  *   node scripts/sentinel.js
+ *
+ * Prefer CITADEL_NODE_TOKEN (scoped to claim/result/heartbeat) when the server
+ * has CITADEL_NODE_TOKEN configured; CITADEL_TOKEN (a full session id) is still
+ * supported as a fallback but grants panel-wide privileges.
  *
  * A task's `cmd` is executed directly (no shell); for shell one-liners use
  * cmd="bash" and args=["-lc", "..."].
@@ -23,9 +27,12 @@ const { spawn } = require('node:child_process');
 
 const BASE = (process.env.CITADEL_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
 const TOKEN = process.env.CITADEL_TOKEN || '';
+const NODE_TOKEN = process.env.CITADEL_NODE_TOKEN || '';
 const NODE = process.env.CITADEL_NODE || os.hostname();
 const CAPACITY = Math.max(1, parseInt(process.env.CITADEL_CAPACITY, 10) || 1);
 const POLL_MS = Math.max(1000, parseInt(process.env.CITADEL_POLL_MS, 10) || 4000);
+// Every HTTP call is bounded so a hung server can never wedge the loop.
+const HTTP_TIMEOUT_MS = Math.max(1000, parseInt(process.env.CITADEL_HTTP_TIMEOUT_MS, 10) || 15000);
 const TAGS = (process.env.CITADEL_TAGS || '')
   .split(',')
   .map((t) => t.trim())
@@ -34,17 +41,21 @@ const TAGS = (process.env.CITADEL_TAGS || '')
 const MAX_RESULT = Math.max(1000, parseInt(process.env.CITADEL_MAX_RESULT, 10) || 8000);
 
 let active = 0;
-const running = new Map(); // task id -> child process
+const running = new Map(); // task id -> { child, claimToken, cancelled, killTimer }
 
 async function api(path, { method = 'GET', body } = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'Citadel-Sentinel',
+  };
+  if (NODE_TOKEN) headers['X-Citadel-Node-Token'] = NODE_TOKEN;
+  else headers.Authorization = `Bearer ${TOKEN}`;
+
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      'Content-Type': 'application/json',
-      'User-Agent': 'Citadel-Sentinel',
-    },
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
   if (res.status === 204) return null;
   const text = await res.text();
@@ -74,7 +85,8 @@ function runTask(task) {
   console.log(`[sentinel] running ${task.id}: ${task.cmd} ${args.join(' ')} (cwd=${cwd})`);
 
   const child = spawn(task.cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-  running.set(task.id, child);
+  const entry = { child, claimToken: task.claimToken || null, cancelled: false, killTimer: null };
+  running.set(task.id, entry);
 
   // Tee live output to the sentinel terminal while keeping a bounded tail to
   // report back, so the orchestrator can read what the task actually produced.
@@ -86,22 +98,29 @@ function runTask(task) {
   child.stdout.on('data', (b) => { capture(b); process.stdout.write(b); });
   child.stderr.on('data', (b) => { capture(b); process.stderr.write(b); });
 
+  let finished = false;
   const finish = async (code, error) => {
+    if (finished) return;
+    finished = true;
     active = Math.max(0, active - 1);
     running.delete(task.id);
+    if (entry.killTimer) clearTimeout(entry.killTimer);
+    const outcome = entry.cancelled ? 'cancelled' : (code === 0 ? 'done' : 'failed');
     try {
       await api(`/api/tasks/${task.id}/result`, {
         method: 'POST',
         body: {
-          status: code === 0 ? 'done' : 'failed',
+          status: outcome,
           exitCode: code,
           error: error || null,
           result: output.slice(-MAX_RESULT),
+          // Proves this worker still holds the current claim: a stale worker
+          // whose lease expired cannot overwrite the newer attempt's result.
+          claimToken: entry.claimToken,
         },
       });
-      console.log(`[sentinel] ${task.id} -> ${code === 0 ? 'done' : `failed (${code})`}`);
+      console.log(`[sentinel] ${task.id} -> ${outcome}${outcome === 'failed' ? ` (${code})` : ''}`);
     } catch (err) {
-      // A cancelled task is already final on the server; that is expected.
       if (!/already finished/i.test(err.message)) {
         console.error(`[sentinel] could not report ${task.id}: ${err.message}`);
       }
@@ -112,7 +131,21 @@ function runTask(task) {
   child.on('exit', (code, signal) => finish(code === null ? -1 : code, signal ? `signal ${signal}` : null));
 }
 
+let tickInFlight = false;
+
 async function tick() {
+  // Never overlap two poll cycles: a slow heartbeat/claim must not pile up
+  // concurrent ticks that double-claim work or interleave node state.
+  if (tickInFlight) return;
+  tickInFlight = true;
+  try {
+    await tickCycle();
+  } finally {
+    tickInFlight = false;
+  }
+}
+
+async function tickCycle() {
   let beat = null;
   try {
     beat = await api('/api/nodes/heartbeat', {
@@ -132,14 +165,23 @@ async function tick() {
     return;
   }
 
-  // Kill any task the operator cancelled since the last beat.
+  // Kill any task the operator cancelled since the last beat. SIGTERM first,
+  // then SIGKILL if the process ignores it; the result report confirms
+  // termination to the server (status "cancelled").
   const cancel = (beat && beat.node && beat.node.cancel) || [];
   for (const id of cancel) {
-    const child = running.get(id);
-    if (child) {
-      console.log(`[sentinel] cancelling ${id}`);
-      child.kill('SIGTERM');
-    }
+    const entry = running.get(id);
+    if (!entry || !entry.child || entry.cancelled) continue;
+    entry.cancelled = true;
+    console.log(`[sentinel] cancelling ${id}`);
+    entry.child.kill('SIGTERM');
+    entry.killTimer = setTimeout(() => {
+      if (running.has(id)) {
+        console.warn(`[sentinel] ${id} ignored SIGTERM; sending SIGKILL.`);
+        try { entry.child.kill('SIGKILL'); } catch { /* already gone */ }
+      }
+    }, 10000);
+    if (typeof entry.killTimer.unref === 'function') entry.killTimer.unref();
   }
 
   while (active < CAPACITY) {
@@ -156,6 +198,10 @@ async function tick() {
   }
 }
 
-console.log(`[sentinel] node=${NODE} capacity=${CAPACITY} base=${BASE} tags=[${TAGS.join(',')}]`);
-setInterval(tick, POLL_MS);
-tick();
+if (require.main === module) {
+  console.log(`[sentinel] node=${NODE} capacity=${CAPACITY} base=${BASE} tags=[${TAGS.join(',')}]`);
+  setInterval(tick, POLL_MS);
+  tick();
+}
+
+module.exports = { tick, tickCycle, api, runTask };

@@ -19,26 +19,28 @@ echo "=================================================================="
 echo -e "${NC}"
 
 CHECK_ONLY=false
-# Everything is enabled by default so a single command (`curl | sudo bash`) gives
-# the full experience: LAN + QR, privileged System Terminal and in-panel updater.
-# Opt out with --no-admin-terminal / --no-updater / --local if you don't want them.
+# Secure by default: a bare `curl | sudo bash` installs a local-only panel with no
+# privileged terminal and no root updater. Every privileged or publicly-reachable
+# capability must be requested explicitly:
+#   --admin-terminal[=user]  privileged System Terminal (root-capable)
+#   --enable-updater         root-owned in-panel updater
+#   --lan / --host=ADDR      bind on the network (QR from phone)
+#   --tunnel                 Cloudflare Quick Tunnel (public URL)
+# The legacy opt-out flags (--no-admin-terminal, --no-updater, --local,
+# --no-tunnel) keep working.
 DEFAULT_ADMIN_USER="${SUDO_USER:-}"
 if [ -z "$DEFAULT_ADMIN_USER" ]; then
-  if id ubuntu >/dev/null 2>&1; then
-    DEFAULT_ADMIN_USER="ubuntu"
-  else
-    DEFAULT_ADMIN_USER="$(id -un)"
-  fi
+  DEFAULT_ADMIN_USER="$(id -un)"
 fi
-ADMIN_TERMINAL_USER="$DEFAULT_ADMIN_USER"
-ENABLE_UPDATER=true
-LAN_ACCESS=true
+ADMIN_TERMINAL_USER=""
+ENABLE_UPDATER=false
+LAN_ACCESS=false
 LOCAL_ONLY=false
 LAN_EXPOSED=false
 HOST_ADDR=""
 PANEL_PORT=3000
 UPDATE_MODE=false
-TUNNEL=true
+TUNNEL=false
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
@@ -51,7 +53,7 @@ for arg in "$@"; do
       ADMIN_TERMINAL_USER=""
       ;;
     --admin-terminal)
-      ADMIN_TERMINAL_USER="${ADMIN_TERMINAL_USER:-ubuntu}"
+      ADMIN_TERMINAL_USER="$DEFAULT_ADMIN_USER"
       ;;
     --admin-terminal=*)
       ADMIN_TERMINAL_USER="${arg#*=}"
@@ -66,8 +68,11 @@ for arg in "$@"; do
       LOCAL_ONLY=true
       LAN_ACCESS=false
       ;;
-    --lan)
+    --lan|--no-local)
       LAN_ACCESS=true
+      ;;
+    --no-lan)
+      LAN_ACCESS=false
       ;;
     --host=*)
       HOST_ADDR="${arg#*=}"
@@ -81,6 +86,21 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+# Validate the requested privileged-terminal user BEFORE touching the system: an
+# invalid value must never silently produce a sudoers rule or a parseable .env.
+if [ -n "$ADMIN_TERMINAL_USER" ]; then
+  case "$ADMIN_TERMINAL_USER" in
+    *[!A-Za-z0-9_.-]*|[-.]*)
+      echo -e "${RED}[ERROR] Invalid --admin-terminal user: '$ADMIN_TERMINAL_USER'${NC}"
+      exit 1
+      ;;
+  esac
+  if [ "$CHECK_ONLY" = false ] && ! id "$ADMIN_TERMINAL_USER" >/dev/null 2>&1; then
+    echo -e "${RED}[ERROR] --admin-terminal user '$ADMIN_TERMINAL_USER' does not exist on this host.${NC}"
+    exit 1
+  fi
+fi
 
 if [ "$CHECK_ONLY" = true ]; then
   echo -e "${YELLOW}[CHECK MODE] No changes will be applied to the system.${NC}\n"
@@ -99,13 +119,15 @@ fi
 
 if [ "$LAN_ACCESS" = true ]; then
   echo -e "${YELLOW}[LAN] The panel will be reachable on your local network so you can scan the QR and start from your phone."
+  echo -e "      Anyone on that network who reaches it BEFORE you create the admin account can claim it."
   echo -e "      Keep it local-only with --local.${NC}\n"
 fi
 
 if [ "$TUNNEL" = true ]; then
   echo -e "${YELLOW}[TUNNEL] Setting up a public Cloudflare Quick Tunnel so the panel has a GLOBAL URL"
   echo -e "         (works from any network, no account needed). The URL is public and changes on"
-  echo -e "         restart. Disable with --no-tunnel.${NC}\n"
+  echo -e "         restart. Create your admin account immediately after install: until then, the"
+  echo -e "         first visitor can claim the panel. Disable with --no-tunnel.${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)
@@ -578,6 +600,11 @@ else
   fi
   echo "  $ACCESS_URL"
   echo ""
+  if [ "$TUNNEL" = true ] || [ "$LAN_EXPOSED" = true ]; then
+    echo -e "${YELLOW}  IMPORTANT: this panel is reachable from outside this machine. Create your${NC}"
+    echo -e "${YELLOW}  administrator account NOW — until you do, the first visitor can claim it.${NC}"
+    echo ""
+  fi
   echo "  Open it and create your administrator account to finish setup."
   echo "=================================================================="
 fi

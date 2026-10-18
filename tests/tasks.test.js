@@ -40,6 +40,8 @@ describe('Task service (pull queue with leases)', () => {
     assert.equal(first.id, task.id);
     assert.equal(first.status, 'running');
     assert.equal(first.node, 'n-atomic');
+    assert.equal(first.attempt, 1);
+    assert.ok(first.claimToken);
 
     // Nothing else claimable by a different node.
     assert.equal(taskService.claimTask('n-other'), null);
@@ -50,21 +52,43 @@ describe('Task service (pull queue with leases)', () => {
     assert.equal(taskService.claimTask('node-a'), null);
     const claimed = taskService.claimTask('node-b');
     assert.equal(claimed.node, 'node-b');
-    taskService.completeTask(claimed.id, { status: 'done', exitCode: 0 });
+    taskService.completeTask(claimed.id, { status: 'done', exitCode: 0, claimToken: claimed.claimToken });
   });
 
   test('completeTask marks done/failed and rejects finished tasks', () => {
     const task = taskService.enqueue({ cmd: 'true', node: 'n-complete' });
-    taskService.claimTask('n-complete');
-    const done = taskService.completeTask(task.id, { status: 'done', exitCode: 0, resultRef: 'agent/x' });
+    const claim = taskService.claimTask('n-complete');
+    const done = taskService.completeTask(task.id, {
+      status: 'done',
+      exitCode: 0,
+      resultRef: 'agent/x',
+      claimToken: claim.claimToken,
+    });
     assert.equal(done.status, 'done');
     assert.equal(done.resultRef, 'agent/x');
-    assert.throws(() => taskService.completeTask(task.id, { status: 'done' }), /not found or already finished/i);
+    assert.equal(done.claimToken, undefined);
+    assert.throws(
+      () => taskService.completeTask(task.id, { status: 'done', claimToken: claim.claimToken }),
+      /already finished|claimed by another worker/i,
+    );
   });
 
-  test('an expired lease returns the task to the queue', () => {
+  test('a result without the claim token is rejected', () => {
+    const task = taskService.enqueue({ cmd: 'true', node: 'n-token' });
+    taskService.claimTask('n-token');
+    assert.throws(() => taskService.completeTask(task.id, { status: 'done' }), /claim token is required/i);
+    assert.throws(
+      () => taskService.completeTask(task.id, { status: 'done', claimToken: 'forged-token' }),
+      /claimed by another worker/i,
+    );
+    // The legitimate attempt is still running and can still finish.
+    const claim = taskService.claimTask('n-token');
+    assert.equal(claim, null);
+  });
+
+  test('an expired lease returns the task to the queue and invalidates the old claim', () => {
     const task = taskService.enqueue({ cmd: 'long-job', node: 'n-lease' });
-    taskService.claimTask('n-lease');
+    const firstClaim = taskService.claimTask('n-lease');
     // Simulate a crashed worker by expiring the lease.
     const past = new Date(Date.now() - 1000).toISOString();
     getDatabase().prepare('UPDATE tasks SET lease_until = ? WHERE id = ?').run(past, task.id);
@@ -72,6 +96,41 @@ describe('Task service (pull queue with leases)', () => {
     const reclaimed = taskService.claimTask('n-lease2');
     assert.equal(reclaimed.id, task.id);
     assert.equal(reclaimed.node, 'n-lease2');
+    assert.equal(reclaimed.attempt, 2);
+
+    // The stale worker's claim token no longer matches the new attempt.
+    assert.throws(
+      () => taskService.completeTask(task.id, { status: 'done', claimToken: firstClaim.claimToken }),
+      /claimed by another worker/i,
+    );
+
+    const done = taskService.completeTask(task.id, {
+      status: 'done',
+      exitCode: 0,
+      claimToken: reclaimed.claimToken,
+    });
+    assert.equal(done.status, 'done');
+    assert.equal(done.attempt, 2);
+  });
+
+  test('attempts are bounded: the task fails after maxAttempts lease expiries', () => {
+    const task = taskService.enqueue({ cmd: 'job', node: 'n-retry', maxAttempts: 2 });
+    const past = () => new Date(Date.now() - 1000).toISOString();
+
+    const first = taskService.claimTask('n-retry');
+    assert.equal(first.attempt, 1);
+    getDatabase().prepare('UPDATE tasks SET lease_until = ? WHERE id = ?').run(past(), task.id);
+
+    const second = taskService.claimTask('n-retry');
+    assert.equal(second.attempt, 2);
+    getDatabase().prepare('UPDATE tasks SET lease_until = ? WHERE id = ?').run(past(), task.id);
+
+    // No third attempt: the next claim reclaims it into a terminal failure.
+    const third = taskService.claimTask('n-retry');
+    assert.equal(third, null);
+    const final = taskService.getTask(task.id);
+    assert.equal(final.status, 'failed');
+    assert.match(final.error, /max attempts/i);
   });
 
   test('agent tasks resolve to a headless command via the registry', () => {
@@ -95,21 +154,57 @@ describe('Task service (pull queue with leases)', () => {
 
   test('completeTask stores a bounded result tail', () => {
     const task = taskService.enqueue({ cmd: 'x', node: 'n-result' });
-    taskService.claimTask('n-result');
-    const done = taskService.completeTask(task.id, { status: 'done', exitCode: 0, result: 'hello world' });
+    const claim = taskService.claimTask('n-result');
+    const done = taskService.completeTask(task.id, {
+      status: 'done',
+      exitCode: 0,
+      result: 'hello world',
+      claimToken: claim.claimToken,
+    });
     assert.equal(done.result, 'hello world');
   });
 
-  test('cancelTask cancels running work and reports it on the next heartbeat', () => {
+  test('cancellation is a request until the worker confirms termination', () => {
     const task = taskService.enqueue({ cmd: 'x', node: 'n-cancel' });
-    taskService.claimTask('n-cancel');
-    const cancelled = taskService.cancelTask(task.id);
-    assert.equal(cancelled.status, 'cancelled');
+    const claim = taskService.claimTask('n-cancel');
+
+    const requested = taskService.cancelTask(task.id);
+    assert.equal(requested.status, 'cancelling');
 
     const beat = taskService.heartbeat({ node: 'n-cancel', running: [task.id] });
     assert.ok(beat.cancel.includes(task.id));
 
+    // Only the claim holder may confirm, and only as a cancellation report.
+    assert.throws(
+      () => taskService.completeTask(task.id, { status: 'done', claimToken: claim.claimToken }),
+      /cancellation is in progress/i,
+    );
+    const confirmed = taskService.completeTask(task.id, { status: 'cancelled', claimToken: claim.claimToken });
+    assert.equal(confirmed.status, 'cancelled');
+    assert.ok(confirmed.finishedAt);
+
     assert.throws(() => taskService.cancelTask(task.id), /not found or already finished/i);
+  });
+
+  test('a queued task is cancelled immediately', () => {
+    const task = taskService.enqueue({ cmd: 'x', node: 'n-cancel-queued' });
+    const cancelled = taskService.cancelTask(task.id);
+    assert.equal(cancelled.status, 'cancelled');
+    assert.ok(cancelled.finishedAt);
+  });
+
+  test('a cancellation whose worker disappears finalises on lease expiry', () => {
+    const task = taskService.enqueue({ cmd: 'x', node: 'n-cancel-dead' });
+    taskService.claimTask('n-cancel-dead');
+    taskService.cancelTask(task.id);
+    const past = new Date(Date.now() - 1000).toISOString();
+    getDatabase().prepare('UPDATE tasks SET lease_until = ? WHERE id = ?').run(past, task.id);
+
+    // Any later heartbeat reclaims the expired cancelling task as final.
+    taskService.heartbeat({ node: 'n-cancel-dead', running: [] });
+    const final = taskService.getTask(task.id);
+    assert.equal(final.status, 'cancelled');
+    assert.ok(final.finishedAt);
   });
 
   test('heartbeat upserts a node and renews its running leases', () => {
@@ -172,7 +267,9 @@ describe('Task mesh HTTP routes', () => {
       payload: { node: 'worker-1' },
     });
     assert.equal(claim.statusCode, 200);
-    assert.equal(JSON.parse(claim.payload).task.id, task.id);
+    const claimed = JSON.parse(claim.payload).task;
+    assert.equal(claimed.id, task.id);
+    assert.ok(claimed.claimToken);
 
     const empty = await app.inject({
       method: 'POST',
@@ -182,11 +279,19 @@ describe('Task mesh HTTP routes', () => {
     });
     assert.equal(empty.statusCode, 204);
 
+    const forged = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${task.id}/result`,
+      headers: { cookie },
+      payload: { status: 'done', exitCode: 0, claimToken: 'forged' },
+    });
+    assert.equal(forged.statusCode, 400);
+
     const result = await app.inject({
       method: 'POST',
       url: `/api/tasks/${task.id}/result`,
       headers: { cookie },
-      payload: { status: 'done', exitCode: 0, resultRef: 'commit-abc' },
+      payload: { status: 'done', exitCode: 0, resultRef: 'commit-abc', claimToken: claimed.claimToken },
     });
     assert.equal(result.statusCode, 200);
     assert.equal(JSON.parse(result.payload).task.status, 'done');

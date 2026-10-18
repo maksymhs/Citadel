@@ -83,8 +83,8 @@ describe('Log service (events + metric samples)', () => {
 
   test('task lifecycle emits trace events', () => {
     const task = taskService.enqueue({ cmd: 'echo', node: 'n-logs' });
-    taskService.claimTask('n-logs');
-    taskService.completeTask(task.id, { status: 'done', exitCode: 0 });
+    const claim = taskService.claimTask('n-logs');
+    taskService.completeTask(task.id, { status: 'done', exitCode: 0, claimToken: claim.claimToken });
 
     const lifecycle = logService.listEvents({ category: 'task', taskId: task.id });
     const actions = lifecycle.map((e) => e.action);

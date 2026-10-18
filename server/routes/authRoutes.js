@@ -9,15 +9,31 @@ const {
   requireAuth,
 } = require('../security/auth');
 const auditService = require('../services/auditService');
+const { SESSION_TTL_DAYS } = require('../config');
 
-// Throttle credential endpoints per client + username so an attacker cannot
-// brute-force a single account even when rotating source IPs (trustProxy makes
-// request.ip spoofable behind a proxy).
+// Throttle credential endpoints per client + username. request.ip is the socket
+// address for untrusted clients (forwarded headers are only honoured from trusted
+// proxies, see CITADEL_TRUST_PROXY), so spoofing X-Forwarded-For does not reset
+// the bucket; the username component also stops source-IP rotation from
+// brute-forcing a single account.
 const credentialRateLimit = {
   max: 8,
   timeWindow: '5 minutes',
   keyGenerator: (request) => `${request.ip}:${(request.body && request.body.username) || ''}`,
 };
+
+// Session cookies are set with the full attribute set in one place so setup,
+// login and logout cannot drift apart. The session id itself is never returned
+// in a JSON body: the cookie is the only browser channel.
+function sessionCookieOptions(request) {
+  return {
+    path: '/',
+    httpOnly: true,
+    secure: request.protocol === 'https',
+    sameSite: 'strict',
+    maxAge: SESSION_TTL_DAYS * 24 * 60 * 60,
+  };
+}
 
 async function authRoutes(fastify) {
   // Check if system has been initialized
@@ -40,18 +56,11 @@ async function authRoutes(fastify) {
 
       // Auto login newly created admin
       const session = login(username, password);
-      reply.setCookie('session_id', session.sessionId, {
-        path: '/',
-        httpOnly: true,
-        secure: request.protocol === 'https',
-        sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60, // 7 days
-      });
+      reply.setCookie('session_id', session.sessionId, sessionCookieOptions(request));
 
       return {
         success: true,
         user: session.user,
-        sessionId: session.sessionId,
       };
     } catch (err) {
       return reply.status(400).send({ error: err.message });
@@ -79,18 +88,11 @@ async function authRoutes(fastify) {
       ip: request.ip,
     });
 
-    reply.setCookie('session_id', session.sessionId, {
-      path: '/',
-      httpOnly: true,
-      secure: request.protocol === 'https',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60,
-    });
+    reply.setCookie('session_id', session.sessionId, sessionCookieOptions(request));
 
     return {
       success: true,
       user: session.user,
-      sessionId: session.sessionId,
     };
   });
 

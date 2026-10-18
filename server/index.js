@@ -12,6 +12,7 @@ const {
   SESSION_SECRET,
   NODE_ENV,
   APP_VERSION,
+  TRUST_PROXY,
 } = require('./config');
 
 const { initDatabase, closeDatabase } = require('./database/db');
@@ -38,10 +39,17 @@ const pluginRoutes = require('./routes/pluginRoutes');
 const wsTerminalRoutes = require('./routes/wsTerminal');
 
 async function buildServer(options = {}) {
+  // Only honour X-Forwarded-* from explicitly trusted peers (default loopback).
+  // Trusting every direct connection would let any client spoof its source IP
+  // and bypass the per-IP rate limits.
+  const trustProxy = options.trustProxy !== undefined ? options.trustProxy : TRUST_PROXY;
   const fastify = Fastify({
     logger: options.logger !== undefined ? options.logger : (NODE_ENV !== 'test'),
-    trustProxy: true,
+    trustProxy,
   });
+  if (trustProxy === true) {
+    fastify.log.warn('[Citadel] trustProxy is set to true: forwarded headers are accepted from any client.');
+  }
 
   // 1. Initialize SQLite Database
   initDatabase(options.customDbPath);

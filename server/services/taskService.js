@@ -7,7 +7,10 @@
  * pulling) and there is no central scheduler.
  *
  * A short lease, renewed implicitly by the node heartbeat, makes crashed
- * workers harmless: their tasks fall back to `queued` automatically.
+ * workers harmless: their tasks fall back to `queued` (bounded by max_attempts)
+ * automatically. Every claim gets a fresh `claim_token`; only the holder of the
+ * current token can report a result, so a stale worker from an expired attempt
+ * can never overwrite a newer attempt's outcome.
  */
 const crypto = require('node:crypto');
 const { getDatabase } = require('../database/db');
@@ -15,6 +18,8 @@ const logService = require('./logService');
 
 const LEASE_MS = parseInt(process.env.CITADEL_TASK_LEASE_MS, 10) || 90000;
 const MAX_RESULT_CHARS = 20000;
+const DEFAULT_MAX_ATTEMPTS = 3;
+const MAX_MAX_ATTEMPTS = 10;
 
 // Headless (non-interactive) invocation per builtin agent. Kept here so an
 // orchestrator can enqueue {agent, prompt} without knowing each CLI's flags,
@@ -34,9 +39,9 @@ function parseJson(value, fallback) {
   }
 }
 
-function toPublicTask(row) {
+function toPublicTask(row, { includeClaimToken = false } = {}) {
   if (!row) return null;
-  return {
+  const task = {
     id: row.id,
     status: row.status,
     node: row.node,
@@ -46,6 +51,8 @@ function toPublicTask(row) {
     priority: row.priority,
     agent: row.agent || null,
     prompt: row.prompt || null,
+    attempt: row.attempt || 0,
+    maxAttempts: row.max_attempts || DEFAULT_MAX_ATTEMPTS,
     resultRef: row.result_ref,
     result: row.result || null,
     exitCode: row.exit_code,
@@ -55,6 +62,18 @@ function toPublicTask(row) {
     startedAt: row.started_at,
     finishedAt: row.finished_at,
   };
+  // The claim token is a per-claim secret: it is only ever returned to the
+  // worker that just claimed the task, never in list/get responses.
+  if (includeClaimToken) task.claimToken = row.claim_token || null;
+  return task;
+}
+
+function tokensMatch(expected, provided) {
+  if (typeof expected !== 'string' || typeof provided !== 'string') return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  if (a.length !== b.length || a.length === 0) return false;
+  return crypto.timingSafeEqual(a, b);
 }
 
 function toPublicNode(row) {
@@ -85,11 +104,14 @@ function resolveAgentCommand(agent, prompt) {
   return { cmd: info.path, args: build(String(prompt)) };
 }
 
-function enqueue({ cmd, args, projectPath, priority, node, agent, prompt } = {}) {
+function enqueue({ cmd, args, projectPath, priority, node, agent, prompt, maxAttempts } = {}) {
   let cleanCmd = String(cmd || '').trim();
   let cleanArgs = Array.isArray(args) ? args.map((a) => String(a)) : [];
   let agentId = null;
   let promptText = null;
+  const cleanMaxAttempts = Number.isFinite(maxAttempts)
+    ? Math.min(Math.max(Math.trunc(maxAttempts), 1), MAX_MAX_ATTEMPTS)
+    : DEFAULT_MAX_ATTEMPTS;
 
   if (agent) {
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -108,8 +130,8 @@ function enqueue({ cmd, args, projectPath, priority, node, agent, prompt } = {})
   const now = new Date().toISOString();
 
   getDatabase().prepare(`
-    INSERT INTO tasks (id, status, node, project_path, cmd, args, priority, agent, prompt, created_at, updated_at)
-    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, status, node, project_path, cmd, args, priority, agent, prompt, max_attempts, created_at, updated_at)
+    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     node ? String(node) : null,
@@ -119,6 +141,7 @@ function enqueue({ cmd, args, projectPath, priority, node, agent, prompt } = {})
     Number.isFinite(priority) ? Math.trunc(priority) : 0,
     agentId,
     promptText,
+    cleanMaxAttempts,
     now,
     now
   );
@@ -154,26 +177,104 @@ function getTask(id) {
   return toPublicTask(row);
 }
 
+/**
+ * Apply lease expiry rules:
+ *   - `running` past its lease: requeue for another attempt while attempts
+ *     remain, otherwise mark failed (explicit, bounded retry semantics).
+ *   - `cancelling` past its lease: the worker never confirmed the kill, so the
+ *     process is considered dead and the cancellation becomes final.
+ * Returns a summary so callers can emit trace events outside the transaction.
+ */
 function reclaimExpired(db, now) {
-  db.prepare(`
-    UPDATE tasks SET status = 'queued', node = NULL, lease_until = NULL, updated_at = ?
+  const expired = db.prepare(`
+    SELECT id, node, attempt, max_attempts FROM tasks
     WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until < ?
-  `).run(now, now);
+  `).all(now);
+
+  const requeued = [];
+  const exhausted = [];
+  const requeueStmt = db.prepare(`
+    UPDATE tasks SET status = 'queued', node = NULL, claim_token = NULL, lease_until = NULL, updated_at = ?
+    WHERE id = ? AND status = 'running'
+  `);
+  const failStmt = db.prepare(`
+    UPDATE tasks SET status = 'failed', claim_token = NULL, lease_until = NULL, error = ?, finished_at = ?, updated_at = ?
+    WHERE id = ? AND status = 'running'
+  `);
+
+  for (const row of expired) {
+    if ((row.attempt || 0) >= (row.max_attempts || DEFAULT_MAX_ATTEMPTS)) {
+      if (failStmt.run(`Lease expired after ${row.attempt} attempt(s); max attempts reached.`, now, now, row.id).changes === 1) {
+        exhausted.push({ id: row.id, node: row.node });
+      }
+    } else if (requeueStmt.run(now, row.id).changes === 1) {
+      requeued.push({ id: row.id, node: row.node, attempt: row.attempt });
+    }
+  }
+
+  const cancelling = db.prepare(`
+    SELECT id, node FROM tasks WHERE status = 'cancelling' AND lease_until IS NOT NULL AND lease_until < ?
+  `).all(now);
+  const finalizeStmt = db.prepare(`
+    UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL, finished_at = ?, updated_at = ?
+    WHERE id = ? AND status = 'cancelling'
+  `);
+  const cancelled = [];
+  for (const row of cancelling) {
+    if (finalizeStmt.run(now, now, row.id).changes === 1) cancelled.push(row.id);
+  }
+
+  return { requeued, exhausted, cancelled };
+}
+
+function recordReclaim(summary) {
+  for (const item of summary.requeued) {
+    logService.record({
+      level: 'warn',
+      category: 'task',
+      taskId: item.id,
+      node: item.node,
+      action: 'task_lease_expired',
+      message: `Lease expired on attempt ${item.attempt}; task requeued.`,
+    });
+  }
+  for (const item of summary.exhausted) {
+    logService.record({
+      level: 'error',
+      category: 'task',
+      taskId: item.id,
+      node: item.node,
+      action: 'task_attempts_exhausted',
+      message: 'Lease expired and no attempts remain; task failed.',
+    });
+  }
+  for (const id of summary.cancelled) {
+    logService.record({
+      level: 'warn',
+      category: 'task',
+      taskId: id,
+      action: 'task_cancel_confirmed',
+      message: 'Cancellation confirmed: worker lease expired while cancelling.',
+    });
+  }
 }
 
 /**
- * Atomically claim one queued task for a node. Returns the task or null.
- * Expired leases are reclaimed first, then the oldest highest-priority task is
- * taken with a guarded UPDATE so two nodes can never claim the same one.
+ * Atomically claim one queued task for a node. Returns the task (including its
+ * per-claim token) or null. Expired leases are reclaimed first, then the oldest
+ * highest-priority task is taken with a guarded UPDATE so two nodes can never
+ * claim the same one. Each successful claim bumps `attempt` and mints a fresh
+ * random `claim_token`.
  */
 function claimTask(node) {
   const cleanNode = String(node || '').trim();
   if (!cleanNode) throw new Error('A node id is required to claim a task.');
 
   const db = getDatabase();
+  const claimToken = crypto.randomBytes(24).toString('hex');
   const tx = db.transaction(() => {
     const now = new Date().toISOString();
-    reclaimExpired(db, now);
+    const reclaim = reclaimExpired(db, now);
 
     const candidate = db.prepare(`
       SELECT * FROM tasks
@@ -181,47 +282,75 @@ function claimTask(node) {
       ORDER BY priority DESC, created_at ASC
       LIMIT 1
     `).get(cleanNode);
-    if (!candidate) return null;
+    if (!candidate) return { row: null, reclaim };
 
     const leaseUntil = new Date(Date.now() + LEASE_MS).toISOString();
     const res = db.prepare(`
       UPDATE tasks
       SET status = 'running', node = ?, started_at = COALESCE(started_at, ?),
-          lease_until = ?, updated_at = ?
+          lease_until = ?, claim_token = ?, attempt = attempt + 1, updated_at = ?
       WHERE id = ? AND status = 'queued'
-    `).run(cleanNode, now, leaseUntil, now, candidate.id);
+    `).run(cleanNode, now, leaseUntil, claimToken, now, candidate.id);
 
-    if (res.changes !== 1) return null;
-    return db.prepare('SELECT * FROM tasks WHERE id = ?').get(candidate.id);
+    if (res.changes !== 1) return { row: null, reclaim };
+    return { row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(candidate.id), reclaim };
   });
 
-  const claimed = toPublicTask(tx());
-  if (claimed) {
-    logService.record({
-      category: 'task',
-      taskId: claimed.id,
-      node: claimed.node,
-      action: 'task_claimed',
-      message: `Task claimed by ${claimed.node}.`,
-    });
-  }
+  const { row, reclaim } = tx();
+  recordReclaim(reclaim);
+  const claimed = toPublicTask(row, { includeClaimToken: true });
+  if (!claimed) return null;
+
+  logService.record({
+    category: 'task',
+    taskId: claimed.id,
+    node: claimed.node,
+    action: 'task_claimed',
+    message: `Task claimed by ${claimed.node} (attempt ${claimed.attempt}/${claimed.maxAttempts}).`,
+  });
   return claimed;
 }
 
 /**
- * Mark a task finished. Only `done` or `failed` are accepted.
+ * Report the outcome of a claimed task. The caller must present the claim token
+ * returned by `claimTask`; a worker whose claim expired (and whose task was
+ * retried elsewhere) is rejected instead of overwriting the newer attempt.
+ *
+ * Statuses: `done`/`failed` finish a running attempt; `cancelled` confirms that
+ * a previously requested cancellation actually terminated the process.
  */
-function completeTask(id, { status, exitCode, resultRef, error, result } = {}) {
-  const finalStatus = status === 'done' ? 'done' : 'failed';
+function completeTask(id, { status, exitCode, resultRef, error, result, claimToken } = {}) {
+  if (typeof claimToken !== 'string' || claimToken === '') {
+    throw new Error('A claim token is required to report a result.');
+  }
+
+  const db = getDatabase();
+  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  if (!row || !tokensMatch(row.claim_token, claimToken)) {
+    throw new Error('Task not found, already finished, or claimed by another worker.');
+  }
+
+  const isCancelReport = status === 'cancelled';
+  if (isCancelReport && row.status !== 'cancelling') {
+    throw new Error('Task was not cancelled; refusing a cancellation report.');
+  }
+  if (!isCancelReport && row.status === 'cancelling') {
+    throw new Error('Task cancellation is in progress; only a cancellation report is accepted.');
+  }
+  if (!isCancelReport && row.status !== 'running') {
+    throw new Error('Task not found or already finished.');
+  }
+
+  const finalStatus = isCancelReport ? 'cancelled' : (status === 'done' ? 'done' : 'failed');
   const now = new Date().toISOString();
   const cleanResult = result === undefined || result === null
     ? null
     : String(result).slice(0, MAX_RESULT_CHARS);
-  const res = getDatabase().prepare(`
+  const res = db.prepare(`
     UPDATE tasks
     SET status = ?, exit_code = ?, result_ref = ?, error = ?, result = ?,
-        lease_until = NULL, finished_at = ?, updated_at = ?
-    WHERE id = ? AND status IN ('queued', 'running')
+        lease_until = NULL, claim_token = NULL, finished_at = ?, updated_at = ?
+    WHERE id = ? AND claim_token = ? AND status = ?
   `).run(
     finalStatus,
     Number.isFinite(exitCode) ? Math.trunc(exitCode) : null,
@@ -230,11 +359,13 @@ function completeTask(id, { status, exitCode, resultRef, error, result } = {}) {
     cleanResult,
     now,
     now,
-    id
+    id,
+    claimToken,
+    row.status
   );
 
   if (res.changes !== 1) {
-    throw new Error('Task not found or already finished.');
+    throw new Error('Task not found, already finished, or claimed by another worker.');
   }
 
   const task = getTask(id);
@@ -243,29 +374,46 @@ function completeTask(id, { status, exitCode, resultRef, error, result } = {}) {
     category: 'task',
     taskId: id,
     node: task.node,
-    action: finalStatus === 'failed' ? 'task_failed' : 'task_completed',
-    message: finalStatus === 'failed'
-      ? `Task failed (exit ${task.exitCode ?? 'n/a'}): ${error || 'unknown error'}`
-      : 'Task completed.',
-    details: { exitCode: task.exitCode, resultRef: task.resultRef },
+    action: finalStatus === 'cancelled'
+      ? 'task_cancel_confirmed'
+      : (finalStatus === 'failed' ? 'task_failed' : 'task_completed'),
+    message: finalStatus === 'cancelled'
+      ? 'Worker confirmed termination of the cancelled task.'
+      : (finalStatus === 'failed'
+        ? `Task failed (exit ${task.exitCode ?? 'n/a'}): ${error || 'unknown error'}`
+        : 'Task completed.'),
+    details: { exitCode: task.exitCode, resultRef: task.resultRef, attempt: task.attempt },
   });
   return task;
 }
 
 /**
- * Cancel a queued or running task. A running task keeps its node so the
- * sentinel's next heartbeat reports it in the `cancel` list, prompting it to
- * terminate the child process.
+ * Request cancellation of a queued or running task.
+ *
+ * A queued task is finalised immediately. A running task moves to `cancelling`
+ * (a *request*, not a confirmed kill): its node keeps the claim and the next
+ * heartbeat returns it in the `cancel` list so the sentinel terminates the
+ * child and confirms with `completeTask(..., {status:'cancelled', claimToken})`.
+ * If the worker never confirms, lease expiry finalises it as `cancelled`.
  */
 function cancelTask(id) {
   const now = new Date().toISOString();
-  const res = getDatabase().prepare(`
-    UPDATE tasks SET status = 'cancelled', lease_until = NULL, updated_at = ?
-    WHERE id = ? AND status IN ('queued', 'running')
-  `).run(now, id);
-
-  if (res.changes !== 1) {
+  const db = getDatabase();
+  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  if (!row || !['queued', 'running'].includes(row.status)) {
     throw new Error('Task not found or already finished.');
+  }
+
+  if (row.status === 'queued') {
+    db.prepare(`
+      UPDATE tasks SET status = 'cancelled', finished_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'queued'
+    `).run(now, now, id);
+  } else {
+    db.prepare(`
+      UPDATE tasks SET status = 'cancelling', updated_at = ?
+      WHERE id = ? AND status = 'running'
+    `).run(now, id);
   }
 
   const task = getTask(id);
@@ -275,7 +423,9 @@ function cancelTask(id) {
     taskId: id,
     node: task.node,
     action: 'task_cancelled',
-    message: 'Task cancelled.',
+    message: task.status === 'cancelling'
+      ? 'Cancellation requested; waiting for the worker to confirm termination.'
+      : 'Task cancelled.',
   });
   return task;
 }
@@ -314,21 +464,27 @@ function heartbeat({ node, url, tags, capacity, active, load, running } = {}) {
       now
     );
 
-    reclaimExpired(db, now);
+    const reclaim = reclaimExpired(db, now);
+    // Only running attempts are renewed: a `cancelling` task deliberately stops
+    // being renewed so an unconfirmed kill finalises via lease expiry.
     db.prepare(`
       UPDATE tasks SET lease_until = ?, updated_at = ?
       WHERE status = 'running' AND node = ?
     `).run(leaseUntil, now, cleanNode);
+    return reclaim;
   });
-  tx();
+  const reclaim = tx();
+  recordReclaim(reclaim);
 
-  // Tell a node which of its running tasks were cancelled since the last beat.
+  // Tell a node which of its tasks were cancelled since the last beat. Both
+  // `cancelling` (kill in flight) and `cancelled` are returned so the sentinel
+  // retries until the process is gone and it can confirm termination.
   const cancel = [];
   if (Array.isArray(running) && running.length > 0) {
     const ids = running.map((r) => String(r));
     const placeholders = ids.map(() => '?').join(',');
     const rows = db.prepare(`
-      SELECT id FROM tasks WHERE status = 'cancelled' AND node = ? AND id IN (${placeholders})
+      SELECT id FROM tasks WHERE status IN ('cancelling', 'cancelled') AND node = ? AND id IN (${placeholders})
     `).all(cleanNode, ...ids);
     cancel.push(...rows.map((r) => r.id));
   }

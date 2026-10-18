@@ -23,8 +23,15 @@ function hashPassword(password) {
  * Verify password against stored hash and salt
  */
 function verifyPassword(password, hash, salt) {
+  if (typeof password !== 'string' || typeof hash !== 'string' || typeof salt !== 'string') {
+    return false;
+  }
   const derivedKey = crypto.scryptSync(password, salt, SCRYPT_KEYLEN);
   const hashBuffer = Buffer.from(hash, 'hex');
+  // A malformed/truncated stored hash must fail authentication, not throw.
+  if (hashBuffer.length !== derivedKey.length) {
+    return false;
+  }
   return crypto.timingSafeEqual(derivedKey, hashBuffer);
 }
 
@@ -59,10 +66,18 @@ function createInitialAdmin(username, password) {
   const now = new Date().toISOString();
 
   const db = getDatabase();
-  db.prepare(`
+  // Conditional INSERT ... WHERE NOT EXISTS is atomic at the statement level, so
+  // two concurrent setup requests (or two server processes during an update)
+  // cannot both create an administrator. The check above is only a fast path.
+  const res = db.prepare(`
     INSERT INTO users (id, username, password_hash, salt, role, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'admin', ?, ?)
+    SELECT ?, ?, ?, ?, 'admin', ?, ?
+    WHERE NOT EXISTS (SELECT 1 FROM users)
   `).run(userId, cleanUsername, hash, salt, now, now);
+
+  if (res.changes !== 1) {
+    throw new Error('Initial setup is already completed. Registration is disabled.');
+  }
 
   return { id: userId, username: cleanUsername, role: 'admin' };
 }
