@@ -31,7 +31,10 @@ const TAGS = (process.env.CITADEL_TAGS || '')
   .map((t) => t.trim())
   .filter(Boolean);
 
+const MAX_RESULT = Math.max(1000, parseInt(process.env.CITADEL_MAX_RESULT, 10) || 8000);
+
 let active = 0;
+const running = new Map(); // task id -> child process
 
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -59,12 +62,33 @@ function runTask(task) {
   active += 1;
   const cwd = task.projectPath || process.cwd();
   const args = Array.isArray(task.args) ? task.args : [];
+
+  // The child learns which task it is, so it can name worktrees/branches
+  // idempotently (agent/<task id>) and survive a lease retry safely.
+  const env = {
+    ...process.env,
+    CITADEL_TASK_ID: task.id,
+    CITADEL_TASK_NODE: NODE,
+    CITADEL_TASK_PROJECT: task.projectPath || '',
+  };
   console.log(`[sentinel] running ${task.id}: ${task.cmd} ${args.join(' ')} (cwd=${cwd})`);
 
-  const child = spawn(task.cmd, args, { cwd, env: process.env, stdio: 'inherit' });
+  const child = spawn(task.cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  running.set(task.id, child);
+
+  // Tee live output to the sentinel terminal while keeping a bounded tail to
+  // report back, so the orchestrator can read what the task actually produced.
+  let output = '';
+  const capture = (buf) => {
+    output += buf.toString();
+    if (output.length > MAX_RESULT) output = output.slice(-MAX_RESULT);
+  };
+  child.stdout.on('data', (b) => { capture(b); process.stdout.write(b); });
+  child.stderr.on('data', (b) => { capture(b); process.stderr.write(b); });
 
   const finish = async (code, error) => {
     active = Math.max(0, active - 1);
+    running.delete(task.id);
     try {
       await api(`/api/tasks/${task.id}/result`, {
         method: 'POST',
@@ -72,11 +96,15 @@ function runTask(task) {
           status: code === 0 ? 'done' : 'failed',
           exitCode: code,
           error: error || null,
+          result: output.slice(-MAX_RESULT),
         },
       });
       console.log(`[sentinel] ${task.id} -> ${code === 0 ? 'done' : `failed (${code})`}`);
     } catch (err) {
-      console.error(`[sentinel] could not report ${task.id}: ${err.message}`);
+      // A cancelled task is already final on the server; that is expected.
+      if (!/already finished/i.test(err.message)) {
+        console.error(`[sentinel] could not report ${task.id}: ${err.message}`);
+      }
     }
   };
 
@@ -85,8 +113,9 @@ function runTask(task) {
 }
 
 async function tick() {
+  let beat = null;
   try {
-    await api('/api/nodes/heartbeat', {
+    beat = await api('/api/nodes/heartbeat', {
       method: 'POST',
       body: {
         node: NODE,
@@ -95,11 +124,22 @@ async function tick() {
         capacity: CAPACITY,
         active,
         load: os.loadavg()[0],
+        running: [...running.keys()],
       },
     });
   } catch (err) {
     console.error(`[sentinel] heartbeat failed: ${err.message}`);
     return;
+  }
+
+  // Kill any task the operator cancelled since the last beat.
+  const cancel = (beat && beat.node && beat.node.cancel) || [];
+  for (const id of cancel) {
+    const child = running.get(id);
+    if (child) {
+      console.log(`[sentinel] cancelling ${id}`);
+      child.kill('SIGTERM');
+    }
   }
 
   while (active < CAPACITY) {

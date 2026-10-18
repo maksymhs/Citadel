@@ -74,6 +74,44 @@ describe('Task service (pull queue with leases)', () => {
     assert.equal(reclaimed.node, 'n-lease2');
   });
 
+  test('agent tasks resolve to a headless command via the registry', () => {
+    const agentRegistry = require('../server/services/agentRegistry');
+    const original = agentRegistry.getAgent;
+    agentRegistry.getAgent = () => ({ installed: true, path: '/usr/bin/true', name: 'OpenCode' });
+    try {
+      const task = taskService.enqueue({ agent: 'opencode', prompt: 'fix it', node: 'n-agent' });
+      assert.equal(task.agent, 'opencode');
+      assert.equal(task.prompt, 'fix it');
+      assert.equal(task.cmd, '/usr/bin/true');
+      assert.deepEqual(task.args, ['run', 'fix it']);
+
+      assert.throws(() => taskService.enqueue({ agent: 'opencode' }), /prompt/i);
+      assert.throws(() => taskService.enqueue({ agent: 'nope', prompt: 'x' }), /no headless/i);
+      assert.throws(() => taskService.enqueue({}), /cmd/i);
+    } finally {
+      agentRegistry.getAgent = original;
+    }
+  });
+
+  test('completeTask stores a bounded result tail', () => {
+    const task = taskService.enqueue({ cmd: 'x', node: 'n-result' });
+    taskService.claimTask('n-result');
+    const done = taskService.completeTask(task.id, { status: 'done', exitCode: 0, result: 'hello world' });
+    assert.equal(done.result, 'hello world');
+  });
+
+  test('cancelTask cancels running work and reports it on the next heartbeat', () => {
+    const task = taskService.enqueue({ cmd: 'x', node: 'n-cancel' });
+    taskService.claimTask('n-cancel');
+    const cancelled = taskService.cancelTask(task.id);
+    assert.equal(cancelled.status, 'cancelled');
+
+    const beat = taskService.heartbeat({ node: 'n-cancel', running: [task.id] });
+    assert.ok(beat.cancel.includes(task.id));
+
+    assert.throws(() => taskService.cancelTask(task.id), /not found or already finished/i);
+  });
+
   test('heartbeat upserts a node and renews its running leases', () => {
     const task = taskService.enqueue({ cmd: 'job', node: 'node-c' });
     taskService.claimTask('node-c');
@@ -160,6 +198,33 @@ describe('Task mesh HTTP routes', () => {
     });
     assert.equal(list.statusCode, 200);
     assert.ok(JSON.parse(list.payload).tasks.some((t) => t.id === task.id));
+  });
+
+  test('a queued task can be cancelled over HTTP', async () => {
+    const enqueue = await app.inject({
+      method: 'POST',
+      url: '/api/tasks',
+      headers: { cookie },
+      payload: { cmd: 'sleep', args: ['10'] },
+    });
+    const task = JSON.parse(enqueue.payload).task;
+
+    const cancel = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${task.id}/cancel`,
+      headers: { cookie },
+      payload: {},
+    });
+    assert.equal(cancel.statusCode, 200);
+    assert.equal(JSON.parse(cancel.payload).task.status, 'cancelled');
+
+    const again = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${task.id}/cancel`,
+      headers: { cookie },
+      payload: {},
+    });
+    assert.equal(again.statusCode, 400);
   });
 
   test('node heartbeat and listing reflect reported load', async () => {

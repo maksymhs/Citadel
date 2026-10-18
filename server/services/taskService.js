@@ -13,6 +13,16 @@ const crypto = require('node:crypto');
 const { getDatabase } = require('../database/db');
 
 const LEASE_MS = parseInt(process.env.CITADEL_TASK_LEASE_MS, 10) || 90000;
+const MAX_RESULT_CHARS = 20000;
+
+// Headless (non-interactive) invocation per builtin agent. Kept here so an
+// orchestrator can enqueue {agent, prompt} without knowing each CLI's flags,
+// while still being able to send a raw {cmd, args} for anything else.
+const AGENT_HEADLESS = {
+  opencode: (prompt) => ['run', prompt],
+  claude: (prompt) => ['-p', prompt, '--output-format', 'json'],
+  codex: (prompt) => ['exec', prompt, '--json'],
+};
 
 function parseJson(value, fallback) {
   if (value === null || value === undefined) return fallback;
@@ -33,7 +43,10 @@ function toPublicTask(row) {
     cmd: row.cmd,
     args: parseJson(row.args, []),
     priority: row.priority,
+    agent: row.agent || null,
+    prompt: row.prompt || null,
     resultRef: row.result_ref,
+    result: row.result || null,
     exitCode: row.exit_code,
     error: row.error,
     createdAt: row.created_at,
@@ -56,17 +69,46 @@ function toPublicNode(row) {
   };
 }
 
-function enqueue({ cmd, args, projectPath, priority, node } = {}) {
-  const cleanCmd = String(cmd || '').trim();
-  if (!cleanCmd) throw new Error('A task requires a "cmd" (executable to run).');
+/**
+ * Turn {agent, prompt} into a concrete {cmd, args} using the live agent
+ * registry (resolves the installed binary). Lazy-required to avoid loading the
+ * terminal stack for plain cmd tasks.
+ */
+function resolveAgentCommand(agent, prompt) {
+  const build = AGENT_HEADLESS[agent];
+  if (!build) throw new Error(`Agent "${agent}" has no headless command mapping.`);
+  const agentRegistry = require('./agentRegistry');
+  const info = agentRegistry.getAgent(agent);
+  if (!info) throw new Error(`Agent "${agent}" not found in the registry.`);
+  if (!info.installed || !info.path) throw new Error(`Agent "${info.name}" is not installed on this host.`);
+  return { cmd: info.path, args: build(String(prompt)) };
+}
 
-  const cleanArgs = Array.isArray(args) ? args.map((a) => String(a)) : [];
+function enqueue({ cmd, args, projectPath, priority, node, agent, prompt } = {}) {
+  let cleanCmd = String(cmd || '').trim();
+  let cleanArgs = Array.isArray(args) ? args.map((a) => String(a)) : [];
+  let agentId = null;
+  let promptText = null;
+
+  if (agent) {
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      throw new Error('An agent task requires a "prompt".');
+    }
+    const resolved = resolveAgentCommand(String(agent), prompt);
+    cleanCmd = resolved.cmd;
+    cleanArgs = resolved.args;
+    agentId = String(agent);
+    promptText = String(prompt);
+  }
+
+  if (!cleanCmd) throw new Error('A task requires a "cmd" (executable) or an "agent" + "prompt".');
+
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
   getDatabase().prepare(`
-    INSERT INTO tasks (id, status, node, project_path, cmd, args, priority, created_at, updated_at)
-    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, status, node, project_path, cmd, args, priority, agent, prompt, created_at, updated_at)
+    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     node ? String(node) : null,
@@ -74,6 +116,8 @@ function enqueue({ cmd, args, projectPath, priority, node } = {}) {
     cleanCmd,
     JSON.stringify(cleanArgs),
     Number.isFinite(priority) ? Math.trunc(priority) : 0,
+    agentId,
+    promptText,
     now,
     now
   );
@@ -147,12 +191,15 @@ function claimTask(node) {
 /**
  * Mark a task finished. Only `done` or `failed` are accepted.
  */
-function completeTask(id, { status, exitCode, resultRef, error } = {}) {
+function completeTask(id, { status, exitCode, resultRef, error, result } = {}) {
   const finalStatus = status === 'done' ? 'done' : 'failed';
   const now = new Date().toISOString();
+  const cleanResult = result === undefined || result === null
+    ? null
+    : String(result).slice(0, MAX_RESULT_CHARS);
   const res = getDatabase().prepare(`
     UPDATE tasks
-    SET status = ?, exit_code = ?, result_ref = ?, error = ?,
+    SET status = ?, exit_code = ?, result_ref = ?, error = ?, result = ?,
         lease_until = NULL, finished_at = ?, updated_at = ?
     WHERE id = ? AND status IN ('queued', 'running')
   `).run(
@@ -160,6 +207,7 @@ function completeTask(id, { status, exitCode, resultRef, error } = {}) {
     Number.isFinite(exitCode) ? Math.trunc(exitCode) : null,
     resultRef ? String(resultRef) : null,
     error ? String(error) : null,
+    cleanResult,
     now,
     now,
     id
@@ -172,11 +220,29 @@ function completeTask(id, { status, exitCode, resultRef, error } = {}) {
 }
 
 /**
+ * Cancel a queued or running task. A running task keeps its node so the
+ * sentinel's next heartbeat reports it in the `cancel` list, prompting it to
+ * terminate the child process.
+ */
+function cancelTask(id) {
+  const now = new Date().toISOString();
+  const res = getDatabase().prepare(`
+    UPDATE tasks SET status = 'cancelled', lease_until = NULL, updated_at = ?
+    WHERE id = ? AND status IN ('queued', 'running')
+  `).run(now, id);
+
+  if (res.changes !== 1) {
+    throw new Error('Task not found or already finished.');
+  }
+  return getTask(id);
+}
+
+/**
  * Upsert a node's liveness, load and capacity. Also renews the lease of every
  * running task on that node, so a healthy node keeps its work and a dead one
  * releases it automatically.
  */
-function heartbeat({ node, url, tags, capacity, active, load } = {}) {
+function heartbeat({ node, url, tags, capacity, active, load, running } = {}) {
   const cleanNode = String(node || '').trim();
   if (!cleanNode) throw new Error('A node id is required for a heartbeat.');
 
@@ -213,8 +279,19 @@ function heartbeat({ node, url, tags, capacity, active, load } = {}) {
   });
   tx();
 
+  // Tell a node which of its running tasks were cancelled since the last beat.
+  const cancel = [];
+  if (Array.isArray(running) && running.length > 0) {
+    const ids = running.map((r) => String(r));
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT id FROM tasks WHERE status = 'cancelled' AND node = ? AND id IN (${placeholders})
+    `).all(cleanNode, ...ids);
+    cancel.push(...rows.map((r) => r.id));
+  }
+
   const row = db.prepare('SELECT * FROM nodes WHERE id = ?').get(cleanNode);
-  return toPublicNode(row);
+  return { ...toPublicNode(row), cancel };
 }
 
 function listNodes() {
@@ -229,6 +306,7 @@ module.exports = {
   getTask,
   claimTask,
   completeTask,
+  cancelTask,
   heartbeat,
   listNodes,
 };

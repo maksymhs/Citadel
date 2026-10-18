@@ -37,17 +37,18 @@ const TOOLS = [
   },
   {
     name: 'citadel_enqueue_task',
-    description: 'Enqueue a command to be run by a node sentinel. Leave "node" empty to let any free node pull it (load-balanced).',
+    description: 'Enqueue work for a node sentinel. Either give {cmd, args} or an {agent, prompt} (Citadel builds the headless command for claude|codex|opencode). Leave "node" empty to let any free node pull it (load-balanced).',
     inputSchema: {
       type: 'object',
       properties: {
         cmd: { type: 'string', description: 'Executable to run (no shell). Use cmd="bash" with args=["-lc","..."] for shell.' },
         args: { type: 'array', items: { type: 'string' }, description: 'Arguments passed to cmd.' },
+        agent: { type: 'string', enum: ['claude', 'codex', 'opencode'], description: 'Run a headless CLI agent instead of a raw cmd.' },
+        prompt: { type: 'string', description: 'Prompt for the agent (required when "agent" is set).' },
         projectPath: { type: 'string', description: 'Working directory on the executing node.' },
         priority: { type: 'integer', description: 'Higher runs first (default 0).' },
         node: { type: 'string', description: 'Pin the task to one node; omit for any node.' },
       },
-      required: ['cmd'],
       additionalProperties: false,
     },
   },
@@ -66,7 +67,17 @@ const TOOLS = [
   },
   {
     name: 'citadel_task',
-    description: 'Get one task by id, including status, exit code and result reference (progress check).',
+    description: 'Get one task by id, including status, exit code, result reference and the captured output tail (progress check).',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'citadel_cancel_task',
+    description: 'Cancel a queued or running task. A running task is terminated by its sentinel on the next heartbeat.',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string' } },
@@ -119,6 +130,8 @@ async function callTool(name, args = {}) {
     }
     case 'citadel_task':
       return api(`/api/tasks/${encodeURIComponent(args.id)}`);
+    case 'citadel_cancel_task':
+      return api(`/api/tasks/${encodeURIComponent(args.id)}/cancel`, { method: 'POST', body: {} });
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

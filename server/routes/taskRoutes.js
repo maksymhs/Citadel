@@ -68,6 +68,16 @@ async function taskRoutes(fastify) {
     }
   });
 
+  fastify.post('/api/tasks/:id/cancel', async (request, reply) => {
+    try {
+      const task = taskService.cancelTask(request.params.id);
+      audit(request, 'task_cancelled', task.id, { node: task.node });
+      return { task };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+
   fastify.post('/api/nodes/heartbeat', async (request, reply) => {
     try {
       const node = taskService.heartbeat(request.body || {});

@@ -162,13 +162,18 @@ The simplest and most solid way to spread work is a **pull queue**: the orchestr
 **Control plane (HTTP, session-authenticated):**
 
 ```
-POST /api/tasks              {cmd, args?, projectPath?, priority?, node?}  # enqueue
+POST /api/tasks              {cmd,args} OR {agent,prompt} + projectPath?, priority?, node?  # enqueue
 POST /api/tasks/claim        {node}                                       # pull one (204 if none)
-POST /api/tasks/:id/result   {status, exitCode?, resultRef?, error?}      # report
+POST /api/tasks/:id/result   {status, exitCode?, resultRef?, error?, result?}  # report + captured output
+POST /api/tasks/:id/cancel                                                # cancel queued or running
 GET  /api/tasks?status=&node=                                             # progress
-POST /api/nodes/heartbeat    {node, capacity, active, load, tags?}        # liveness + lease renewal
+POST /api/nodes/heartbeat    {node, capacity, active, load, tags?, running?}  # liveness + lease renewal
 GET  /api/nodes                                                           # list nodes and load
 ```
+
+**Agent tasks.** Instead of a raw command, enqueue `{"agent":"claude|codex|opencode","prompt":"..."}` and Citadel builds the headless invocation from the agent registry (`opencode run`, `claude -p --output-format json`, `codex exec --json`), so the orchestrator never needs to know each CLI's flags.
+
+**Result and cancellation.** The sentinel captures a bounded tail of the task's stdout/stderr and stores it in `result` (readable via `GET /api/tasks/:id`), and exports `CITADEL_TASK_ID`, `CITADEL_TASK_NODE` and `CITADEL_TASK_PROJECT` to the child so agents can name worktrees/branches idempotently. Cancelling a running task makes the sentinel terminate it on its next heartbeat.
 
 **Sentinel (one per node).** Run it inside a Citadel terminal so tmux keeps it alive across restarts, or as a systemd unit:
 
@@ -182,7 +187,7 @@ node scripts/sentinel.js
 
 `cmd` is executed directly (no shell); for shell one-liners use `{"cmd":"bash","args":["-lc","..."]}`. Leave `node` off a task to let any free node pull it, or pin it to place work manually. Data/artifacts stay on your own transport (git branches, an object store) — the queue only carries small JSON.
 
-**MCP server.** Any MCP-capable agent can drive the mesh with the tools `citadel_nodes`, `citadel_node_load`, `citadel_enqueue_task`, `citadel_tasks` and `citadel_task`:
+**MCP server.** Any MCP-capable agent can drive the mesh with the tools `citadel_nodes`, `citadel_node_load`, `citadel_enqueue_task`, `citadel_tasks`, `citadel_task` and `citadel_cancel_task`:
 
 ```
 CITADEL_URL=https://panel.example.com CITADEL_TOKEN=<session id> node scripts/citadel-mcp.js

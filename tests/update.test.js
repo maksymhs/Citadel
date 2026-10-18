@@ -41,13 +41,14 @@ describe('Version, updater and migrations', () => {
     let rows = db.prepare('SELECT name FROM schema_migrations ORDER BY id').all();
     assert.ok(rows.length >= 1);
     assert.equal(rows[0].name, '001_baseline');
+    const appliedNames = rows.map((r) => r.name);
     closeDatabase();
 
+    // Re-initialising must not re-apply or duplicate any migration.
     initDatabase(migDb);
     db = getDatabase();
     rows = db.prepare('SELECT name FROM schema_migrations ORDER BY id').all();
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].name, '001_baseline');
+    assert.deepEqual(rows.map((r) => r.name), appliedNames);
     closeDatabase();
 
     for (const suffix of ['', '-wal', '-shm']) {

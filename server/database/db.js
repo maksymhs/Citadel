@@ -21,6 +21,16 @@ const MIGRATIONS = [
       // Baseline: schema as of v0.1.0 (projects, terminals, credentials, ...).
     },
   },
+  {
+    name: '002_task_mesh_enhancements',
+    up: (db) => {
+      // Additive columns for agent tasks and result capture. Guarded so fresh
+      // databases (which already have them via CREATE TABLE) skip cleanly.
+      if (!columnExists(db, 'tasks', 'result')) db.exec('ALTER TABLE tasks ADD COLUMN result TEXT');
+      if (!columnExists(db, 'tasks', 'agent')) db.exec('ALTER TABLE tasks ADD COLUMN agent TEXT');
+      if (!columnExists(db, 'tasks', 'prompt')) db.exec('ALTER TABLE tasks ADD COLUMN prompt TEXT');
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -174,8 +184,11 @@ function initDatabase(customPath = null) {
       cmd TEXT NOT NULL,
       args TEXT,
       priority INTEGER NOT NULL DEFAULT 0,
+      agent TEXT,
+      prompt TEXT,
       lease_until TEXT,
       result_ref TEXT,
+      result TEXT,
       exit_code INTEGER,
       error TEXT,
       created_at TEXT NOT NULL,

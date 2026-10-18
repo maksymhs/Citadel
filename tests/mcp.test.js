@@ -25,11 +25,12 @@ describe('Citadel MCP bridge (protocol shape)', () => {
       'citadel_enqueue_task',
       'citadel_tasks',
       'citadel_task',
+      'citadel_cancel_task',
     ]);
     for (const tool of res.tools) {
       assert.equal(tool.inputSchema.type, 'object');
     }
-    assert.equal(TOOLS.length, 5);
+    assert.equal(TOOLS.length, 6);
   });
 
   test('tools/call surfaces handler errors as isError content', async () => {
