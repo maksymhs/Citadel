@@ -66,6 +66,8 @@ Both methods are idempotent. The installer:
 3. Prepares the layout under `/srv/citadel` (`app`, `data`, `projects`, `logs`).
 4. Configures and starts the `citadel.service` systemd unit.
 
+When it finishes, the installer prints a **QR code**; scan it with your phone (same Wi-Fi) to open the panel and create the administrator account. The full-screen kiosk is optional and can be added anytime with `citadel kiosk`.
+
 You can override the source repository or branch with the `CITADEL_REPO_URL` and `CITADEL_REPO_BRANCH` environment variables.
 
 ### Updating an existing installation
@@ -126,16 +128,18 @@ sudo bash install.sh --kiosk=ubuntu     # or a specific OS user
 
 This installs a minimal Wayland compositor (`cage`) and a browser, autologins the chosen user on `tty1`, autostarts the panel full-screen, and disables idle/suspend. `scripts/kiosk-setup.sh` is idempotent and also supports `--check` and `--remove`.
 
-### Local network access (opt-in)
+### Local network access
 
-By default the panel listens on `127.0.0.1` only, so other devices cannot reach it. To expose it on the local network (e.g. a phone on the same Wi-Fi):
+By default the installer exposes the panel on your local network so you can scan the QR it prints and start from your phone right away. It sets `HOST`, whitelists the LAN origin in `ALLOWED_ORIGINS` (required by the terminal WebSocket) and opens the port in `ufw` when active.
+
+Keep it private to this machine instead:
 
 ```bash
-sudo bash install.sh --lan                 # bind all interfaces + open the firewall
-sudo bash install.sh --host=192.168.1.10   # or bind a specific address
+sudo bash install.sh --local              # listen on 127.0.0.1 only
+sudo bash install.sh --host=192.168.1.10  # or bind a specific address
 ```
 
-This sets `HOST`, whitelists the LAN origin in `ALLOWED_ORIGINS` (required by the terminal WebSocket) and opens the port in `ufw` when active. For access from **any** network without exposing the host, prefer Tailscale (see *Access from your phone* below).
+For access from **any** network without exposing the host, prefer Tailscale (see *Access from your phone* below).
 
 ### Synchronized updates across hosts
 

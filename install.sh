@@ -22,7 +22,9 @@ CHECK_ONLY=false
 ADMIN_TERMINAL_USER=""
 ENABLE_UPDATER=false
 KIOSK_USER=""
-LAN_ACCESS=false
+LAN_ACCESS=true
+LOCAL_ONLY=false
+LAN_EXPOSED=false
 HOST_ADDR=""
 PANEL_PORT=3000
 UPDATE_MODE=false
@@ -48,6 +50,10 @@ for arg in "$@"; do
       ;;
     --kiosk=*)
       KIOSK_USER="${arg#*=}"
+      ;;
+    --local|--localhost-only)
+      LOCAL_ONLY=true
+      LAN_ACCESS=false
       ;;
     --lan)
       LAN_ACCESS=true
@@ -77,8 +83,8 @@ if [ -n "$KIOSK_USER" ]; then
 fi
 
 if [ "$LAN_ACCESS" = true ]; then
-  echo -e "${YELLOW}[LAN] Exposing the panel on the local network (${HOST_ADDR:-0.0.0.0}:$PANEL_PORT)."
-  echo -e "      Other devices on the same network will be able to reach it.${NC}\n"
+  echo -e "${YELLOW}[LAN] The panel will be reachable on your local network so you can scan the QR and start from your phone."
+  echo -e "      Keep it local-only with --local.${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)
@@ -262,7 +268,7 @@ else
     $SUDO cp "$APP_DIR/.env.example" "$APP_DIR/.env" 2>/dev/null || true
   fi
 
-  # Optional: expose the panel on the local network (opt-in via --lan/--host).
+  # Expose the panel on the local network (default; keep local with --local).
   # Binds all interfaces and whitelists the LAN origin so the terminal WebSocket
   # accepts connections from other devices (phones) on the same network.
   if [ "$LAN_ACCESS" = true ] && $SUDO test -f "$APP_DIR/.env"; then
@@ -274,6 +280,7 @@ else
     fi
     LAN_IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"
     if [ -n "$LAN_IP_ADDR" ]; then
+      LAN_EXPOSED=true
       LAN_ORIGIN="http://$LAN_IP_ADDR:$PANEL_PORT"
       CURRENT_ORIGINS="$($SUDO grep '^ALLOWED_ORIGINS=' "$APP_DIR/.env" | head -n1 | cut -d= -f2- || true)"
       case ",$CURRENT_ORIGINS," in
@@ -479,14 +486,16 @@ else
     TS_DNS=$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write((j.Self&&j.Self.DNSName)||"")}catch(e){}})' 2>/dev/null)
     [ -n "$TS_DNS" ] && ACCESS_URL="https://${TS_DNS%.}"
   fi
-  if [ -z "$ACCESS_URL" ] && command -v hostname >/dev/null 2>&1; then
+  if [ -z "$ACCESS_URL" ] && [ "$LAN_EXPOSED" = true ] && command -v hostname >/dev/null 2>&1; then
     LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-    [ -n "$LAN_IP" ] && ACCESS_URL="http://${LAN_IP}:3000"
+    [ -n "$LAN_IP" ] && ACCESS_URL="http://${LAN_IP}:$PANEL_PORT"
   fi
-  [ -z "$ACCESS_URL" ] && ACCESS_URL="http://127.0.0.1:3000"
+  [ -z "$ACCESS_URL" ] && ACCESS_URL="http://127.0.0.1:$PANEL_PORT"
 
-  echo "  Local Access Panel:    http://127.0.0.1:3000"
-  echo "  Phone / Remote Access: $ACCESS_URL"
+  echo "  Panel (this machine):  http://127.0.0.1:$PANEL_PORT"
+  if [ "$LAN_EXPOSED" = true ]; then
+    echo "  Panel (your network):  $ACCESS_URL"
+  fi
   echo "  Data Directory:        $DATA_DIR"
   echo "  Projects Directory:    $PROJECTS_DIR"
   echo "  Diagnostics:           node $APP_DIR/scripts/doctor.js"
@@ -499,27 +508,20 @@ else
   if [ -n "$KIOSK_USER" ]; then
     echo "  Kiosk Display:         enabled for '$KIOSK_USER' (reboot to show the panel)"
   fi
-  echo ""
-  echo "  Mandatory First Step:"
-  echo "  Open http://127.0.0.1:3000 in your browser to set up your"
-  echo "  initial administrator account and start working."
   echo "=================================================================="
 
-  # Show a scannable QR code so a phone can open the panel (install qrencode
-  # best-effort if missing).
-  if ! command -v qrencode >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qrencode >/dev/null 2>&1 || true
-  fi
+  # Scan-to-start: a QR for the phone, rendered locally (no CDNs / no extra deps).
   echo ""
-  if command -v qrencode >/dev/null 2>&1; then
-    echo -e "${BLUE}  Scan to open the panel on your phone:${NC}"
-    echo ""
+  echo -e "${BLUE}  Scan with your phone to start:${NC}"
+  echo ""
+  if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
+    (cd "$APP_DIR" && node scripts/print-qr.js "$ACCESS_URL") || true
+  elif command -v qrencode >/dev/null 2>&1; then
     qrencode -t ANSIUTF8 -m 2 "$ACCESS_URL" || true
-    echo ""
-  else
-    echo "  Open this URL on your phone: $ACCESS_URL"
   fi
-  echo "  Tip: from any network without a domain, use Tailscale—see the panel's"
-  echo "  \"Connect from your phone\" card (System view)."
+  echo "  $ACCESS_URL"
+  echo ""
+  echo "  Open it and create your administrator account to finish setup."
+  echo "  Optional full-screen kiosk on this machine:  citadel kiosk"
   echo "=================================================================="
 fi
