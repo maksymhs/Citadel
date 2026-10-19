@@ -2621,7 +2621,8 @@
         <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
           Scan the QR shown in <strong>Settings → Connection</strong> on the other Citadel,
           or paste its pairing link. Both machines end up paired, so either one can switch
-          to the other.
+          to the other. Codes created in Settings also merge the credential vault in both
+          directions, so tokens and env vars do not need to be entered twice (HTTPS only).
         </p>
         <div class="form-group">
           <label class="form-label">Pairing link or code</label>
@@ -2661,7 +2662,11 @@
         await loadHosts();
         await refreshHostStatus(true);
         renderSidebarNav();
-        showToast(`Paired with ${res.host.name}.`, 'success');
+        const sync = res.secrets;
+        const syncNote = sync && sync.ok
+          ? ` Credentials synced: ${sync.imported || 0} received, ${sync.remoteImported || 0} sent.`
+          : (sync && sync.error ? ` Credential sync skipped: ${sync.error}` : '');
+        showToast(`Paired with ${res.host.name}.${syncNote}`, sync && sync.error ? 'info' : 'success');
         document.getElementById('modal-close-btn')?.click();
         if (res.host && res.host.id) switchHost(res.host.id);
       } catch (err) {
@@ -4263,7 +4268,8 @@
               <h3 style="font-size:16px;font-weight:600;">Machines</h3>
               <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
                 Pair another Citadel to reach it from this panel. Pairing is bidirectional and survives
-                address changes (including rotating Cloudflare tunnel URLs).
+                address changes (including rotating Cloudflare tunnel URLs). A code created here also
+                merges the encrypted credential vault in both directions over HTTPS.
               </p>
               <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">
                 Pairing is managed by <strong>${escapeHtml(panelHost)}</strong> (the panel you are connected to)
@@ -4288,6 +4294,7 @@
                   <div style="display:flex;gap:6px;flex-shrink:0;">
                     ${state.activeHostId === h.id ? '' : `<button class="btn btn-secondary btn-sm" data-use-host="${h.id}">Use</button>`}
                     <button class="btn btn-secondary btn-sm" data-address-host="${h.id}" title="Set this machine's current address">Address</button>
+                    <button class="btn btn-secondary btn-sm" data-sync-host="${h.id}" title="Merge the credential vault with this machine">Sync credentials</button>
                     <button class="btn btn-secondary btn-sm" data-unpair-host="${h.id}">Unpair</button>
                   </div>
                 </div>`).join('')}
@@ -4447,6 +4454,25 @@
             showToast('Address updated.', 'success');
           } catch (err) {
             showToast(`Address update failed: ${err.message}`, 'error');
+          }
+        };
+      });
+
+      document.querySelectorAll('[data-sync-host]').forEach((btn) => {
+        btn.onclick = async () => {
+          const id = btn.getAttribute('data-sync-host');
+          const host = state.hosts.find((h) => h.id === id) || {};
+          if (!window.confirm(`Merge the credential vault with ${host.name || 'this machine'}? Newest entries win; deletions are not propagated.`)) return;
+          btn.disabled = true;
+          btn.textContent = 'Syncing…';
+          try {
+            const result = await localApi(`/api/hosts/${id}/sync-secrets`, { method: 'POST' });
+            await renderSettingsView();
+            showToast(`Credentials synced: ${result.imported || 0} received, ${result.remoteImported || 0} sent.`, 'success');
+          } catch (err) {
+            btn.disabled = false;
+            btn.textContent = 'Sync credentials';
+            showToast(`Credential sync failed: ${err.message}`, 'error');
           }
         };
       });

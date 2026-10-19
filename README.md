@@ -275,6 +275,10 @@ Pairing stores a stable instance id and **every candidate address** the host rep
 
 Peer credentials are separate per direction: the inbound token is stored only as a SHA-256 hash, the outbound token is encrypted at rest with the existing vault key, and neither is ever exposed to the browser. Pairing links carry the secret in the URL fragment (`#pair=…`), so it is not sent to the server or written to proxy logs.
 
+### Credentials follow the pairing
+
+A pairing code created in **Settings → Connection** (the startup/installer QR does not, as it has no administrator attached) also merges the encrypted credential vault in both directions: environment variables, GitHub/GitLab tokens and the other vault entries (SSH keys, files). The merge runs server-to-server with the paired peer token, so values never reach the browser. The newest `updated_at` wins, equal values are skipped, and deletions stay local. For safety it only runs over HTTPS (or loopback); pairing over a plain-HTTP LAN address still succeeds but skips the merge. Use **Settings → Machines → Sync credentials** to merge again after adding or rotating a token.
+
 ### Global URL with a Cloudflare Quick Tunnel (no account, no domain)
 
 To reach the panel from **any network with a single command**, start a Cloudflare Quick Tunnel:

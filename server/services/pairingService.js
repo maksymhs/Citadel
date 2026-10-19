@@ -15,6 +15,7 @@
  * has an independent token that can be revoked separately.
  */
 const hostService = require('./hostService');
+const secretSyncService = require('./secretSyncService');
 
 const ACCEPT_TIMEOUT_MS = 12000;
 
@@ -125,7 +126,21 @@ async function redeemPairing(code) {
       // Best-effort: exchange fresh addresses right away so both sides can
       // follow an address rotation without waiting for the periodic announce.
       hostService.announceToPeers().catch(() => {});
-      return { host, peer };
+
+      // Invitations created from an authenticated Settings screen mean both
+      // machines belong to the same operator, so merge the credential vault in
+      // both directions. The startup/installer QR has no user attached and
+      // deliberately does not auto-share secrets; use "Sync credentials" there.
+      let secrets = null;
+      if (res.data && res.data.invitedBy) {
+        try {
+          secrets = await secretSyncService.syncWithHost(host.id);
+        } catch (err) {
+          secrets = { ok: false, error: err.message };
+        }
+      }
+
+      return { host, peer, secrets };
     } catch (err) {
       if (/expired|already used|not valid|itself|same host/i.test(err.message)) throw err;
       lastError = err;

@@ -118,6 +118,33 @@ function removeSecret(name) {
 }
 
 /**
+ * Decrypted copy of the vault for pairing/sync. Callers must treat the result
+ * as secret material: never log it, render it, or send it over plain HTTP.
+ * Undecryptable entries are skipped instead of breaking the whole export.
+ */
+function exportSecrets() {
+  const db = getDatabase();
+  const rows = db.prepare(
+    'SELECT name, kind, metadata, value_encrypted, updated_at FROM secrets ORDER BY kind, name'
+  ).all();
+  const out = [];
+  for (const row of rows) {
+    try {
+      out.push({
+        name: row.name,
+        kind: row.kind,
+        metadata: parseMetadata(row.metadata),
+        value: decrypt(row.value_encrypted),
+        updated_at: row.updated_at,
+      });
+    } catch {
+      // Rotated key or corrupt row: skip it rather than failing the export.
+    }
+  }
+  return out;
+}
+
+/**
  * Environment variables an agent/terminal should receive: every `env` and `git`
  * entry, keyed by its (valid) variable name. Undecryptable entries are skipped
  * rather than failing the whole spawn.
@@ -143,5 +170,6 @@ module.exports = {
   getValue,
   setSecret,
   removeSecret,
+  exportSecrets,
   envVars,
 };

@@ -91,6 +91,18 @@ function isLoopbackUrl(value) {
   }
 }
 
+/**
+ * Addresses that can carry secret material. HTTPS is required everywhere;
+ * loopback is allowed for two local instances and tests.
+ */
+function isSecurePeerUrl(value) {
+  try {
+    return new URL(value).protocol === 'https:' || isLoopbackUrl(value);
+  } catch {
+    return false;
+  }
+}
+
 function getIdentity() {
   const now = Date.now();
   if (identityCache && now - identityAt < IDENTITY_TTL_MS) return { ...identityCache, urls: identityCache.urls.slice() };
@@ -525,6 +537,7 @@ function fetchJson(url, { method = 'GET', token, body, timeout = REQUEST_TIMEOUT
 /**
  * Call a paired host, trying every candidate URL until one answers. Updates the
  * row with the address that worked so future calls skip dead candidates.
+ * `secureOnly` restricts the attempt to HTTPS/loopback, for secret transfers.
  */
 async function requestHost(hostId, apiPath, {
   method = 'GET',
@@ -532,6 +545,7 @@ async function requestHost(hostId, apiPath, {
   timeout = REQUEST_TIMEOUT_MS,
   maxCandidates = Infinity,
   deadlineMs = 0,
+  secureOnly = false,
 } = {}) {
   const row = getHostRow(hostId);
   if (!row) throw new Error('Host not found.');
@@ -541,8 +555,14 @@ async function requestHost(hostId, apiPath, {
   const clean = String(apiPath || '');
   if (!clean.startsWith('/api/')) throw new Error('Only /api paths can be forwarded.');
 
-  const candidates = candidateUrls(row).slice(0, maxCandidates);
-  if (candidates.length === 0) throw new Error('The host has no known address.');
+  const candidates = candidateUrls(row)
+    .filter((url) => !secureOnly || isSecurePeerUrl(url))
+    .slice(0, maxCandidates);
+  if (candidates.length === 0) {
+    throw new Error(secureOnly
+      ? 'No HTTPS address is available for this host. Credentials are never sent over plain HTTP.'
+      : 'The host has no known address.');
+  }
 
   const startedAt = Date.now();
   let lastError = null;
@@ -563,7 +583,7 @@ async function requestHost(hostId, apiPath, {
       }
       absorbIdentityHeaders(hostId, res.headers, { observedUrl: base });
       markHostSeen(hostId, base);
-      return res;
+      return { ...res, baseUrl: base };
     } catch (err) {
       lastError = err;
     }

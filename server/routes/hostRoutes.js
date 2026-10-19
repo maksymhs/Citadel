@@ -8,6 +8,7 @@
 const { requireSessionAuth, requirePeerAuth } = require('../security/auth');
 const hostService = require('../services/hostService');
 const pairingService = require('../services/pairingService');
+const secretSyncService = require('../services/secretSyncService');
 const auditService = require('../services/auditService');
 
 function requireAdmin(request, reply, done) {
@@ -101,6 +102,26 @@ async function hostRoutes(fastify) {
     }
   });
 
+  // Re-merge the credential vault with a paired machine. Pairing from Settings
+  // does this automatically; this endpoint lets the operator re-run it after
+  // adding or rotating a token.
+  fastify.post('/api/hosts/:id/sync-secrets', {
+    preHandler: [requireSessionAuth, requireAdmin],
+  }, async (request, reply) => {
+    const row = hostService.getHostRow(request.params.id);
+    if (!row) return reply.status(404).send({ error: 'Host not found.' });
+    try {
+      const result = await secretSyncService.syncWithHost(row.id);
+      audit(request, 'host_secrets_synced', row.id, {
+        imported: result.imported,
+        remoteImported: result.remoteImported,
+      });
+      return result;
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+
   // --- Pairing ------------------------------------------------------------
 
   // Create a single-use invitation (QR + link) to show on this machine.
@@ -183,6 +204,37 @@ async function hostRoutes(fastify) {
     hostService.revokeInboundTokens(row.id);
     hostService.deleteHost(row.id);
     return { success: true };
+  });
+
+  // Bidirectional credential-vault merge. The caller sends its secrets; we
+  // import them (newest timestamp wins) and return ours so both sides converge
+  // in one round trip. Values never reach the browser: only paired peer tokens
+  // can call this, and the response is marked no-store.
+  fastify.post('/api/host/peers/secrets/sync', {
+    preHandler: requirePeerAuth,
+    bodyLimit: 8 * 1024 * 1024,
+  }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    try {
+      const result = secretSyncService.importSecrets(request.body ? request.body.secrets : []);
+      const secrets = secretSyncService.exportLocal();
+      auditService.logAction({
+        userId: request.user.id,
+        action: 'peer_secrets_synced',
+        targetType: 'host',
+        targetId: request.user.peerHostId,
+        details: {
+          imported: result.imported,
+          skipped: result.skipped,
+          invalid: result.invalid,
+          exported: secrets.length,
+        },
+        ip: request.ip,
+      });
+      return { ...result, secrets };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
   });
 }
 
