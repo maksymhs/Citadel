@@ -1248,3 +1248,46 @@ README/.env.example/architecture. No commits/pushes/deploys.
   larger tap targets on phones. List mode keeps Wunderbaum's native mouse /
   keyboard / touch handling.
 - Asset cache-buster token moved to `v0280` (bumped in the release commit).
+
+## 72. Paired machines: bidirectional pairing + single-URL host switching (v0.29.0)
+- **Feature.** A machine selector at the top of the sidebar switches between
+  paired Citadel instances without changing the browser URL. The local server
+  proxies API calls (`/api/remote/:hostId/*`) and terminal WebSockets
+  (`/ws/remote/:hostId/terminal/:sessionId`) to the selected peer, so projects,
+  files, terminals and settings follow the switch. Settings moved into
+  *Platform* below Files; the legacy *Fleet* module stays local.
+- **Stable association.** Identity is `instance.id` (UUID) plus `instance.name`
+  in `app_config`, independent of any URL. `fleet_hosts` stores `instance_id`,
+  a JSON list of candidate `urls`, `paired_at` and `last_seen`; a partial unique
+  index prevents duplicate instances. Migration `007_peer_pairing`, mirrored in
+  the fresh-install schema.
+- **Handshake.** A creates a single-use invite (TTL 10 min) whose secret travels
+  in the URL fragment (`#pair=...`), generates `tokenA`, and calls B's
+  `/api/pair/accept`; B stores A and returns `tokenB`. Both sides end up paired
+  with independent per-direction tokens. Re-pairing is idempotent by instance id.
+- **Token storage.** Inbound tokens live only as SHA-256 hashes in
+  `peer_tokens`; outbound tokens are AES-256-GCM encrypted in
+  `fleet_hosts.token_encrypted`. Neither is sent to the browser. `requireAuth`
+  accepts peer tokens for proxied panel APIs; local management (pairing, host
+  list, Fleet) requires a real session. Tokens are bound to one host row, so an
+  announce/revoke cannot spoof another instance.
+- **Cloudflare Quick Tunnel rotation.** Both sides announce on boot (5 s) and
+  every 5 min. Every API response and peer/WebSocket request advertises
+  `X-Citadel-Instance/Name/Urls`; the receiver repairs the stored row from any
+  successful call, keeping the address that actually worked as primary and
+  dropping loopback candidates. If both ephemeral URLs rotate while offline,
+  Settings → Machines exposes an **Address** repair action
+  (`PUT /api/hosts/:id/address`); one reachable address is enough because the
+  next call heals the other direction. README documents that a stable address
+  (Tailscale, named tunnel, `CITADEL_PUBLIC_URL`) makes recovery fully automatic.
+- **Startup safety.** A persisted remote selection is probed with
+  `GET /api/hosts/status?id=...`; if offline the panel falls back to local
+  instead of rendering views that proxy to a dead host. Switching also reverts
+  if the host dies mid-switch.
+- **Tests.** `tests/pairing.test.js` (10) and `tests/remote-proxy.test.js` (10)
+  cover identity stability, single-use invites, cross-direction tokens,
+  announce/revoke scoping, manual address repair, HTTP/WS proxying, downloads,
+  local-only route blocking and header-based healing.
+- Final: `npm test` → **353 tests, 351 pass** (only the pre-existing,
+  environment-dependent tmux copy-mode test fails).
+- Version bumped to `0.29.0`; asset cache-buster token moved to `v0290`.
