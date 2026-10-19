@@ -161,7 +161,15 @@ async function hostRoutes(fastify) {
         details: { instanceId: result.host.instanceId, name: result.host.name },
         ip: request.ip,
       });
-      return { host: result.host, token: result.token, peer: result.peer };
+      // The scanner may auto-merge the credential vault, but only when the
+      // invite came from an authenticated Settings screen. Do not leak the
+      // inviting user id; a boolean is all the peer needs.
+      return {
+        host: result.host,
+        token: result.token,
+        peer: result.peer,
+        autoSync: Boolean(result.invitedBy),
+      };
     } catch (err) {
       return reply.status(400).send({ error: err.message });
     }

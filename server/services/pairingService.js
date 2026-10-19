@@ -132,7 +132,7 @@ async function redeemPairing(code) {
       // both directions. The startup/installer QR has no user attached and
       // deliberately does not auto-share secrets; use "Sync credentials" there.
       let secrets = null;
-      if (res.data && res.data.invitedBy) {
+      if (res.data && res.data.autoSync) {
         try {
           secrets = await secretSyncService.syncWithHost(host.id);
         } catch (err) {

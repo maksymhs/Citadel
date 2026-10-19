@@ -1347,7 +1347,7 @@ README/.env.example/architecture. No commits/pushes/deploys.
   `POST /api/hosts/:id/sync-secrets` (session + admin, audit
   `host_secrets_synced`) lets the operator re-run it after rotating a token.
 - **When.** Invites created in **Settings → Connection** merge automatically
-  after redeem (`invitedBy` set). The startup/installer QR has no associated
+  after redeem (`autoSync` set by the accepting host). The startup/installer QR has no associated
   admin (`userId: null`) and intentionally does **not** share secrets. Existing
   pairings converge via the new **Sync credentials** action on the Machines card.
 - **Transport.** `hostService.requestHost` gained a `secureOnly` filter with

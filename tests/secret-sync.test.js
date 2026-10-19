@@ -187,4 +187,131 @@ describe('Credential vault sync', () => {
     assert.ok(seenBody.secrets.some((s) => s.name === 'LOCAL_PUSH'));
     assert.equal(secretStore.getValue('REMOTE_TOKEN'), 'remote-secret');
   });
+
+  test('redeem auto-merges the vault when the invite came from Settings', async (t) => {
+    let syncCalls = 0;
+    let seenAccept = null;
+    let upstreamUrl = null;
+    const upstream = http.createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/pair/accept') {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+          seenAccept = JSON.parse(body);
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({
+            token: 'a'.repeat(64),
+            peer: {
+              instanceId: 'instance-auto-sync',
+              name: 'auto-sync-peer',
+              url: upstreamUrl,
+              urls: [upstreamUrl],
+            },
+            autoSync: true,
+          }));
+        });
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/api/host/peers/secrets/sync') {
+        syncCalls += 1;
+        req.resume();
+        req.on('end', () => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({
+            imported: 0,
+            skipped: 0,
+            invalid: 0,
+            secrets: [{
+              name: 'AUTO_FROM_PEER',
+              value: 'peer-value',
+              kind: 'env',
+              metadata: null,
+              updated_at: new Date().toISOString(),
+            }],
+          }));
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    const port = await listen(upstream);
+    upstreamUrl = `http://127.0.0.1:${port}`;
+    t.after(() => new Promise((resolve) => upstream.close(resolve)));
+
+    const payload = {
+      v: 1,
+      instanceId: 'instance-auto-sync',
+      name: 'auto-sync-peer',
+      url: upstreamUrl,
+      urls: [upstreamUrl],
+      inviteId: 'invite-auto-sync',
+      secret: 'secret-auto-sync',
+    };
+    const code = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/pair/redeem',
+      headers: { cookie },
+      payload: { code },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.equal(seenAccept.inviteId, 'invite-auto-sync');
+    assert.equal(body.secrets.ok, true);
+    assert.equal(syncCalls, 1);
+    assert.equal(secretStore.getValue('AUTO_FROM_PEER'), 'peer-value');
+  });
+
+  test('redeem skips auto-merge when the invite has no owner', async (t) => {
+    let syncCalls = 0;
+    let upstreamUrl = null;
+    const upstream = http.createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/pair/accept') {
+        req.resume();
+        req.on('end', () => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({
+            token: 'a'.repeat(64),
+            peer: {
+              instanceId: 'instance-installer-sync',
+              name: 'installer-peer',
+              url: upstreamUrl,
+              urls: [upstreamUrl],
+            },
+            autoSync: false,
+          }));
+        });
+        return;
+      }
+      if (req.url === '/api/host/peers/secrets/sync') syncCalls += 1;
+      res.writeHead(404);
+      res.end();
+    });
+    const port = await listen(upstream);
+    upstreamUrl = `http://127.0.0.1:${port}`;
+    t.after(() => new Promise((resolve) => upstream.close(resolve)));
+
+    const payload = {
+      v: 1,
+      instanceId: 'instance-installer-sync',
+      name: 'installer-peer',
+      url: upstreamUrl,
+      urls: [upstreamUrl],
+      inviteId: 'invite-installer-sync',
+      secret: 'secret-installer-sync',
+    };
+    const code = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/pair/redeem',
+      headers: { cookie },
+      payload: { code },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.payload).secrets, null);
+    assert.equal(syncCalls, 0);
+  });
 });
