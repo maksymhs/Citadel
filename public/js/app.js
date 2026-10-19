@@ -1930,15 +1930,29 @@
   // files open in the editor. Node actions live in a right-click context menu.
   let filesTree = null;
 
+  // Wunderbaum's default expander icons come from Bootstrap Icons, which this
+  // panel does not ship, so we map them to our own CSS chevrons (see app.css).
+  // File/folder glyphs are inlined as SVG so they inherit the row colour.
+  const FILES_ICON_MAP = {
+    loading: 'wb-exp wb-exp-closed',
+    expanderExpanded: 'wb-exp wb-exp-open',
+    expanderCollapsed: 'wb-exp wb-exp-closed',
+    expanderLazy: 'wb-exp wb-exp-closed',
+  };
+  const FILES_FOLDER_ICON = '<svg class="wb-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+  const FILES_FILE_ICON = '<svg class="wb-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/></svg>';
+
   function filesNodeData(item) {
     const isDir = item.type === 'dir' || item.type === 'symlink-dir';
     return {
       key: item.path,
       title: item.name,
-      folder: isDir,
+      // Custom fields must sit at the top level: Wunderbaum stores every
+      // unknown property on `node.data` (it does not unwrap a nested `data`).
+      path: item.path,
+      kind: isDir ? 'dir' : 'file',
       lazy: isDir,
-      icon: false,
-      data: { path: item.path, type: isDir ? 'dir' : 'file' },
+      icon: isDir ? FILES_FOLDER_ICON : FILES_FILE_ICON,
     };
   }
 
@@ -1948,9 +1962,9 @@
   }
 
   function filesMenuItems(node) {
-    const { path: nodePath, type } = node.data;
+    const { path: nodePath, kind } = node.data;
     const items = [];
-    if (type === 'dir') {
+    if (kind === 'dir') {
       items.push({ label: 'New file', onSelect: () => promptNewEntry('file', nodePath) });
       items.push({ label: 'New folder', onSelect: () => promptNewEntry('dir', nodePath) });
     } else {
@@ -1997,20 +2011,25 @@
     filesTree = new mar10.Wunderbaum({
       id: 'files-tree',
       element: treeEl,
-      icon: false,
+      iconMap: FILES_ICON_MAP,
       autoCollapse: false,
+      // Taller, touch-friendly rows on small screens.
+      rowHeightPx: window.matchMedia('(max-width: 768px), (hover: none) and (pointer: coarse)').matches ? 34 : 26,
       source: rootListing.items.map(filesNodeData),
+      // In Wunderbaum 0.14 the `lazyLoad` handler must *return* the child list
+      // (calling addChildren here would leave the node in a broken state).
       lazyLoad: async (e) => {
         try {
           const listing = (await api(`/api/files?path=${encodeURIComponent(e.node.data.path)}`)).listing;
-          e.node.addChildren(listing.items.map(filesNodeData));
+          return listing.items.map(filesNodeData);
         } catch (err) {
           showToast(err.message, 'error');
+          return false;
         }
       },
       activate: (e) => {
-        const { path: nodePath, type } = e.node.data;
-        if (type === 'dir') {
+        const { path: nodePath, kind } = e.node.data;
+        if (kind === 'dir') {
           state.filesPath = nodePath;
           e.node.setExpanded(!e.node.isExpanded());
         } else {

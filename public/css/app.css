@@ -1301,25 +1301,103 @@ html.is-mobile-ui .data-table tr:hover td {
 
 /* --- File Explorer --- */
 .files-card {
-  padding: 10px 14px;
+  padding: 8px 10px;
 }
 
+/* Wunderbaum ships a light, Bootstrap-flavoured theme. Remap its custom
+   properties to the panel palette so the tree blends into dark mode. */
 .files-tree {
+  --wb-font-stack: var(--font-sans);
+  --wb-node-text-color: var(--text-primary);
+  --wb-border-color: transparent;
+  --wb-bg-highlight-color: var(--accent-color);
+  --wb-header-color: var(--bg-tertiary);
+  --wb-background-color: transparent;
+  --wb-alternate-row-color: transparent;
+  --wb-alternate-row-color-hover: var(--bg-tertiary);
+  --wb-focus-border-color: var(--accent-color);
+  --wb-dim-color: var(--text-muted);
+  --wb-error-color: var(--danger-color);
+  --wb-error-background-color: var(--danger-bg);
+  --wb-hover-color: rgba(255, 255, 255, 0.05);
+  --wb-hover-border-color: transparent;
+  --wb-grid-color: var(--border-muted);
+  --wb-active-color: var(--accent-bg);
+  --wb-active-cell-color: var(--accent-bg);
+  --wb-active-border-color: transparent;
+  --wb-active-hover-color: var(--accent-bg);
+  --wb-active-hover-border-color: transparent;
+  --wb-active-color-grayscale: var(--bg-tertiary);
+  --wb-active-border-color-grayscale: transparent;
+  --wb-active-hover-color-grayscale: var(--bg-tertiary);
+  --wb-active-cell-color-grayscale: var(--accent-bg);
+  --wb-grid-color-grayscale: var(--border-muted);
+  --wb-filter-dim-color: var(--text-muted);
+  --wb-filter-submatch-color: var(--text-secondary);
+
   font-size: 13px;
+  height: 68vh;
   min-height: 240px;
 }
 
+.files-tree div.wunderbaum {
+  height: 100%;
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: auto;
+}
+
 .files-tree .wb-row {
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 .files-tree .wb-title {
   color: var(--text-primary);
 }
 
-.files-tree .wb-active,
 .files-tree .wb-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.files-tree .wb-row.wb-active,
+.files-tree .wb-row.wb-selected {
   background: var(--accent-bg);
+}
+
+.files-tree .wb-row.wb-active .wb-title,
+.files-tree .wb-row.wb-selected .wb-title {
+  color: var(--accent-hover);
+}
+
+.files-tree .wb-glyph {
+  width: 15px;
+  height: 15px;
+  opacity: 0.85;
+}
+
+/* Expander chevrons: a mask lets the glyph adopt the row's text colour. */
+.files-tree .wb-exp {
+  background-color: var(--text-muted);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 12px 12px;
+  mask-size: 12px 12px;
+  transition: background-color 0.15s ease;
+}
+.files-tree .wb-exp-closed {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='black' d='M5.5 3.5 10 8l-4.5 4.5z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='black' d='M5.5 3.5 10 8l-4.5 4.5z'/%3E%3C/svg%3E");
+}
+.files-tree .wb-exp-open {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='black' d='M3.5 5.5 8 10l4.5-4.5z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='black' d='M3.5 5.5 8 10l4.5-4.5z'/%3E%3C/svg%3E");
+}
+.files-tree .wb-row:hover .wb-exp,
+.files-tree .wb-row.wb-active .wb-exp {
+  background-color: var(--accent-color);
 }
 
 .file-editor-meta {
@@ -1348,13 +1426,6 @@ html.is-mobile-ui .data-table tr:hover td {
 
 .file-editor.preview {
   margin: 0;
-}
-
-/* File tree on mobile: larger tap targets. */
-@media (max-width: 768px), (hover: none) and (pointer: coarse) {
-  .files-tree .wb-row {
-    min-height: 34px;
-  }
 }
 
 /* --- Connect from your phone (QR) --- */
