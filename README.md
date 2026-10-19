@@ -57,6 +57,7 @@ That command installs the service **local-only and unprivileged by default**. Ev
 | `--tunnel` | Public Cloudflare Quick Tunnel URL |
 | `--admin-terminal[=user]` | Root-capable System Terminal (privileged) |
 | `--enable-updater` | Root-owned in-panel updater |
+| `--24-7` (or `--keep-awake`) | Laptop mode: ignore lid close and block suspend/hibernate |
 
 The panel listens on `127.0.0.1` unless you pass `--lan`/`--host`, and nothing privileged is enabled until a flag asks for it. **Until you create the administrator account, whoever reaches the panel first can claim it** — so prefer the local QR flow, set up the admin, and only then add a tunnel if you need one.
 
@@ -117,9 +118,22 @@ citadel logs       # follow the service logs
 citadel restart    # restart the service
 citadel update     # update to the latest version
 citadel tunnel     # global URL via a Cloudflare Quick Tunnel
+citadel power      # show lid-close/sleep state (laptop hosts)
+citadel power on   # 24/7 mode: ignore lid close, block suspend/hibernate
+citadel power off  # restore the system sleep defaults
 ```
 
-`citadel update` and `citadel tunnel` need root and re-invoke `sudo` automatically.
+`citadel update`, `citadel tunnel` and `citadel power on|off` need root and re-invoke `sudo` automatically.
+
+### Laptop server / always-on mode
+
+When Citadel runs on a laptop, closing the lid normally suspends the machine and takes the panel, terminals and agents offline. Install with `--24-7` (or run `sudo citadel power on` later) to:
+
+- make **systemd-logind ignore the lid switch** (on battery, AC and docked);
+- mask the **sleep, suspend, hibernate and hybrid-sleep** targets so nothing else can suspend the host;
+- set `IdleAction=ignore`.
+
+The change survives reboots. `sudo citadel power off` removes the Citadel drop-in and unmasks only the targets Citadel masked, restoring the previous power policy. The live camera pairing and all web features keep working while the lid is closed; the display itself may still turn off depending on your desktop environment.
 
 ### Privileged System Terminal (opt-in)
 
@@ -243,14 +257,18 @@ The **Files** view browses the host filesystem: navigate directories, read and e
 
 ### Access from your phone (no domain needed)
 
-The installer prints a scannable QR code pointing at the panel, and **Settings → Connection** has the same code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise an active **Cloudflare Quick Tunnel**, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
+The installer prints one scannable QR code pointing at the panel, and **Settings → Connection** shows the same dual-purpose code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise an active **Cloudflare Quick Tunnel**, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
+
+The same code does both jobs: scanning it with any camera app opens the panel, while scanning it from another Citadel's **Pair a machine** screen pairs the two hosts. **Settings → Connection** always shows a fresh single-use pairing code (it expires in 10 minutes); use **New code** to generate another one.
+
+> **Camera on a phone:** the live in-browser camera requires HTTPS (or `localhost`). When the panel is opened over plain HTTP, or in a browser without live QR support, pairing still works with **Take a photo of the QR** (native camera capture) or by pasting the link.
 
 ### Switching between paired machines
 
-The machine selector above the sidebar lists this host plus every paired machine with a live status dot. **Pair a machine…** shows a QR/link for the other side, or accepts a scanned/pasted code:
+The machine selector above the sidebar lists this host plus every paired machine with a live status dot. **Pair a machine…** accepts a scanned or pasted code:
 
-1. On machine A: sidebar → machine selector → **Pair a machine… → Show my QR**.
-2. On machine B (or from the phone, opening the link): scan the QR or paste the link and confirm.
+1. On machine A: open **Settings → Connection** to show the dual-purpose QR.
+2. On machine B: sidebar → machine selector → **Pair a machine…**, then scan the code (live camera or photo) or paste its link.
 3. Both sides store each other. Use the selector to jump between them; the browser URL never changes.
 
 Pairing stores a stable instance id and **every candidate address** the host reports. A Cloudflare Quick Tunnel URL changes on every restart, so paired hosts re-announce their current addresses right after boot and every five minutes; the proxy tries each candidate until one answers. If an address is stale, the next announcement repairs it — no re-pairing needed. Because every peer request and response carries the sender's identity and current addresses, a single successful call in either direction repairs both sides. The browser also caches addresses it has seen and syncs them back on load, which covers the case where only the panel's own tunnel rotated. Unpair from **Settings → Machines** (or the selector's **Manage machines…**), which also revokes the token on the remote side.

@@ -42,6 +42,7 @@ HOST_ADDR=""
 PANEL_PORT=3000
 UPDATE_MODE=false
 TUNNEL=true
+KEEP_AWAKE=false
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
@@ -85,6 +86,12 @@ for arg in "$@"; do
       ;;
     --no-tunnel)
       TUNNEL=false
+      ;;
+    --24-7|--keep-awake)
+      KEEP_AWAKE=true
+      ;;
+    --no-24-7|--no-keep-awake)
+      KEEP_AWAKE=false
       ;;
   esac
 done
@@ -130,6 +137,11 @@ if [ "$TUNNEL" = true ]; then
   echo -e "         (works from any network, no account needed). The URL is public and changes on"
   echo -e "         restart. Create your admin account immediately after install: until then, the"
   echo -e "         first visitor can claim the panel. Disable with --no-tunnel.${NC}\n"
+fi
+
+if [ "$KEEP_AWAKE" = true ]; then
+  echo -e "${YELLOW}[24/7] Ignoring lid close and blocking system sleep so Citadel keeps running"
+  echo -e "       when a laptop host is closed. Undo with: sudo citadel power off${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)
@@ -549,6 +561,17 @@ EOF
     echo "      Setting up a global Cloudflare Quick Tunnel..."
     $SUDO bash "$APP_DIR/scripts/tunnel.sh" up || echo -e "${YELLOW}      Tunnel setup skipped (see errors above).${NC}"
   fi
+
+  # Always-on mode for laptop hosts (opt-in): closing the lid must not suspend
+  # the machine and take Citadel/terminals/agents offline.
+  if [ "$KEEP_AWAKE" = true ]; then
+    if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/power.sh" ]; then
+      echo "      Enabling 24/7 mode (ignore lid close, block sleep)..."
+      $SUDO bash "$APP_DIR/scripts/power.sh" on || echo -e "${YELLOW}      24/7 mode could not be enabled (see errors above).${NC}"
+    else
+      echo -e "${YELLOW}      24/7 mode skipped (requires Linux + systemd + sudo).${NC}"
+    fi
+  fi
 fi
 
 # 9. Health check
@@ -630,16 +653,33 @@ else
   fi
   echo "=================================================================="
 
-  # Scan-to-start: a QR for the phone, rendered locally (no CDNs / no extra deps).
+  # Scan-to-start: one QR for both jobs. A normal camera opens the panel; the
+  # same code scanned from another Citadel's Pair screen pairs the two hosts.
+  # The server writes the current single-use invitation at startup; fall back to
+  # the plain URL when it is unavailable (for example in check-only mode).
+  QR_TEXT="$ACCESS_URL"
+  if [ -n "$DATA_DIR" ]; then
+    # The service writes the invitation just after it starts; give it a moment
+    # so the post-install banner can show the dual-purpose code.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      $SUDO test -f "$DATA_DIR/connect-qr" 2>/dev/null && break
+      sleep 0.3
+    done
+    if $SUDO test -f "$DATA_DIR/connect-qr" 2>/dev/null; then
+      INVITE_LINK="$($SUDO head -n1 "$DATA_DIR/connect-qr" 2>/dev/null || true)"
+      [ -n "$INVITE_LINK" ] && QR_TEXT="$INVITE_LINK"
+    fi
+  fi
   echo ""
-  echo -e "${BLUE}  Scan with your phone to start:${NC}"
+  echo -e "${BLUE}  Scan with your phone to open the panel:${NC}"
   echo ""
   if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
-    (cd "$APP_DIR" && node scripts/print-qr.js "$ACCESS_URL") || true
+    (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT") || true
   elif command -v qrencode >/dev/null 2>&1; then
-    qrencode -t ANSIUTF8 -m 2 "$ACCESS_URL" || true
+    qrencode -t ANSIUTF8 -m 2 "$QR_TEXT" || true
   fi
   echo "  $ACCESS_URL"
+  echo "  (The same code can be scanned from another Citadel's Pair screen.)"
   echo ""
   if [ "$TUNNEL" = true ] || [ "$LAN_EXPOSED" = true ]; then
     echo -e "${YELLOW}  IMPORTANT: this panel is reachable from outside this machine. Create your${NC}"

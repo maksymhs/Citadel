@@ -9,6 +9,7 @@ const pkg = require('../package.json');
 const {
   PORT,
   HOST,
+  DATA_DIR,
   SESSION_SECRET,
   NODE_ENV,
   APP_VERSION,
@@ -231,13 +232,29 @@ async function startServer() {
   try {
     await fastify.listen({ port: PORT, host: HOST });
 
-    // Print the panel URL and a scannable QR code on every start so the panel
-    // can be opened from a phone right after (re)starting the server.
+    // Print a dual-purpose QR code on every start: any camera app opens the
+    // panel, while another Citadel's Pair screen uses the same code to pair.
+    // The invitation is single-use and expires, so it is only a convenience;
+    // Settings always shows a fresh one.
     let connect = { url: `http://${HOST}:${PORT}`, source: 'localhost' };
     try {
       connect = connectService.getConnectInfo();
     } catch {
       // QR/URL detection is best-effort; fall back to the local address.
+    }
+
+    let qrText = connect.url;
+    let invite = null;
+    try {
+      invite = hostService.createInvite({ userId: null });
+      qrText = invite.link;
+      // The installer banner runs right after the service starts. Handing it
+      // the same invitation makes the post-install QR dual-purpose too.
+      fs.writeFileSync(path.join(DATA_DIR, 'connect-qr'), `${qrText}\n`, { mode: 0o600 });
+    } catch {
+      // No invitation (for example before the first setup) is not fatal, but do
+      // not leave a stale code behind for the installer banner to reuse.
+      try { fs.rmSync(path.join(DATA_DIR, 'connect-qr'), { force: true }); } catch { /* ignore */ }
     }
 
     console.log(`
@@ -251,8 +268,10 @@ async function startServer() {
 ==================================================================`);
 
     try {
-      console.log(connectService.qrAnsi(connect.url));
-      console.log('  Scan to open the panel.');
+      console.log(connectService.qrAnsi(qrText));
+      console.log(invite
+        ? '  Scan with any camera to open the panel, or from another Citadel\'s Pair screen to pair.'
+        : '  Scan to open the panel.');
     } catch {
       // If QR rendering fails, it is not a fatal condition.
     }

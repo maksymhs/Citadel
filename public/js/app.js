@@ -2610,43 +2610,34 @@
   }
 
   // --- Pairing UI -----------------------------------------------------------
-  // Shows this machine's invite QR/link and accepts a scanned or pasted code.
-  // The payload travels in the URL fragment so it is never sent in a request
-  // line or logged by a reverse proxy.
+  // The other machine's QR lives in Settings → Connection. This modal only
+  // reads it: the payload travels in the URL fragment so it is never sent in a
+  // request line or logged by a reverse proxy.
   function showPairModal(initialCode = null) {
     const identity = state.hostIdentity || {};
     openModal({
       title: 'Pair a machine',
       bodyHtml: `
-        <div class="segmented" role="tablist" style="margin-bottom:14px;">
-          <button class="seg-btn active" data-pair-tab="scan" role="tab">Scan / paste</button>
-          <button class="seg-btn" data-pair-tab="invite" role="tab">Show my QR</button>
+        <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
+          Scan the QR shown in <strong>Settings → Connection</strong> on the other Citadel,
+          or paste its pairing link. Both machines end up paired, so either one can switch
+          to the other.
+        </p>
+        <div class="form-group">
+          <label class="form-label">Pairing link or code</label>
+          <input class="form-input" id="pair-code" autocomplete="off" placeholder="https://host/#pair=…" value="${escapeHtml(initialCode || '')}" />
         </div>
-
-        <div data-pair-panel="scan">
-          <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
-            Scan the QR code shown by the other Citadel with your phone, or paste its pairing link.
-            Both machines end up paired, so either one can switch to the other.
-          </p>
-          <div class="form-group">
-            <label class="form-label">Pairing link or code</label>
-            <input class="form-input" id="pair-code" autocomplete="off" placeholder="https://host/#pair=…" value="${escapeHtml(initialCode || '')}" />
-          </div>
-          <button class="btn btn-primary btn-sm" id="pair-redeem-btn">Pair this machine</button>
-          <div id="pair-scan-area" style="margin-top:14px;display:none;">
-            <video id="pair-scan-video" playsinline muted style="width:100%;border-radius:8px;background:#000;"></video>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Point the camera at the other machine's QR code.</div>
-          </div>
-          <button class="btn btn-secondary btn-sm" id="pair-scan-btn" style="margin-top:12px;">Use camera</button>
-          <div id="pair-error" style="color:var(--danger-color);font-size:12px;margin-top:8px;"></div>
+        <button class="btn btn-primary btn-sm" id="pair-redeem-btn">Pair this machine</button>
+        <div id="pair-scan-area" style="margin-top:14px;display:none;">
+          <video id="pair-scan-video" playsinline autoplay muted style="width:100%;border-radius:8px;background:#000;"></video>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Point the camera at the other machine's QR code.</div>
         </div>
-
-        <div data-pair-panel="invite" style="display:none;">
-          <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
-            Scan this from the other Citadel to pair them. The code expires in 10 minutes and works once.
-          </p>
-          <div id="pair-invite-body" style="color:var(--text-secondary);font-size:13px;">Generating…</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+          <button class="btn btn-secondary btn-sm" id="pair-scan-btn">Use live camera</button>
+          <button class="btn btn-secondary btn-sm" id="pair-scan-photo-btn">Take a photo of the QR</button>
+          <input type="file" id="pair-scan-file" accept="image/*" capture="environment" style="display:none;" />
         </div>
+        <div id="pair-error" style="color:var(--danger-color);font-size:12px;margin-top:8px;"></div>
 
         <div style="margin-top:16px;font-size:12px;color:var(--text-muted);">
           This machine: <strong>${escapeHtml(identity.name || '')}</strong>
@@ -2656,17 +2647,6 @@
       confirmText: 'Done',
       onConfirm: async () => {},
       onClose: () => stopScan(),
-    });
-
-    const tabs = document.querySelectorAll('[data-pair-tab]');
-    tabs.forEach((tab) => {
-      tab.onclick = () => {
-        tabs.forEach((t) => t.classList.toggle('active', t === tab));
-        document.querySelectorAll('[data-pair-panel]').forEach((panel) => {
-          panel.style.display = panel.getAttribute('data-pair-panel') === tab.getAttribute('data-pair-tab') ? '' : 'none';
-        });
-        if (tab.getAttribute('data-pair-tab') === 'invite') generateInvite();
-      };
     });
 
     const errorEl = () => document.getElementById('pair-error');
@@ -2700,77 +2680,159 @@
     };
 
     let scanStream = null;
+    let scanFrame = null;
+    let scanCanvas = null;
     const stopScan = () => {
+      if (scanFrame) {
+        cancelAnimationFrame(scanFrame);
+        scanFrame = null;
+      }
       if (scanStream) {
         scanStream.getTracks().forEach((track) => track.stop());
         scanStream = null;
       }
+      const area = document.getElementById('pair-scan-area');
+      if (area) area.style.display = 'none';
+      const video = document.getElementById('pair-scan-video');
+      if (video) video.srcObject = null;
     };
+
+    // jsQR works in Safari (which has no BarcodeDetector) and is also used as a
+    // fallback when the native detector is missing or fails on a frame.
+    const decodeQrImage = (source, width, height, maxSize = 1200) => {
+      if (typeof window.jsQR !== 'function' || !width || !height) return null;
+      const scale = Math.min(1, maxSize / Math.max(width, height));
+      const w = Math.max(1, Math.round(width * scale));
+      const h = Math.max(1, Math.round(height * scale));
+      const canvas = scanCanvas || (scanCanvas = document.createElement('canvas'));
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(source, 0, 0, w, h);
+      const image = ctx.getImageData(0, 0, w, h);
+      const result = window.jsQR(image.data, w, h, { inversionAttempts: 'attemptBoth' });
+      return result && result.data ? result.data : null;
+    };
+
+    const acceptCode = async (value) => {
+      if (!value) return;
+      stopScan();
+      const input = document.getElementById('pair-code');
+      if (input) input.value = value;
+      await redeem();
+    };
+
+    // Native capture: opens the phone's camera app without getUserMedia, so it
+    // works in Safari and even when the panel is served over plain HTTP (where
+    // browsers block the live camera for security).
+    const fileInput = document.getElementById('pair-scan-file');
+    document.getElementById('pair-scan-photo-btn').onclick = () => {
+      if (errorEl()) errorEl().textContent = '';
+      fileInput.click();
+    };
+    fileInput.onchange = async () => {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        const img = new Image();
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = () => reject(new Error('Could not read that image.'));
+          img.src = objectUrl;
+        });
+        const width = img.naturalWidth || img.width;
+        const height = img.naturalHeight || img.height;
+        const value = decodeQrImage(img, width, height, 1600);
+        if (!value) throw new Error('No QR code found in that photo. Try again with the code centered and in focus.');
+        await acceptCode(value);
+      } catch (err) {
+        if (errorEl()) errorEl().textContent = err.message;
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+
     document.getElementById('pair-scan-btn').onclick = async () => {
       const area = document.getElementById('pair-scan-area');
       const video = document.getElementById('pair-scan-video');
-      if (!('BarcodeDetector' in window)) {
-        if (errorEl()) errorEl().textContent = 'This browser cannot scan QR codes. Paste the link instead.';
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        if (errorEl()) {
+          errorEl().textContent = window.isSecureContext
+            ? 'This browser cannot access a live camera. Use “Take a photo of the QR” instead.'
+            : 'The live camera needs HTTPS (or localhost). Use “Take a photo of the QR” instead, or paste the link.';
+        }
+        return;
+      }
+      if (typeof window.jsQR !== 'function' && !('BarcodeDetector' in window)) {
+        if (errorEl()) errorEl().textContent = 'This browser cannot decode QR codes. Use “Take a photo of the QR” or paste the link.';
         return;
       }
       try {
-        scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (errorEl()) errorEl().textContent = '';
+        scanStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
         area.style.display = '';
         video.srcObject = scanStream;
+        video.muted = true;
+        video.setAttribute('playsinline', '');
         await video.play();
-        const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+
+        let detector = null;
+        if ('BarcodeDetector' in window) {
+          try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch { detector = null; }
+        }
+
         const tick = async () => {
           if (!scanStream) return;
+          let value = null;
           try {
-            const codes = await detector.detect(video);
-            if (codes && codes.length) {
-              stopScan();
-              const value = codes[0].rawValue;
-              document.getElementById('pair-code').value = value;
-              await redeem();
-              return;
+            if (detector) {
+              const codes = await detector.detect(video);
+              if (codes && codes.length) value = codes[0].rawValue;
+            }
+            if (!value && video.readyState >= 2) {
+              value = decodeQrImage(video, video.videoWidth, video.videoHeight, 900);
             }
           } catch {
             // Transient detector errors are normal while the frame settles.
           }
-          requestAnimationFrame(tick);
+          if (value) { await acceptCode(value); return; }
+          scanFrame = requestAnimationFrame(tick);
         };
-        requestAnimationFrame(tick);
+        scanFrame = requestAnimationFrame(tick);
       } catch (err) {
-        if (errorEl()) errorEl().textContent = `Camera unavailable: ${err.message}`;
         stopScan();
+        const name = err && err.name;
+        const message = name === 'NotAllowedError'
+          ? 'Camera permission was denied. Allow it in the browser settings, or use “Take a photo of the QR”.'
+          : name === 'NotFoundError'
+            ? 'No camera was found on this device. Use “Take a photo of the QR” or paste the link.'
+            : `Camera unavailable: ${err.message}`;
+        if (errorEl()) errorEl().textContent = message;
       }
     };
 
-    async function generateInvite() {
-      const body = document.getElementById('pair-invite-body');
-      if (!body) return;
-      body.textContent = 'Generating…';
-      try {
-        const res = await api('/api/pair/invite', { method: 'POST' });
-        const invite = res.invite || {};
-        body.innerHTML = `
-          <div class="connect-qr" style="margin:10px 0;">${invite.qrSvg || ''}</div>
-          <div style="font-family:var(--font-mono);font-size:11px;word-break:break-all;color:var(--text-muted);">${escapeHtml(invite.link || '')}</div>
-          ${invite.reachableWarning ? `<p style="color:var(--warning-color);font-size:12px;margin-top:10px;">${escapeHtml(invite.reachableWarning)}</p>` : ''}
-          <button class="btn btn-secondary btn-sm" id="pair-copy-link" style="margin-top:10px;">Copy link</button>
-        `;
-        document.getElementById('pair-copy-link').onclick = async () => {
-          try {
-            await navigator.clipboard.writeText(invite.link || '');
-            showToast('Pairing link copied.', 'success');
-          } catch {
-            showToast('Could not copy the link.', 'error');
-          }
-        };
-      } catch (err) {
-        body.innerHTML = `<span style="color:var(--danger-color);">${escapeHtml(err.message)}</span>`;
-      }
-    }
-
     // A #pair=... fragment means the user opened a pairing link.
     if (initialCode) {
-      document.querySelector('[data-pair-tab="scan"]').click();
+      document.getElementById('pair-code').focus();
+    }
+  }
+
+  // Decode the #pair=... payload without a round-trip to the server.
+  function decodePairPayload(code) {
+    const raw = String(code || '').trim();
+    const marker = raw.indexOf('#pair=');
+    const encoded = marker !== -1 ? raw.slice(marker + 6) : raw;
+    const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    try {
+      return JSON.parse(atob(padded));
+    } catch {
+      return null;
     }
   }
 
@@ -2782,7 +2844,15 @@
     // Keep the hash until we are authenticated, so logging in does not lose a
     // scanned pairing link. startApp calls this again after login.
     if (!state.user) return false;
+
+    // The same QR doubles as a plain "open the panel" code: any camera opens
+    // the inviting host, whose own invitation must not be redeemed locally.
+    // Only a payload from a different instance is a pairing action.
+    const payload = decodePairPayload(code);
+    const ownId = state.hostIdentity && state.hostIdentity.instanceId;
+    const isPairing = Boolean(payload && ownId && payload.instanceId !== ownId);
     history.replaceState(null, '', location.pathname + location.search);
+    if (!isPairing) return false;
     showPairModal(code);
     return true;
   }
@@ -4152,17 +4222,25 @@
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading settings...</div>';
 
     try {
-      const [settingsRes, connectRes, nodeRes, versionRes, secretsRes] = await Promise.all([
+      const canPair = Boolean(state.user && state.user.role === 'admin');
+      const [settingsRes, connectRes, nodeRes, versionRes, secretsRes, inviteRes] = await Promise.all([
         api('/api/settings/connect'),
         api('/api/system/connect'),
         api('/api/system/node'),
         api('/api/system/version'),
         api('/api/secrets'),
+        canPair ? api('/api/pair/invite', { method: 'POST' }).catch(() => null) : Promise.resolve(null),
       ]);
       await loadModules();
       const s = settingsRes.connect || {};
       const connect = connectRes.connect || {};
       const node = nodeRes.node || {};
+      const invite = inviteRes && inviteRes.invite ? inviteRes.invite : null;
+      // One code, two jobs: any camera opens the panel, and another Citadel's
+      // Pair screen reads the same invitation from the fragment.
+      const qrSvg = (invite && invite.qrSvg) || connect.qrSvg || '';
+      const qrLink = (invite && invite.link) || connect.url || '';
+      const qrAddress = (invite && invite.payload && invite.payload.url) || connect.url || '';
       const ver = versionRes.version || {};
       const secretsList = secretsRes.secrets || [];
       const activeHost = state.activeHostId === 'local'
@@ -4284,18 +4362,27 @@
 
         <div class="card">
           <h3 class="widget-heading">Connection</h3>
-          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
-            Scan this code with a phone to open the panel on another device.
+          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;line-height:1.6;">
+            Scan this code with any camera to open the panel on another device.
+            From another Citadel, open <strong>Pair a machine</strong> and scan the
+            same code to pair both machines.
           </p>
           <div class="connect-grid">
-            <div class="connect-qr">${connect.qrSvg || ''}</div>
+            <div class="connect-qr">${qrSvg}</div>
             <div style="min-width:0;flex:1;">
               <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Address</div>
-              <a href="${escapeHtml(connect.url || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(connect.url || '')}</a>
-              <div style="margin-top:10px;">
+              <a href="${escapeHtml(qrAddress || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(qrAddress)}</a>
+              <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
                 <button class="btn btn-secondary btn-sm" id="settings-copy-url">Copy link</button>
+                ${invite ? '<button class="btn btn-secondary btn-sm" id="settings-new-code">New code</button>' : ''}
                 <button class="btn btn-secondary btn-sm" id="connect-help-btn">Remote access help</button>
               </div>
+              ${invite
+                ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);line-height:1.5;">
+                    This pairing code works once and expires ${escapeHtml(new Date(invite.expiresAt).toLocaleTimeString())}.
+                    ${invite.reachableWarning ? `<span style="color:var(--warning-color);display:block;margin-top:4px;">${escapeHtml(invite.reachableWarning)}</span>` : ''}
+                  </div>`
+                : '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Sign in as an administrator to generate a pairing code.</div>'}
             </div>
           </div>
         </div>
@@ -4415,12 +4502,15 @@
 
       document.getElementById('settings-copy-url').onclick = async () => {
         try {
-          await navigator.clipboard.writeText(connect.url || '');
-          showToast('Link copied.', 'success');
+          await navigator.clipboard.writeText(qrLink);
+          showToast('Link copied. Any camera opens the panel; another Citadel can pair with it.', 'success');
         } catch {
           showToast('Could not copy the link.', 'error');
         }
       };
+
+      const newCodeBtn = document.getElementById('settings-new-code');
+      if (newCodeBtn) newCodeBtn.onclick = () => renderSettingsView();
 
       const connectHelpBtn = document.getElementById('connect-help-btn');
       if (connectHelpBtn) {

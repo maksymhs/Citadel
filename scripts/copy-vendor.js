@@ -26,6 +26,10 @@ const copies = [
     dest: path.join(targetDir, 'addon-web-links.js'),
   },
   {
+    src: path.resolve(__dirname, '../node_modules/jsqr/dist/jsQR.js'),
+    dest: path.join(targetDir, 'jsQR.js'),
+  },
+  {
     src: path.resolve(__dirname, '../node_modules/wunderbaum/dist/wunderbaum.umd.js'),
     dest: path.join(targetDir, 'wunderbaum.umd.js'),
   },

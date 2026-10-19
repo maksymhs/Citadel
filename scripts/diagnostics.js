@@ -924,7 +924,7 @@ function collectCitadel(deps) {
       `Not initialized at ${dataDir} (running from a source checkout?).`));
   }
 
-  const vendorFiles = ['xterm.js', 'xterm.css', 'addon-fit.js', 'addon-web-links.js'];
+  const vendorFiles = ['xterm.js', 'xterm.css', 'addon-fit.js', 'addon-web-links.js', 'jsQR.js'];
   const vendorDir = path.join(appDir, 'public', 'vendor');
   const missing = vendorFiles.filter((file) => !exists(deps, path.join(vendorDir, file)));
   findings.push(finding(missing.length === 0 ? 'ok' : 'fail', 'citadel.vendor', 'citadel', 'Local browser assets',

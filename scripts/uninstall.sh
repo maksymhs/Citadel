@@ -205,6 +205,7 @@ if [ "$DRY_RUN" = true ]; then
   echo "Path validation passed. Planned actions:"
   echo "  - stop/disable ${SERVICE}.service and remove its systemd unit"
   echo "  - stop/remove the citadel-tunnel unit and ${TARGET_DIR}/data/tunnel-url"
+  echo "  - restore system sleep policy if 24/7 mode was enabled"
   echo "  - remove sudoers rules and helper scripts"
   if [ "$PURGE" = true ]; then
     echo "  - delete ${TARGET_DIR} and ${AGENTS_DIR}, then remove user '$RUN_USER'"
@@ -247,6 +248,19 @@ if command -v systemctl >/dev/null 2>&1; then
   $SUDO rm -f /etc/systemd/system/citadel-tunnel.service
   $SUDO rm -f "$TARGET_DIR/data/tunnel-url" 2>/dev/null || true
   $SUDO systemctl daemon-reload 2>/dev/null || true
+fi
+
+POWER_DROPIN="${CITADEL_LOGIND_DROPIN_DIR:-/etc/systemd/logind.conf.d}/90-citadel-24-7.conf"
+if [ -f "$POWER_DROPIN" ]; then
+  echo "Restoring system sleep policy (24/7 mode)..."
+  POWER_HELPER="${CITADEL_APP_DIR:-$TARGET_DIR/app}/scripts/power.sh"
+  if [ -f "$POWER_HELPER" ] && command -v systemctl >/dev/null 2>&1; then
+    $SUDO bash "$POWER_HELPER" off 2>/dev/null || true
+  else
+    $SUDO rm -f "$POWER_DROPIN" "$POWER_DROPIN.state"
+    $SUDO rm -f /etc/systemd/system/{sleep,suspend,hibernate,hybrid-sleep}.target
+    $SUDO systemctl daemon-reload 2>/dev/null || true
+  fi
 fi
 
 echo "Removing sudoers rules..."

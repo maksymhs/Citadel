@@ -9,24 +9,28 @@ if (!text) {
   process.exit(1);
 }
 
-const qr = qrcode(0, 'M');
+const qr = qrcode(0, 'L');
 qr.addData(text);
 qr.make();
 
 const count = qr.getModuleCount();
 const quiet = 2;
 const size = count + quiet * 2;
-const BLACK = '\x1b[40m  \x1b[0m';
-const WHITE = '\x1b[47m  \x1b[0m';
+const isDark = (row, col) => row >= quiet && row < quiet + count
+  && col >= quiet && col < quiet + count
+  && qr.isDark(row - quiet, col - quiet);
 
-let out = '\n';
-for (let row = 0; row < size; row++) {
+// Force black-on-white so the code keeps its polarity on dark terminals.
+let out = '\n\x1b[30;47m';
+for (let row = 0; row < size; row += 2) {
   for (let col = 0; col < size; col++) {
-    const insideRow = row >= quiet && row < quiet + count;
-    const insideCol = col >= quiet && col < quiet + count;
-    const dark = insideRow && insideCol && qr.isDark(row - quiet, col - quiet);
-    out += dark ? BLACK : WHITE;
+    const top = isDark(row, col);
+    const bottom = isDark(row + 1, col);
+    if (top && bottom) out += '█';
+    else if (top) out += '▀';
+    else if (bottom) out += '▄';
+    else out += ' ';
   }
-  out += '\n';
+  out += '\x1b[0m\n\x1b[30;47m';
 }
-process.stdout.write(out);
+process.stdout.write(`${out}\x1b[0m`);

@@ -66,6 +66,15 @@ describe('Peer pairing (invite + accept)', () => {
     assert.ok(invite.link.includes('#pair='));
     assert.match(invite.qrSvg, /<svg/);
 
+    // The link is dual-purpose: a normal camera follows the panel URL, while
+    // the fragment carries everything another Citadel needs to pair.
+    const identity = JSON.parse((await app.inject({
+      method: 'GET', url: '/api/host/identity', headers: { cookie },
+    })).payload).host;
+    assert.ok(invite.link.startsWith(invite.payload.url));
+    assert.equal(invite.payload.instanceId, identity.instanceId);
+    assert.equal(invite.payload.url, identity.urls[0] || identity.url);
+
     // Machine B's identity and the token B will require from A.
     const tokenB = 'b'.repeat(64);
     const peerB = {
