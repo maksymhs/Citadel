@@ -1220,3 +1220,31 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Final: `npm test` → **333 tests, 331 pass, 1 fail, 1 skipped** (the unrelated,
   environment-dependent tmux copy-mode test).
 - Version bumped to `0.27.0`; asset cache-buster token moved to `v0270`.
+
+## 71. File explorer: bug fixes, full-height layout & grid view (v0.28.0)
+- **Fixed "No such file or directory" on folder clicks.** The Wunderbaum source
+  data nested `path`/`type` under a `data` key, but Wunderbaum stores every
+  unknown property directly on `node.data` (it does not unwrap a nested
+  object), so `node.data.path` was `undefined` and requests went to
+  `path=undefined` (ENOENT). Custom fields now sit at the top level
+  (`path`, `kind`).
+- **Fixed lazy loading.** `lazyLoad` called `node.addChildren(...)`; in
+  Wunderbaum 0.14 the handler must *return* the child list. It now returns the
+  mapped items (or `false` on error).
+- **Dark theme.** Wunderbaum's light, Bootstrap-icon theme is remapped to the
+  panel palette (`--wb-*` variables) and the missing Bootstrap Icon font is
+  replaced with custom CSS chevrons (mask-based, so they inherit the row colour)
+  plus inline SVG folder/file glyphs.
+- **Full-height explorer.** The view now fills the whole content area: an
+  in-view toolbar (breadcrumbs, view toggle, New file/folder, Refresh), a
+  scrolling body and a status bar, instead of a small card.
+- **Two modes**, toggled from the toolbar and persisted per browser
+  (`state.filesMode`): *list* (the lazy tree) and *grid* (large folder tiles
+  with clickable breadcrumb navigation).
+- **Input modes.** Mouse: click selects, double-click opens, right-click opens
+  the context menu. Keyboard (grid): arrows/Home/End move the selection, Enter
+  opens, Backspace goes up, Delete removes (with confirmation), Shift+F10 opens
+  the context menu. Touch: a single tap opens, with a compact toolbar and
+  larger tap targets on phones. List mode keeps Wunderbaum's native mouse /
+  keyboard / touch handling.
+- Asset cache-buster token moved to `v0280` (bumped in the release commit).
