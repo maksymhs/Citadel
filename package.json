@@ -1,6 +1,6 @@
 {
   "name": "citadel",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Self-hosted, ultralight and secure web platform to manage projects, persistent terminals and CLI agents on a VPS",
   "main": "server/index.js",
   "scripts": {
