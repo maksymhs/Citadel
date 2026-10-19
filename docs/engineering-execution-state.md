@@ -1045,4 +1045,55 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Version bumped to `0.23.0`; asset cache-buster moved to `v0230`.
 - Release: `chore(release): v0.23.0`, annotated tag `v0.23.0`.
 
+## 61. Changes (this run)
+- **Git providers are token-only again.** Reverted the OAuth 2.0 device flow
+  (from v0.23.0): deleted `server/services/gitOAuthService.js` and
+  `tests/git-oauth.test.js`; removed the `/api/git/oauth/*` routes
+  (`gitRoutes.js`) and the background token refresher (`server/index.js`);
+  dropped migration `006_git_oauth_credentials` and the OAuth columns from
+  `git_credentials` (`server/database/db.js`). `gitCredentialsService` is back
+  to `saveCredential({ provider, token, username })` with no refresh/expiry/
+  scope/auth_method handling. The dashboard agent "Install" → System Terminal
+  focus fix is preserved. README reverted to "connect with a personal access
+  token".
+- **The "System" top-level view is gone.** Removed `renderSystemView()` and the
+  `system` nav entry / `navigateTo` branch; `LEGACY_VIEW_MAP.system` now maps to
+  `settings`. Its content moved: **Updates** and **About this host** (Node
+  diagnostics) are sections of **Settings** (loaded from
+  `/api/settings/connect`, `/api/system/connect`, `/api/system/node`,
+  `/api/system/version`); **Activity & Audit** is now a **Dashboard** widget
+  (`activity`, added to the defaults and merged with saved widget order);
+  the "Remote access help" modal moved to the Connection card.
+- **Workspace is a 3-level sidebar tree** (`Workspace → context (System/project)
+  → live terminals`). `renderSidebarNav()` renders the parent (`data-view=
+  "workspace"`, chevron toggle), each context node with a session count and its
+  terminal leaves (activate / close) plus a "+ New terminal" leaf, driven by
+  `state.allSessions` from `GET /api/terminals`. Clicking the parent opens a new
+  **workspace overview** selector (`.ws-grid` cards); clicking a context or leaf
+  opens it directly. `bindSidebarNav` is now a single delegated listener.
+  Terminal switching no longer uses the top-bar tabs or the context `<select>`;
+  the in-content `+ New Terminal`, Paste and History buttons remain.
+- New/changed frontend helpers in `public/js/app.js`: `workspaceNavHtml`,
+  `workspaceNodeHtml`, `navChevron`, `sessionsForContext`, `toggleWorkspaceNav`,
+  `openWorkspaceOverview`, `openWorkspace`, `openWorkspaceTerminal`,
+  `newTerminalIn`, `renderWorkspaceOverview`, `workspaceCardHtml`, `loadSessions`
+  (plus `pendingNewTerminalContext`, `allSessions`, `workspaceNavOpen`,
+  `workspaceNavContexts` state). `renderTerminalTabs`/`renderSysTerminalTabs`
+  now just refresh the sidebar.
+- New sidebar/overview styles in `public/css/app.css`: `.nav-chevron`,
+  `.nav-sub`, `.nav-subitem`, `.nav-dot`, `.nav-sub-deep`, `.nav-leaf`,
+  `.nav-leaf-close`, `.nav-leaf-new`, `.ws-grid`.
+
+## 62. Tests (this run)
+- Removed `tests/git-oauth.test.js` with the OAuth feature (8 tests).
+- Final: `npm test` → **320 tests, 317 pass, 2 fail, 1 skipped**. The two
+  failures (`terminal.test.js` "tmuxCopyMode enter/exit works on a tmux-backed
+  session" and `update-rollback.test.js` "a health-check failure restores the
+  exact database snapshot") reproduce on a clean checkout of this environment
+  and are unrelated to these changes.
+
+## 63. Version
+- Version bumped to `0.24.0`; asset cache-buster moved to `v0240`.
+- Release: `chore(release): v0.24.0`, annotated tag `v0.24.0`.
+
 
