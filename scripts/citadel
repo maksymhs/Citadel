@@ -20,6 +20,9 @@ PORT="${PORT:-3000}"
 # The panel stores the Cloudflare tunnel URL and the configured public URL under
 # DATA_DIR; pass it so `citadel url|qr` resolve the same address the panel shows.
 DATA_DIR="${CITADEL_DATA_DIR:-${DATA_DIR:-$DEFAULT_TARGET_DIR/data}}"
+# Exported so `citadel doctor` inspects the real data directory instead of
+# falling back to "$APP_DIR/data".
+export DATA_DIR
 OS="$(uname -s)"
 MACOS_LABEL="com.citadel.server"
 

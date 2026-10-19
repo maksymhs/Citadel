@@ -20,9 +20,34 @@ function shellQuote(value) {
   return `'${str.replace(/'/g, "'\\''")}'`;
 }
 
+// Where the official installers drop their binaries relative to $HOME (which
+// points at AGENTS_DIR during a shared install). `bin` holds Citadel's links.
+const AGENT_BIN_SUBDIRS = ['bin', '.local/bin', '.opencode/bin', '.npm-global/bin'];
+
+function isExecutable(file) {
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 class AgentRegistry {
   constructor() {
+    // Install commands run with HOME pointed at the shared agents directory
+    // (see buildInstallCommand), so "$HOME" below means AGENTS_DIR.
     this.builtinAgents = [
+      {
+        id: 'opencode',
+        name: 'OpenCode',
+        binaryName: 'opencode',
+        description: 'Open-source interactive coding agent for developers',
+        defaultArgs: [],
+        versionArg: '--version',
+        installCommand: 'curl -fsSL https://opencode.ai/install | bash',
+      },
       {
         id: 'claude',
         name: 'Claude Code',
@@ -39,16 +64,18 @@ class AgentRegistry {
         description: 'CLI tool for code assistance and generation',
         defaultArgs: [],
         versionArg: '--version',
+        // A user prefix: the global npm prefix (/usr) is read-only for the
+        // service user and inside the systemd sandbox.
         installCommand: 'npm install -g --prefix "$HOME/.local" @openai/codex',
       },
       {
-        id: 'opencode',
-        name: 'OpenCode',
-        binaryName: 'opencode',
-        description: 'Open-source interactive coding agent for developers',
+        id: 'antigravity',
+        name: 'Antigravity CLI',
+        binaryName: 'agy',
+        description: "Google's Antigravity terminal coding agent",
         defaultArgs: [],
         versionArg: '--version',
-        installCommand: 'curl -fsSL https://opencode.ai/install | bash',
+        installCommand: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
       },
     ];
   }
@@ -90,7 +117,9 @@ class AgentRegistry {
       }
     }
 
-    const candidatePaths = [];
+    // Shared agents directory first: installing once here (HOME=$AGENTS_DIR)
+    // makes the binary visible to every OS user.
+    const candidatePaths = AGENT_BIN_SUBDIRS.map((sub) => path.join(AGENTS_DIR, sub, binaryName));
     for (const home of homes) {
       candidatePaths.push(
         path.join(home, '.local', 'bin', binaryName),
@@ -101,27 +130,15 @@ class AgentRegistry {
         path.join(home, 'bin', binaryName)
       );
     }
-    // Shared agents directory: installing once here (HOME=$AGENTS_DIR) makes the
-    // binary visible to every OS user, so it is checked before system paths.
-    candidatePaths.push(
-      path.join(AGENTS_DIR, 'bin', binaryName),
-      path.join(AGENTS_DIR, '.local', 'bin', binaryName),
-      path.join(AGENTS_DIR, '.opencode', 'bin', binaryName),
-      path.join(AGENTS_DIR, '.npm-global', 'bin', binaryName)
-    );
     candidatePaths.push(
       `/usr/local/bin/${binaryName}`,
       `/usr/bin/${binaryName}`,
       `/bin/${binaryName}`
     );
 
-    for (const p of candidatePaths) {
-      if (fs.existsSync(p)) {
-        return p;
-      }
-    }
-
-    return null;
+    // Only report binaries this (service) account can actually execute: an
+    // agent installed in another user's private home is not usable here.
+    return candidatePaths.find(isExecutable) || null;
   }
 
   /**
@@ -245,24 +262,24 @@ class AgentRegistry {
   }
 
   /**
-   * Install a CLI agent by running its official one-line installer inside a
-   * fresh System Terminal session, so the user can watch the output live. The
-   * command is a fixed server-side string (never user input), so there is no
-   * shell-injection surface.
-   */
-  /**
-   * Build the fixed shell command that installs one agent for every user.
+   * Build the fixed shell script that installs one agent for every user.
    * Pure (no side effects) so it can be unit-tested. The only interpolated
-   * values are the server-controlled AGENTS_DIR and the validated binary name.
+   * values are the server-controlled AGENTS_DIR, the agent's display name
+   * (quoted) and the validated binary name.
    *
-   *  1. Prepare a shared, world-readable HOME (AGENTS_DIR). Prefer the system
-   *     path via sudo; if sudo is unavailable (--no-admin-terminal) fall back to
-   *     ~/.citadel/agents, which the registry also detects.
-   *  2. Run the official installer with HOME pointed there, so its per-user
-   *     drops land in the shared directory instead of a private home.
-   *  3. Relax permissions and symlink the resulting binary into /usr/local/bin
-   *     (already on every user's PATH). Sessions keep their own $HOME at
-   *     runtime, so each user still gets their own config/credentials.
+   * It always runs as the service user, which owns AGENTS_DIR (prepared by
+   * install.sh), so no sudo is involved: the systemd unit sets
+   * NoNewPrivileges and the service account has no sudo rights anyway.
+   *
+   *  1. Point HOME at the shared, world-readable AGENTS_DIR (falling back to
+   *     ~/.citadel/agents when it is not writable) inside a subshell, so the
+   *     official installer's per-user drops land there and the override never
+   *     leaks into the interactive shell left open afterwards.
+   *  2. Put the target bin directories on PATH so installers that verify PATH
+   *     (Claude Code, Antigravity) do not stop to ask for shell-profile edits.
+   *  3. Fail loudly when the download/installer fails (pipefail) or produces
+   *     no binary, relax permissions and link the binary into AGENTS_DIR/bin,
+   *     which every Citadel terminal and /etc/profile.d puts on PATH.
    */
   buildInstallCommand(agent) {
     const bin = String(agent.binaryName || '');
@@ -270,21 +287,49 @@ class AgentRegistry {
       throw new Error(`Invalid binary name for agent "${agent.name}".`);
     }
 
-    const sharedDir = shellQuote(AGENTS_DIR);
+    const sources = AGENT_BIN_SUBDIRS.filter((sub) => sub !== 'bin').map((sub) => `"$AG/${sub}/${bin}"`).join(' ');
     return [
-      `AG=${sharedDir}`,
-      'if ! (sudo mkdir -p "$AG" && sudo chown "$(id -u):$(id -g)" "$AG" && chmod 0755 "$AG") 2>/dev/null; '
-        + 'then AG="$HOME/.citadel/agents"; mkdir -p "$AG"; fi',
+      '(',
+      'set -o pipefail',
+      `NAME=${shellQuote(agent.name)}`,
+      `AG=${shellQuote(AGENTS_DIR)}`,
+      'SCOPE="every user"',
+      'mkdir -p "$AG" 2>/dev/null',
+      'if [ ! -w "$AG" ]; then',
+      '  echo "[Citadel] $AG is not writable by $(id -un); installing under ~/.citadel/agents (only this account will see it)."',
+      '  echo "[Citadel] Re-run the Citadel installer to share agents with every user."',
+      '  SCOPE="this account only"',
+      '  AG="$HOME/.citadel/agents"',
+      '  mkdir -p "$AG" || exit 1',
+      'fi',
       'export HOME="$AG"',
-      agent.installCommand,
+      'unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_BIN_HOME',
+      `export PATH="${AGENT_BIN_SUBDIRS.map((sub) => `$AG/${sub}`).join(':')}:$PATH"`,
+      'cd "$AG" || exit 1',
+      'echo "[Citadel] Installing $NAME into $AG ..."',
+      `${agent.installCommand} || { status=$?; echo "[Citadel] $NAME installer failed (exit $status)."; exit 1; }`,
       'chmod -R a+rX "$AG" 2>/dev/null',
-      `for b in "$AG/bin/${bin}" "$AG/.local/bin/${bin}" "$AG/.opencode/bin/${bin}" "$AG/.npm-global/bin/${bin}"; do `
-        + `if [ -x "$b" ]; then sudo ln -sf "$b" "/usr/local/bin/${bin}" 2>/dev/null `
-        + `|| { mkdir -p "$AG/bin"; ln -sf "$b" "$AG/bin/${bin}"; }; break; fi; done`,
-      `echo "[Citadel] ${agent.name} installed for all users. Reload the panel to launch it."`,
-    ].join('; ');
+      'mkdir -p "$AG/bin"',
+      'found=""',
+      `for b in ${sources}; do`,
+      `  if [ -x "$b" ]; then ln -sfn "$b" "$AG/bin/${bin}"; found="$b"; break; fi`,
+      'done',
+      `[ -n "$found" ] || { echo "[Citadel] $NAME installer finished but no '${bin}' binary was found under $AG."; exit 1; }`,
+      `echo "[Citadel] $NAME installed for $SCOPE: $AG/bin/${bin}"`,
+      ')',
+      'echo',
+      'echo "[Citadel] Reload the panel to refresh the agent status."',
+    ].join('\n');
   }
 
+  /**
+   * Install a CLI agent by running its official one-line installer inside a
+   * fresh System Terminal session, so the user can watch the output live. The
+   * command is a fixed server-side string (never user input), so there is no
+   * shell-injection surface. It runs as the service user (not the privileged
+   * System Terminal user) so the result lands in the shared AGENTS_DIR that
+   * the service owns, then leaves a shell open to inspect the outcome.
+   */
   installAgent({ agentId }) {
     const agent = this.getAgent(agentId);
     if (!agent) {
@@ -301,14 +346,9 @@ class AgentRegistry {
       projectId: null,
       name: `Install ${agent.name}`,
       agentId: null,
+      command: '/bin/bash',
+      args: ['-lc', `${this.buildInstallCommand(agent)}\nexec /bin/bash -l`],
     });
-
-    const fullCommand = this.buildInstallCommand(agent);
-
-    const activeSession = terminalManager.activePtySessions.get(session.sessionId);
-    if (activeSession) {
-      activeSession.ptyProcess.write(`${fullCommand}\r`);
-    }
 
     return {
       session,

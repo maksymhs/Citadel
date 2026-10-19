@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const terminalManager = require('../server/services/terminalManager');
+const { AGENTS_DIR } = require('../server/config');
 const { initDatabase, closeDatabase } = require('../server/database/db');
 
 describe('Terminal & Persistent Session Tests', () => {
@@ -90,7 +91,11 @@ describe('Terminal & Persistent Session Tests', () => {
     assert.ok(runAs);
     assert.equal(runAs.command, 'sudo');
     assert.equal(runAs.user, 'ubuntu');
-    assert.deepEqual(runAs.args, ['-u', 'ubuntu', '-H', '/bin/bash', '-lc', 'cd "$HOME" 2>/dev/null; exec /bin/bash -l']);
+    assert.deepEqual(runAs.args.slice(0, 5), ['-u', 'ubuntu', '-H', '/bin/bash', '-lc']);
+    assert.match(runAs.args[5], /cd "\$HOME" 2>\/dev\/null; exec \/bin\/bash -l$/);
+    // sudo resets PATH, so the shared agents directory is re-appended.
+    assert.ok(runAs.args[5].includes(path.join(AGENTS_DIR, 'bin')));
+    assert.match(runAs.args[5], /^export PATH="\$PATH":'/);
 
     // No admin user configured means no privilege escalation.
     assert.equal(terminalManager._buildRunAs(null, null), null);

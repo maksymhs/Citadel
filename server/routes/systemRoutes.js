@@ -72,8 +72,9 @@ async function systemRoutes(fastify) {
   });
 
   // Install a supported AI coding agent by running its official one-liner in a
-  // (privileged, if configured) System Terminal session. The client only names a
-  // known tool; the command itself is fixed server-side.
+  // System Terminal session, as the service user, into the shared agents
+  // directory so every OS user can run it. The client only names a known tool;
+  // the command itself is fixed server-side.
   fastify.post('/api/system/integrations/install', { preHandler: requireAdmin }, async (request, reply) => {
     const agent = agentInstallService.getAgent(request.body ? request.body.tool : null);
     if (!agent) {
@@ -81,12 +82,7 @@ async function systemRoutes(fastify) {
     }
 
     try {
-      const spec = agentInstallService.buildInstallSpec(agent, terminalManager.getAdminTerminalUser());
-      const session = terminalManager.createSession({
-        name: `Install ${agent.name}`,
-        command: spec.command,
-        args: spec.args,
-      });
+      const { session } = agentInstallService.installAgent(agent.id);
       auditService.logAction({
         userId: request.user.id,
         action: 'integration_install_started',

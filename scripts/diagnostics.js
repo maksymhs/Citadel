@@ -97,6 +97,16 @@ function readText(deps, file) {
   }
 }
 
+function userName(deps, uid) {
+  try {
+    const line = String(deps.fs.readFileSync('/etc/passwd', 'utf8'))
+      .split('\n')
+      .find((l) => l.split(':')[2] === String(uid));
+    if (line) return line.split(':')[0];
+  } catch {}
+  return `uid ${uid}`;
+}
+
 function exists(deps, file) {
   try {
     return deps.fs.existsSync(file);
@@ -916,8 +926,21 @@ function collectCitadel(deps) {
       deps.fs.accessSync(dataDir, deps.fs.constants.W_OK);
       findings.push(finding('ok', 'citadel.data', 'citadel', 'Citadel data directory', `Writable: ${dataDir}`));
     } catch {
-      findings.push(finding('fail', 'citadel.data', 'citadel', 'Citadel data directory',
-        `Not writable: ${dataDir}`, { hint: 'Check ownership and permissions of the service data directory.' }));
+      // The data directory belongs to the service account, so running the
+      // doctor as another (non-root) user cannot write it by design. Judge it
+      // by its owner's permissions instead of reporting a false failure.
+      let st = null;
+      try {
+        st = deps.fs.statSync(dataDir);
+      } catch {}
+      if (st && deps.uid !== null && deps.uid !== st.uid && (st.mode & 0o200)) {
+        const owner = userName(deps, st.uid);
+        findings.push(finding('ok', 'citadel.data', 'citadel', 'Citadel data directory',
+          `Writable by its owner ${owner}: ${dataDir} (checked as ${userName(deps, deps.uid)}).`));
+      } else {
+        findings.push(finding('fail', 'citadel.data', 'citadel', 'Citadel data directory',
+          `Not writable: ${dataDir}`, { hint: 'Check ownership and permissions of the service data directory.' }));
+      }
     }
   } else {
     findings.push(finding('skip', 'citadel.data', 'citadel', 'Citadel data directory',
@@ -956,7 +979,7 @@ function collectCitadel(deps) {
     }
   }
 
-  const detectedAgents = ['claude', 'codex', 'opencode'].filter((agent) => deps.which(agent));
+  const detectedAgents = ['claude', 'codex', 'opencode', 'agy'].filter((agent) => deps.which(agent));
   findings.push(detectedAgents.length > 0
     ? finding('ok', 'citadel.agents', 'citadel', 'CLI agents', detectedAgents.join(', '))
     : finding('skip', 'citadel.agents', 'citadel', 'CLI agents',

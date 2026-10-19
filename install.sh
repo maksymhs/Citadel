@@ -253,6 +253,19 @@ LOGS_DIR="$TARGET_DIR/logs"
 # Shared, world-readable install root for CLI agents (opencode, claude, codex…).
 # Installing an agent once here makes it available to every OS user and session.
 AGENTS_DIR="${CITADEL_AGENTS_DIR:-/opt/citadel/agents}"
+# It is chown'ed recursively to the service user below, so refuse anything that
+# is not a dedicated absolute directory.
+case "$AGENTS_DIR" in
+  *..*|/|/bin|/bin/*|/boot|/boot/*|/dev|/dev/*|/etc|/etc/*|/home|/lib*|/opt|/proc|/proc/*|/root|/run|/sbin|/sbin/*|/srv|/sys|/sys/*|/tmp|/usr|/usr/*|/var)
+    echo -e "${RED}[ERROR] Refusing unsafe CITADEL_AGENTS_DIR: $AGENTS_DIR${NC}"
+    exit 1
+    ;;
+  /*) : ;;
+  *)
+    echo -e "${RED}[ERROR] CITADEL_AGENTS_DIR must be an absolute path: $AGENTS_DIR${NC}"
+    exit 1
+    ;;
+esac
 
 # Best LAN address: the source IP of the default route (the real network the
 # phone shares), falling back to the first hostname -I entry.
@@ -456,6 +469,11 @@ EOF
   # Permissions
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
     $SUDO chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
+    # The panel installs agents as the service user (no sudo: the unit sets
+    # NoNewPrivileges), so that user must own the shared agents root; 0755
+    # keeps every OS user able to run what is installed there.
+    $SUDO chown -R "$RUN_USER:$RUN_USER" "$AGENTS_DIR"
+    $SUDO chmod 0755 "$AGENTS_DIR"
   fi
 fi
 
@@ -586,6 +604,23 @@ EOF
     echo "      Credentials CLI installed: citadel-creds list | get | env | exec"
   fi
 
+  # Shared CLI agents (installed from the panel into $AGENTS_DIR/bin) on every
+  # login shell's PATH: SSH sessions, the privileged System Terminal (whose
+  # PATH sudo resets) and distributions whose /etc/profile rewrites PATH.
+  # Appended so a user's own installs win; root is left untouched.
+  if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -d /etc/profile.d ]; then
+    $SUDO tee /etc/profile.d/citadel-agents.sh >/dev/null <<EOF
+# Citadel: CLI agents installed from the panel, shared by every user (managed by install.sh)
+if [ "\$(id -u)" -ne 0 ] && [ -d "$AGENTS_DIR/bin" ]; then
+  case ":\$PATH:" in
+    *":$AGENTS_DIR/bin:"*) ;;
+    *) PATH="\$PATH:$AGENTS_DIR/bin"; export PATH ;;
+  esac
+fi
+EOF
+    $SUDO chmod 0644 /etc/profile.d/citadel-agents.sh
+  fi
+
   # Friendly management CLI: `citadel status|url|qr|logs|restart|update|tunnel`.
   # A thin launcher so repository updates to scripts/citadel take effect at once.
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/citadel" ]; then
@@ -659,8 +694,9 @@ else
   ACCESS_URL="${CITADEL_PUBLIC_URL:-}"
   ACCESS_LABEL="Panel (public URL)"
   TUNNEL_URL_FILE="$DATA_DIR/tunnel-url"
-  if [ -z "$ACCESS_URL" ] && [ -f "$TUNNEL_URL_FILE" ]; then
-    ACCESS_URL="$(head -n1 "$TUNNEL_URL_FILE" 2>/dev/null || true)"
+  # The data directory belongs to the service user, so read it with $SUDO.
+  if [ -z "$ACCESS_URL" ] && $SUDO test -f "$TUNNEL_URL_FILE" 2>/dev/null; then
+    ACCESS_URL="$($SUDO head -n1 "$TUNNEL_URL_FILE" 2>/dev/null || true)"
     ACCESS_LABEL="Panel (global)"
   fi
   if [ -z "$ACCESS_URL" ] && command -v tailscale >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
@@ -718,23 +754,27 @@ else
     fi
   fi
   echo ""
-  echo -e "${BLUE}  Scan with your phone to open the panel:${NC}"
-  echo ""
-  if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
-    (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT") || true
-  elif command -v qrencode >/dev/null 2>&1; then
-    qrencode -t ANSIUTF8 -m 2 "$QR_TEXT" || true
-  fi
-  echo "  $ACCESS_URL"
-  if [ "$PAIR_QR" = true ]; then
-    echo "  (The same code can be scanned from another Citadel's Pair screen.)"
-  fi
-  echo ""
   if [ "$TUNNEL" = true ] || [ "$LAN_EXPOSED" = true ]; then
     echo -e "${YELLOW}  IMPORTANT: this panel is reachable from outside this machine. Create your${NC}"
     echo -e "${YELLOW}  administrator account NOW — until you do, the first visitor can claim it.${NC}"
     echo ""
   fi
   echo "  Open it and create your administrator account to finish setup."
+  if [ "$PAIR_QR" = true ]; then
+    echo "  (The code below can also be scanned from another Citadel's Pair screen.)"
+  fi
   echo "=================================================================="
+  # The QR goes last so it stays on screen on a console without scrollback.
+  echo -e "${BLUE}  Scan with your phone to open the panel:${NC}"
+  if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
+    (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$ACCESS_URL") || true
+  elif command -v qrencode >/dev/null 2>&1; then
+    # The Linux console font lacks the half-block glyphs used by ANSIUTF8.
+    if [ "${TERM:-}" = "linux" ]; then
+      qrencode -t ANSI -m 2 "$QR_TEXT" || true
+    else
+      qrencode -t ANSIUTF8 -m 2 "$QR_TEXT" || true
+    fi
+  fi
+  echo "  $ACCESS_URL"
 fi

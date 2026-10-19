@@ -335,3 +335,41 @@ describe('collectNetwork', () => {
     assert.ok(result.findings.some((f) => f.id === 'network.dns-config' && f.status === 'warn'));
   });
 });
+
+describe('citadel data directory check', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+
+  function dataFinding(uid, files = {}) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-data-'));
+    fs.chmodSync(dir, 0o755);
+    const owner = fs.statSync(dir).uid;
+    const deps = createFakeDeps({
+      env: { PATH: '/usr/bin', DATA_DIR: dir },
+      uid: uid === 'owner' ? owner : uid,
+      files: { '/etc/passwd': `citadel:x:${owner}:${owner}::/srv/citadel:/bin/bash\nubuntu:x:4242:4242::/home/ubuntu:/bin/bash\n`, ...files },
+    });
+    deps.fs.accessSync = () => {
+      const err = new Error('EACCES');
+      err.code = 'EACCES';
+      throw err;
+    };
+    try {
+      return diagnostics.collectCitadel(deps).find((f) => f.id === 'citadel.data');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test('a directory owned (and writable) by the service user is ok for other users', () => {
+    const item = dataFinding(4242);
+    assert.equal(item.status, 'ok');
+    assert.match(item.detail, /owner citadel/);
+    assert.match(item.detail, /checked as ubuntu/);
+  });
+
+  test('a directory its own owner cannot write still fails', () => {
+    assert.equal(dataFinding('owner').status, 'fail');
+  });
+});

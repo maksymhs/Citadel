@@ -40,11 +40,21 @@ describe('AI coding agent install integrations', () => {
     const { agents } = JSON.parse(res.payload).integrations;
     assert.ok(Array.isArray(agents));
     const ids = agents.map((a) => a.id);
-    assert.deepEqual(ids, ['opencode', 'claude', 'codex']);
+    assert.deepEqual(ids, ['opencode', 'claude', 'codex', 'antigravity']);
     for (const a of agents) {
       assert.equal(typeof a.available, 'boolean');
       assert.ok('version' in a);
     }
+  });
+
+  test('dashboard and agents API share one catalogue', () => {
+    const svc = require('../server/services/agentInstallService');
+    const agentRegistry = require('../server/services/agentRegistry');
+    for (const id of ['opencode', 'claude', 'codex', 'antigravity']) {
+      assert.equal(svc.getAgent(id), agentRegistry.builtinAgents.find((a) => a.id === id));
+    }
+    assert.equal(svc.getAgent('antigravity').binaryName, 'agy');
+    assert.match(svc.getAgent('antigravity').installCommand, /antigravity\.google\/cli\/install\.sh/);
   });
 
   test('rejects an unknown tool', async () => {
@@ -57,21 +67,36 @@ describe('AI coding agent install integrations', () => {
     assert.equal(res.statusCode, 400);
   });
 
-  test('buildInstallSpec runs the official command as the service user by default', () => {
+  test('installing runs the shared installer as the service user, never through sudo', () => {
+    const terminalManager = require('../server/services/terminalManager');
+    const agentRegistry = require('../server/services/agentRegistry');
     const svc = require('../server/services/agentInstallService');
-    const agent = svc.getAgent('claude');
-    const spec = svc.buildInstallSpec(agent, null);
-    assert.equal(spec.command, '/bin/bash');
-    assert.equal(spec.args[0], '-lc');
-    assert.match(spec.args[1], /claude\.ai\/install\.sh/);
-    assert.match(spec.args[1], /exec \/bin\/bash -l/);
+    const calls = [];
+    const original = terminalManager.createSession;
+    const originalGet = agentRegistry.getAgent;
+    terminalManager.createSession = (opts) => {
+      calls.push(opts);
+      return { sessionId: 'fake-session' };
+    };
+    agentRegistry.getAgent = (id) => ({ ...agentRegistry.builtinAgents.find((a) => a.id === id), installed: false });
+    try {
+      const res = svc.installAgent('codex');
+      assert.equal(res.session.sessionId, 'fake-session');
+    } finally {
+      terminalManager.createSession = original;
+      agentRegistry.getAgent = originalGet;
+    }
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, '/bin/bash');
+    assert.equal(calls[0].args[0], '-lc');
+    const script = calls[0].args[1];
+    assert.match(script, /npm install -g --prefix "\$HOME\/\.local" @openai\/codex/);
+    assert.match(script, /exec \/bin\/bash -l$/);
+    assert.doesNotMatch(script, /\bsudo\b/);
   });
 
-  test('buildInstallSpec wraps the command with sudo when an admin user is set', () => {
+  test('rejects installing a tool outside the built-in catalogue', () => {
     const svc = require('../server/services/agentInstallService');
-    const spec = svc.buildInstallSpec(svc.getAgent('opencode'), 'deploy');
-    assert.equal(spec.command, 'sudo');
-    assert.deepEqual(spec.args.slice(0, 5), ['-u', 'deploy', '-H', '/bin/bash', '-lc']);
-    assert.match(spec.args[5], /opencode\.ai\/install/);
+    assert.throws(() => svc.installAgent('rm-rf'), /Unknown tool/);
   });
 });

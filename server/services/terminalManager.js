@@ -78,11 +78,22 @@ class TerminalManager {
    */
   _buildRunAs(projectId, adminUser = TERMINAL_ADMIN_USER) {
     if (projectId || !adminUser) return null;
+    // sudo resets PATH to its secure_path, which drops the shared agents
+    // directory; put it back so agents installed from the panel run here too.
+    const agentPath = `'${this._sharedAgentDirs().join(':').replace(/'/g, "'\\''")}'`;
     return {
       command: 'sudo',
-      args: ['-u', adminUser, '-H', '/bin/bash', '-lc', 'cd "$HOME" 2>/dev/null; exec /bin/bash -l'],
+      args: ['-u', adminUser, '-H', '/bin/bash', '-lc',
+        `export PATH="$PATH":${agentPath}; cd "$HOME" 2>/dev/null; exec /bin/bash -l`],
       user: adminUser,
     };
+  }
+
+  /**
+   * Bin directories of the shared (install-once-for-all-users) agents root.
+   */
+  _sharedAgentDirs() {
+    return ['bin', '.local/bin', '.opencode/bin', '.npm-global/bin'].map((sub) => path.join(AGENTS_DIR, sub));
   }
 
   /**
@@ -139,14 +150,10 @@ class TerminalManager {
     const base = process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
     // Shared agents directory (install-once-for-all-users) is always included,
     // regardless of which user the session runs as.
-    const dirs = [
-      path.join(AGENTS_DIR, 'bin'),
-      path.join(AGENTS_DIR, '.local', 'bin'),
-      path.join(AGENTS_DIR, '.opencode', 'bin'),
-      path.join(AGENTS_DIR, '.npm-global', 'bin'),
-    ];
+    const dirs = this._sharedAgentDirs();
     if (home) {
       dirs.push(
+        path.join(home, '.citadel', 'agents', 'bin'),
         path.join(home, '.local', 'bin'),
         path.join(home, '.opencode', 'bin'),
         path.join(home, '.npm-global', 'bin'),
@@ -370,9 +377,11 @@ class TerminalManager {
       }
     } else {
       // Direct shell fallback
+      // An explicit command is executed directly: joining it into a `-c`
+      // string would break any argument containing spaces or quotes.
       const defaultShell = process.platform === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash');
-      file = defaultShell;
-      spawnArgs = command ? ['-c', [command, ...args].join(' ')] : [];
+      file = command || defaultShell;
+      spawnArgs = command ? args : [];
     }
 
     let ptyProcess;
