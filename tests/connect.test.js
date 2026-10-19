@@ -18,3 +18,11 @@ test('uses the configured public URL and renders a QR SVG', () => {
   assert.equal(info.source, 'configured');
   assert.match(info.qrSvg, /<svg/);
 });
+
+test('terminal QR helpers report the printed width and detect overflow', () => {
+  const short = 'https://example.com';
+  const long = `https://example.com/#pair=${'x'.repeat(2000)}`;
+  assert.ok(connectService.qrFits(short, 80));
+  assert.equal(connectService.qrFits(long, 80), false);
+  assert.ok(connectService.qrColumns(short) < connectService.qrColumns(long));
+});

@@ -4457,10 +4457,13 @@
           const host = state.hosts.find((h) => h.id === id) || {};
           if (!window.confirm(`Unpair ${host.name || 'this machine'}? It is removed from both sides.`)) return;
           try {
-            await localApi(`/api/hosts/${id}`, { method: 'DELETE' });
+            const result = await localApi(`/api/hosts/${id}`, { method: 'DELETE' });
+            const remoteFailed = result && result.remote && result.remote.attempted && !result.remote.ok;
             await loadHosts();
             await refreshHostStatus(true);
-            showToast('Machine unpaired.', 'success');
+            showToast(remoteFailed
+              ? 'Machine removed here. It was unreachable, so the other side could not be notified.'
+              : 'Machine unpaired.', remoteFailed ? 'info' : 'success');
             if (state.activeHostId === id) {
               await switchHost('local');
             } else {

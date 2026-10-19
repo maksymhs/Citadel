@@ -154,15 +154,38 @@ function resolve() {
   return result;
 }
 
+const QR_QUIET = 2;
+
+function makeQr(text, ecc = 'L') {
+  const qr = qrcode(0, ecc);
+  qr.addData(text);
+  qr.make();
+  return qr;
+}
+
+/**
+ * How many terminal columns a QR code needs. Half-block cells draw one module
+ * per column, so the module count plus the quiet zone is the printed width.
+ */
+function qrColumns(text, { ecc = 'L', quiet = QR_QUIET } = {}) {
+  return makeQr(text, ecc).getModuleCount() + quiet * 2;
+}
+
+/**
+ * True when the code fits the terminal without wrapping. A wrapped QR is not
+ * merely ugly: every line after the first is shifted, so it cannot be scanned.
+ */
+function qrFits(text, maxWidth = 80, options = {}) {
+  return qrColumns(text, options) <= maxWidth;
+}
+
 function qrAnsi(text) {
   // Half-block cells keep the printed code roughly square while using half the
   // columns of a two-space-per-module renderer. Pairing links are long, so this
   // is what keeps the terminal QR inside a standard 80-column console.
-  const qr = qrcode(0, 'L');
-  qr.addData(text);
-  qr.make();
+  const qr = makeQr(text);
   const count = qr.getModuleCount();
-  const quiet = 2;
+  const quiet = QR_QUIET;
   const size = count + quiet * 2;
   const isDark = (row, col) => row >= quiet && row < quiet + count
     && col >= quiet && col < quiet + count
@@ -245,6 +268,8 @@ module.exports = {
   writeStoredPublicUrl,
   qrSvg,
   qrAnsi,
+  qrColumns,
+  qrFits,
   normalizeUrl,
   _reset: () => {
     cache = null;

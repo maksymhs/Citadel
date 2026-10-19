@@ -271,7 +271,7 @@ The machine selector above the sidebar lists this host plus every paired machine
 2. On machine B: sidebar → machine selector → **Pair a machine…**, then scan the code (live camera or photo) or paste its link.
 3. Both sides store each other. Use the selector to jump between them; the browser URL never changes.
 
-Pairing stores a stable instance id and **every candidate address** the host reports. A Cloudflare Quick Tunnel URL changes on every restart, so paired hosts re-announce their current addresses right after boot and every five minutes; the proxy tries each candidate until one answers. If an address is stale, the next announcement repairs it — no re-pairing needed. Because every peer request and response carries the sender's identity and current addresses, a single successful call in either direction repairs both sides. The browser also caches addresses it has seen and syncs them back on load, which covers the case where only the panel's own tunnel rotated. Unpair from **Settings → Machines** (or the selector's **Manage machines…**), which also revokes the token on the remote side.
+Pairing stores a stable instance id and **every candidate address** the host reports. A Cloudflare Quick Tunnel URL changes on every restart, so paired hosts re-announce their current addresses right after boot and every five minutes; the proxy tries each candidate until one answers. If an address is stale, the next announcement repairs it — no re-pairing needed. Because every peer request and response carries the sender's identity and current addresses, a single successful call in either direction repairs both sides. The browser also caches addresses it has seen and syncs them back on load, which covers the case where only the panel's own tunnel rotated. Unpair from **Settings → Machines** (or the selector's **Manage machines…**): it always removes the machine locally, and revokes the token on the remote side when that machine can be reached.
 
 Peer credentials are separate per direction: the inbound token is stored only as a SHA-256 hash, the outbound token is encrypted at rest with the existing vault key, and neither is ever exposed to the browser. Pairing links carry the secret in the URL fragment (`#pair=…`), so it is not sent to the server or written to proxy logs.
 
@@ -286,6 +286,15 @@ citadel tunnel remove   # stop and delete the service
 ```
 
 It gives you a public `https://<random>.trycloudflare.com` URL that works everywhere. The installer no longer starts it by default: pass `--tunnel` at install time, or run `citadel tunnel` afterwards. The URL **changes on every restart**, so the panel reads it dynamically and the QR always shows the current one (no need to touch `.env`). If two machines are paired **only** through Quick Tunnels and both restart at the same time, neither can reach the other until one address is supplied again (switch to that panel once, or enter the new address in Settings → Machines). Giving at least one machine a stable address — Tailscale, a named tunnel or `CITADEL_PUBLIC_URL` — makes recovery fully automatic. Because it is a **public** URL, create your administrator account before starting the tunnel and use a strong password.
+
+A Quick Tunnel URL is disposable: when `cloudflared` disconnects or restarts, the old hostname stops working permanently and is not reassigned to you. Nothing is lost — the panel simply follows the URL currently written to `data/tunnel-url` — but bookmarks, phone home-screen shortcuts and the old QR stop working. For a stable address use one of these instead:
+
+- **Tailscale** (recommended for a personal laptop): stable `https://<host>.<tailnet>.ts.net`, no public exposure, no domain or port forwarding.
+- **Named Cloudflare Tunnel**: create a tunnel and DNS route for a domain you own (`cloudflared tunnel login`, `cloudflared tunnel create citadel`, `cloudflared tunnel route dns citadel citadel.example.com`), run it as a service, then set `CITADEL_PUBLIC_URL=https://citadel.example.com` in `.env` and restart Citadel.
+- **VPS with a public IP**: point a DNS record at the VPS, put Caddy/Nginx with TLS in front of `127.0.0.1:3000`, and set `CITADEL_PUBLIC_URL` to that HTTPS address. Do not expose port 3000 directly over plain HTTP.
+
+On a laptop, also run `sudo citadel power on` (or install with `--24-7`) so closing the lid does not suspend the panel and its agents. A laptop behind NAT should use Tailscale or a named tunnel rather than depending on a Quick Tunnel URL.
+
 
 To reach the panel privately instead (only your own devices), use Tailscale:
 

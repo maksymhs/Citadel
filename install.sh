@@ -658,6 +658,7 @@ else
   # The server writes the current single-use invitation at startup; fall back to
   # the plain URL when it is unavailable (for example in check-only mode).
   QR_TEXT="$ACCESS_URL"
+  PAIR_QR=false
   if [ -n "$DATA_DIR" ]; then
     # The service writes the invitation just after it starts; give it a moment
     # so the post-install banner can show the dual-purpose code.
@@ -667,7 +668,10 @@ else
     done
     if $SUDO test -f "$DATA_DIR/connect-qr" 2>/dev/null; then
       INVITE_LINK="$($SUDO head -n1 "$DATA_DIR/connect-qr" 2>/dev/null || true)"
-      [ -n "$INVITE_LINK" ] && QR_TEXT="$INVITE_LINK"
+      if [ -n "$INVITE_LINK" ]; then
+        QR_TEXT="$INVITE_LINK"
+        case "$INVITE_LINK" in *'#pair='*) PAIR_QR=true ;; esac
+      fi
     fi
   fi
   echo ""
@@ -679,7 +683,9 @@ else
     qrencode -t ANSIUTF8 -m 2 "$QR_TEXT" || true
   fi
   echo "  $ACCESS_URL"
-  echo "  (The same code can be scanned from another Citadel's Pair screen.)"
+  if [ "$PAIR_QR" = true ]; then
+    echo "  (The same code can be scanned from another Citadel's Pair screen.)"
+  fi
   echo ""
   if [ "$TUNNEL" = true ] || [ "$LAN_EXPOSED" = true ]; then
     echo -e "${YELLOW}  IMPORTANT: this panel is reachable from outside this machine. Create your${NC}"

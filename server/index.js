@@ -245,11 +245,21 @@ async function startServer() {
 
     let qrText = connect.url;
     let invite = null;
+    let dualPurpose = false;
     try {
       invite = hostService.createInvite({ userId: null });
-      qrText = invite.link;
+      // The full invitation embeds every candidate address, which can make the
+      // terminal code wider than 80 columns and wrap. Use the compact payload
+      // when it fits; otherwise fall back to the (short) panel URL so the QR is
+      // always scannable. Settings still shows the full dual-purpose code.
+      const candidate = invite.compactLink || invite.link;
+      if (connectService.qrFits(candidate)) {
+        qrText = candidate;
+        dualPurpose = true;
+      }
       // The installer banner runs right after the service starts. Handing it
-      // the same invitation makes the post-install QR dual-purpose too.
+      // the same text keeps the post-install QR legible and, when it fits,
+      // dual-purpose too.
       fs.writeFileSync(path.join(DATA_DIR, 'connect-qr'), `${qrText}\n`, { mode: 0o600 });
     } catch {
       // No invitation (for example before the first setup) is not fatal, but do
@@ -269,9 +279,9 @@ async function startServer() {
 
     try {
       console.log(connectService.qrAnsi(qrText));
-      console.log(invite
+      console.log(dualPurpose
         ? '  Scan with any camera to open the panel, or from another Citadel\'s Pair screen to pair.'
-        : '  Scan to open the panel.');
+        : '  Scan to open the panel. Pair from Settings → Connection.');
     } catch {
       // If QR rendering fails, it is not a fatal condition.
     }

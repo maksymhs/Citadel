@@ -411,6 +411,19 @@ function createInvite({ userId }) {
   };
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const link = `${primaryUrl.replace(/\/+$/, '')}/#pair=${encoded}`;
+  // Terminal/installer rendering has a hard 80-column budget. The full payload
+  // repeats every candidate address (and can easily exceed it), so pair the
+  // terminal QR from a compact payload containing just the primary address.
+  // The accept response still returns the inviter's complete address list.
+  const compactPayload = {
+    v: 1,
+    instanceId: identity.instanceId,
+    url: primaryUrl,
+    inviteId,
+    secret,
+  };
+  const compactEncoded = Buffer.from(JSON.stringify(compactPayload), 'utf8').toString('base64url');
+  const compactLink = `${primaryUrl.replace(/\/+$/, '')}/#pair=${compactEncoded}`;
 
   return {
     inviteId,
@@ -418,6 +431,7 @@ function createInvite({ userId }) {
     payload,
     encoded,
     link,
+    compactLink,
     qrSvg: connectService.qrSvg(link),
     reachableWarning: /^http:\/\/(127\.0\.0\.1|localhost|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(identity.url)
       ? 'This address only works on the same network. Use Tailscale or a tunnel URL so the other machine can reach it.'
@@ -512,7 +526,13 @@ function fetchJson(url, { method = 'GET', token, body, timeout = REQUEST_TIMEOUT
  * Call a paired host, trying every candidate URL until one answers. Updates the
  * row with the address that worked so future calls skip dead candidates.
  */
-async function requestHost(hostId, apiPath, { method = 'GET', body = null, timeout = REQUEST_TIMEOUT_MS } = {}) {
+async function requestHost(hostId, apiPath, {
+  method = 'GET',
+  body = null,
+  timeout = REQUEST_TIMEOUT_MS,
+  maxCandidates = Infinity,
+  deadlineMs = 0,
+} = {}) {
   const row = getHostRow(hostId);
   if (!row) throw new Error('Host not found.');
   const token = getOutboundToken(row);
@@ -521,14 +541,19 @@ async function requestHost(hostId, apiPath, { method = 'GET', body = null, timeo
   const clean = String(apiPath || '');
   if (!clean.startsWith('/api/')) throw new Error('Only /api paths can be forwarded.');
 
-  const candidates = candidateUrls(row);
+  const candidates = candidateUrls(row).slice(0, maxCandidates);
   if (candidates.length === 0) throw new Error('The host has no known address.');
 
+  const startedAt = Date.now();
   let lastError = null;
   for (let i = 0; i < candidates.length; i += 1) {
+    if (deadlineMs > 0 && Date.now() - startedAt >= deadlineMs) break;
+    const attemptTimeout = deadlineMs > 0
+      ? Math.min(timeout, Math.max(1, deadlineMs - (Date.now() - startedAt)))
+      : timeout;
     const base = candidates[i];
     try {
-      const res = await fetchJson(`${base}${clean}`, { method, token, body, timeout });
+      const res = await fetchJson(`${base}${clean}`, { method, token, body, timeout: attemptTimeout });
       // A stale tunnel hostname can still resolve and answer with a Cloudflare
       // error page (502/530) instead of failing the connection. Treat gateway
       // errors as "this address is dead" and try the next candidate.
@@ -653,8 +678,10 @@ async function announceToPeers() {
 }
 
 /**
- * Remove a peer in both directions: ask the remote to forget us first (using
- * the outbound token), then delete the local row and revoke its inbound tokens.
+ * Remove a peer. The local row always disappears, even when the other machine
+ * is offline: waiting for every stale address (a retired Quick Tunnel URL can
+ * hang until its timeout) used to make Unpair look broken. The remote revoke is
+ * best-effort and gets a small, fixed time budget.
  */
 async function unpairHost(hostId) {
   const row = getHostRow(hostId);
@@ -666,7 +693,9 @@ async function unpairHost(hostId) {
       const res = await requestHost(hostId, '/api/host/peers/revoke', {
         method: 'POST',
         body: { instanceId: getInstanceId() },
-        timeout: 8000,
+        timeout: 2000,
+        maxCandidates: 3,
+        deadlineMs: 3500,
       });
       remote.ok = res.ok;
       if (!res.ok) remote.error = (res.data && res.data.error) || `HTTP ${res.status}`;

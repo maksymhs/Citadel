@@ -65,6 +65,16 @@ describe('Peer pairing (invite + accept)', () => {
     const invite = JSON.parse(inviteRes.payload).invite;
     assert.ok(invite.link.includes('#pair='));
     assert.match(invite.qrSvg, /<svg/);
+    // The terminal/installer QR uses the compact payload so it fits 80 columns;
+    // it still carries everything redeem needs.
+    assert.ok(invite.compactLink.includes('#pair='));
+    assert.ok(invite.compactLink.length < invite.link.length);
+    const compactPayload = JSON.parse(Buffer.from(
+      invite.compactLink.split('#pair=')[1], 'base64url',
+    ).toString('utf8'));
+    assert.equal(compactPayload.inviteId, invite.inviteId);
+    assert.equal(compactPayload.url, invite.payload.url);
+    assert.equal(compactPayload.urls, undefined);
 
     // The link is dual-purpose: a normal camera follows the panel URL, while
     // the fragment carries everything another Citadel needs to pair.
@@ -292,6 +302,43 @@ describe('Peer pairing (invite + accept)', () => {
       method: 'GET', url: '/api/hosts', headers: { cookie },
     })).payload).hosts;
     assert.equal(after.some((h) => h.id === target.id), false);
+  });
+
+  test('unpair still removes a host whose address hangs', async (t) => {
+    const hostService = require('../server/services/hostService');
+    // Accept the connection but never answer, like a retired tunnel that no
+    // longer times out promptly. The local row must still go away quickly.
+    const silent = http.createServer(() => {});
+    await new Promise((resolve) => silent.listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise((resolve) => {
+      if (typeof silent.closeAllConnections === 'function') silent.closeAllConnections();
+      silent.close(resolve);
+    }));
+
+    const url = `http://127.0.0.1:${silent.address().port}`;
+    const host = hostService.upsertPairedHost({
+      instanceId: 'instance-offline-0001',
+      name: 'offline-machine',
+      url,
+      urls: [url],
+      outboundToken: 'f'.repeat(64),
+      inboundToken: 'e'.repeat(64),
+    });
+
+    const started = Date.now();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/hosts/${host.id}`,
+      headers: { cookie },
+    });
+    const elapsed = Date.now() - started;
+    assert.equal(res.statusCode, 200);
+    assert.ok(elapsed < 6000, `unpair took ${elapsed}ms`);
+
+    const after = JSON.parse((await app.inject({
+      method: 'GET', url: '/api/hosts', headers: { cookie },
+    })).payload).hosts;
+    assert.equal(after.some((h) => h.id === host.id), false);
   });
 });
 
