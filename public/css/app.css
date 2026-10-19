@@ -310,6 +310,22 @@ html.is-mobile-ui #app-container {
   gap: 16px;
 }
 
+.secret-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.secret-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  background-color: var(--bg-tertiary);
+  border-radius: 8px;
+}
+
 .sidebar-footer {
   padding: 14px 16px;
   border-top: 1px solid var(--border-color);

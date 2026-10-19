@@ -121,6 +121,10 @@ function run(world, { args = [], bin, env = {} } = {}) {
       PATH: `${bin || world.binFull}${path.delimiter}${process.env.PATH}`,
       CITADEL_DIR: world.repo,
       DATA_DIR: world.dataDir,
+      // Pin the database to the throwaway world so an inherited DATABASE_PATH
+      // (e.g. when the suite runs inside the service environment) can never
+      // make the updater snapshot/restore the real one.
+      DATABASE_PATH: world.dbPath,
       CITADEL_REPO_BRANCH: 'main',
       CITADEL_SERVICE: 'citadel',
       CITADEL_UPDATE_HEALTH_RETRIES: '2',

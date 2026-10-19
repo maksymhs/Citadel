@@ -513,6 +513,17 @@ EOF
     $SUDO git config --system credential.helper /usr/local/bin/citadel-git-credential
   fi
 
+  # Agent credentials CLI: read the same encrypted vault from any terminal so
+  # agents can use stored credentials for their tasks (list/get/env/exec).
+  if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/citadel-creds.js" ]; then
+    $SUDO tee /usr/local/bin/citadel-creds >/dev/null <<EOF
+#!/bin/sh
+DATA_DIR="$DATA_DIR" DATABASE_PATH="$DATA_DIR/citadel.db" exec node "$APP_DIR/scripts/citadel-creds.js" "\$@"
+EOF
+    $SUDO chmod 0755 /usr/local/bin/citadel-creds
+    echo "      Credentials CLI installed: citadel-creds list | get | env | exec"
+  fi
+
   # Friendly management CLI: `citadel status|url|qr|logs|restart|update|tunnel`.
   # A thin launcher so repository updates to scripts/citadel take effect at once.
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/citadel" ]; then

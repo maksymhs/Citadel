@@ -72,7 +72,7 @@ describe('Git Credentials & Repository Discovery', () => {
     assert.equal(res.payload.includes('ghp_secretToken123456'), false);
 
     const db = getDatabase();
-    const row = db.prepare('SELECT token_encrypted FROM git_credentials WHERE provider = ?').get('github');
+    const row = db.prepare("SELECT value_encrypted AS token_encrypted FROM secrets WHERE name = 'GITHUB_TOKEN'").get();
     assert.ok(row.token_encrypted.startsWith('v1:'));
     assert.equal(row.token_encrypted.includes('ghp_secretToken123456'), false);
   });

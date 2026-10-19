@@ -99,6 +99,42 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    name: '006_secret_vault',
+    up: (db) => {
+      // Unified credential vault. Legacy installs kept git provider tokens in
+      // `git_credentials`; move them in as GITHUB_TOKEN / GITLAB_TOKEN entries
+      // (kind='git') reusing the exact ciphertext, then leave the old table in
+      // place (harmless, never read again) so no credential is ever lost.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS secrets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          kind TEXT NOT NULL DEFAULT 'env',
+          value_encrypted TEXT NOT NULL,
+          metadata TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+
+      const hasGitCreds = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'git_credentials'")
+        .get();
+      if (!hasGitCreds) return;
+
+      const rows = db.prepare('SELECT * FROM git_credentials').all();
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO secrets (name, kind, value_encrypted, metadata, created_at, updated_at)
+        VALUES (?, 'git', ?, ?, ?, ?)
+      `);
+      for (const r of rows) {
+        const name = `${String(r.provider).toUpperCase()}_TOKEN`;
+        const metadata = JSON.stringify({ provider: r.provider, username: r.username || null });
+        insert.run(name, r.token_encrypted, metadata, r.created_at, r.updated_at);
+      }
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -239,10 +275,16 @@ function initDatabase(customPath = null) {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS git_credentials (
-      provider TEXT PRIMARY KEY,
-      username TEXT,
-      token_encrypted TEXT NOT NULL,
+    -- Single encrypted credential store ("vault"): git provider tokens, env
+    -- vars and files agents need. Values are AES-256-GCM encrypted at rest via
+    -- security/secrets.js and reachable by agents through the citadel-creds CLI
+    -- and by terminals at spawn, so there is one place to add/rotate/revoke.
+    CREATE TABLE IF NOT EXISTS secrets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL DEFAULT 'env',
+      value_encrypted TEXT NOT NULL,
+      metadata TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

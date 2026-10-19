@@ -3462,17 +3462,19 @@
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading settings...</div>';
 
     try {
-      const [settingsRes, connectRes, nodeRes, versionRes] = await Promise.all([
+      const [settingsRes, connectRes, nodeRes, versionRes, secretsRes] = await Promise.all([
         api('/api/settings/connect'),
         api('/api/system/connect'),
         api('/api/system/node'),
         api('/api/system/version'),
+        api('/api/secrets'),
       ]);
       await loadModules();
       const s = settingsRes.connect || {};
       const connect = connectRes.connect || {};
       const node = nodeRes.node || {};
       const ver = versionRes.version || {};
+      const secretsList = secretsRes.secrets || [];
 
       content.innerHTML = `
         <div style="margin-bottom:20px;">
@@ -3518,6 +3520,19 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <div style="margin-top:28px;margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">Credentials</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">
+            One encrypted vault for everything agents and git need. Environment
+            variables are injected into every terminal; agents can read any entry
+            with the <code>citadel-creds</code> CLI. Values are never shown again.
+          </p>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          ${secretsCardHtml(secretsList)}
         </div>
 
         <div style="margin-top:28px;margin-bottom:20px;">
@@ -3584,6 +3599,7 @@
 
       bindModuleToggles(renderSettingsView);
       bindUpdatesCard();
+      bindSecretsCard();
 
       const input = document.getElementById('settings-public-url');
       const saveBtn = document.getElementById('settings-save-url');
@@ -3702,6 +3718,86 @@
         }
       };
     }
+  }
+
+  // Credentials vault card (Settings): add/rotate/delete. Values are write-only.
+  function secretsCardHtml(secrets) {
+    const rows = secrets.length === 0
+      ? '<p style="color:var(--text-secondary);font-size:13px;">No credentials stored yet.</p>'
+      : `<div class="secret-list">
+          ${secrets.map((sec) => `
+            <div class="secret-row">
+              <div style="min-width:0;">
+                <strong style="font-family:var(--font-mono);font-size:13px;">${escapeHtml(sec.name)}</strong>
+                <span class="badge badge-muted" style="margin-left:8px;">${escapeHtml(sec.kind)}</span>
+                ${sec.metadata && sec.metadata.provider ? `<span style="margin-left:8px;font-size:12px;color:var(--text-muted);">${escapeHtml(sec.metadata.provider)}</span>` : ''}
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Updated ${escapeHtml(sec.updated_at || '')}</div>
+              </div>
+              <button class="btn btn-secondary btn-sm secret-delete-btn" data-secret-name="${escapeHtml(sec.name)}">Delete</button>
+            </div>`).join('')}
+        </div>`;
+
+    return `
+      <h3 class="widget-heading">Stored credentials</h3>
+      ${rows}
+      <div class="settings-row" style="margin-top:16px;flex-wrap:wrap;">
+        <input type="text" id="secret-name" class="form-input" placeholder="NAME (e.g. GITHUB_TOKEN, MY_API_KEY)" style="flex:1;min-width:180px;" />
+        <select id="secret-kind" class="form-input" style="max-width:120px;">
+          <option value="env">env</option>
+          <option value="git">git</option>
+          <option value="file">file</option>
+          <option value="ssh">ssh</option>
+        </select>
+        <input type="password" id="secret-value" class="form-input" placeholder="Value" style="flex:1;min-width:180px;" autocomplete="new-password" />
+        <button class="btn btn-primary btn-sm" id="secret-add-btn">Save</button>
+      </div>
+      <p style="color:var(--text-muted);font-size:12px;margin-top:8px;">
+        Agents read these with <code>citadel-creds list | get &lt;name&gt; | env | exec -- &lt;cmd&gt;</code>.
+      </p>
+    `;
+  }
+
+  function bindSecretsCard() {
+    const addBtn = document.getElementById('secret-add-btn');
+    if (addBtn) {
+      const nameInput = document.getElementById('secret-name');
+      const valueInput = document.getElementById('secret-value');
+      addBtn.onclick = async () => {
+        const name = nameInput.value.trim();
+        const kind = document.getElementById('secret-kind').value;
+        const value = valueInput.value;
+        if (!name || !value) {
+          showToast('Name and value are required.', 'error');
+          return;
+        }
+        addBtn.disabled = true;
+        try {
+          await api('/api/secrets', { method: 'POST', body: { name, value, kind } });
+          showToast('Credential saved.', 'success');
+          renderSettingsView();
+        } catch (err) {
+          addBtn.disabled = false;
+          showToast(err.message, 'error');
+        }
+      };
+      valueInput.onkeydown = (e) => {
+        if (e.key === 'Enter') addBtn.onclick();
+      };
+    }
+
+    document.querySelectorAll('.secret-delete-btn').forEach((btn) => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/secrets/${encodeURIComponent(btn.getAttribute('data-secret-name'))}`, { method: 'DELETE' });
+          showToast('Credential deleted.', 'success');
+          renderSettingsView();
+        } catch (err) {
+          btn.disabled = false;
+          showToast(err.message, 'error');
+        }
+      };
+    });
   }
 
   // Modules & Extensions management, rendered inside the Settings screen.

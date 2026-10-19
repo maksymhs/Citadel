@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { getDatabase } = require('../database/db');
+const secretStore = require('./secretStore');
 const { TMUX_PATH, TERMINAL_ADMIN_USER, AGENTS_DIR } = require('../config');
 
 class TerminalManager {
@@ -338,8 +339,18 @@ class TerminalManager {
     let file;
     let spawnArgs;
 
+    // Inject vault credentials (env + git provider tokens) so agents can use
+    // them out of the box. Best-effort: a vault error must never block a shell.
+    let secretEnv = {};
+    try {
+      secretEnv = secretStore.envVars();
+    } catch {
+      secretEnv = {};
+    }
+
     const env = {
       ...process.env,
+      ...secretEnv,
       PATH: this._buildPath(this._effectiveHome(command, args)),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',

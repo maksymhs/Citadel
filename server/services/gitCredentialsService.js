@@ -1,9 +1,11 @@
 /**
  * Citadel Git Credentials Service
- * Stores provider access tokens encrypted at rest and talks to provider APIs.
+ *
+ * Thin facade over the unified secret vault (secretStore). Provider tokens are
+ * stored as `GITHUB_TOKEN` / `GITLAB_TOKEN` entries (kind='git'), so git, the
+ * provider APIs and agents all read from one encrypted place.
  */
-const { getDatabase } = require('../database/db');
-const { encrypt, decrypt } = require('../security/secrets');
+const secretStore = require('./secretStore');
 
 const PROVIDERS = {
   github: {
@@ -26,12 +28,28 @@ function getProvider(provider) {
   return PROVIDERS[provider] || null;
 }
 
+function gitSecretName(provider) {
+  return `${String(provider).toUpperCase()}_TOKEN`;
+}
+
+function providerFromName(name) {
+  return String(name).replace(/_TOKEN$/i, '').toLowerCase();
+}
+
 function listCredentials() {
-  const db = getDatabase();
-  const rows = db
-    .prepare('SELECT provider, username, created_at, updated_at FROM git_credentials ORDER BY provider')
-    .all();
-  return rows.map((r) => ({ ...r, label: PROVIDERS[r.provider]?.label || r.provider }));
+  return secretStore
+    .listSecrets()
+    .filter((s) => s.kind === 'git')
+    .map((s) => {
+      const provider = (s.metadata && s.metadata.provider) || providerFromName(s.name);
+      return {
+        provider,
+        username: (s.metadata && s.metadata.username) || null,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+        label: PROVIDERS[provider]?.label || provider,
+      };
+    });
 }
 
 function listProviderStatus() {
@@ -56,49 +74,32 @@ function saveCredential({ provider, token, username = null }) {
     throw new Error('A valid access token is required.');
   }
 
-  const db = getDatabase();
-  const now = new Date().toISOString();
-  const encrypted = encrypt(token.trim());
   const cleanUser = username ? String(username).trim() : null;
+  const res = secretStore.setSecret(gitSecretName(p.id), token.trim(), {
+    kind: 'git',
+    metadata: { provider: p.id, username: cleanUser },
+  });
 
-  const existing = db.prepare('SELECT provider FROM git_credentials WHERE provider = ?').get(p.id);
-  if (existing) {
-    db.prepare(
-      `UPDATE git_credentials
-         SET username = ?, token_encrypted = ?, updated_at = ?
-       WHERE provider = ?`
-    ).run(cleanUser, encrypted, now, p.id);
-  } else {
-    db.prepare(
-      `INSERT INTO git_credentials
-         (provider, username, token_encrypted, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(p.id, cleanUser, encrypted, now, now);
-  }
-
-  return { provider: p.id, username: cleanUser, updated_at: now };
+  return { provider: p.id, username: cleanUser, updated_at: res.updated_at };
 }
 
 function deleteCredential(provider) {
-  const db = getDatabase();
-  const res = db.prepare('DELETE FROM git_credentials WHERE provider = ?').run(provider);
-  return { success: res.changes > 0, provider };
+  const p = getProvider(provider);
+  const id = p ? p.id : provider;
+  const res = secretStore.removeSecret(gitSecretName(id));
+  return { success: res.success, provider: id };
 }
 
 function getDecryptedCredential(provider) {
-  const db = getDatabase();
-  const row = db.prepare('SELECT * FROM git_credentials WHERE provider = ?').get(provider);
-  if (!row) return null;
-
-  let token = null;
-  try {
-    token = decrypt(row.token_encrypted);
-  } catch {
-    token = null;
-  }
-  if (!token) return null;
-
-  return { provider: row.provider, username: row.username, token };
+  const p = getProvider(provider);
+  if (!p) return null;
+  const secret = secretStore.getSecret(gitSecretName(p.id));
+  if (!secret) return null;
+  return {
+    provider: p.id,
+    username: (secret.metadata && secret.metadata.username) || null,
+    token: secret.value,
+  };
 }
 
 /**
