@@ -173,6 +173,25 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: '008_pairing_invites',
+    up: (db) => {
+      // Invitations must survive the CLI process that creates them: `citadel
+      // qr` runs independently from the server that later accepts the pairing.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS pairing_invites (
+          id TEXT PRIMARY KEY,
+          secret_hash TEXT NOT NULL,
+          user_id TEXT,
+          instance_id TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_pairing_invites_expires_at
+        ON pairing_invites(expires_at);
+      `);
+    },
+  },
 ];
 
 function columnExists(db, table, column) {

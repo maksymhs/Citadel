@@ -232,10 +232,8 @@ async function startServer() {
   try {
     await fastify.listen({ port: PORT, host: HOST });
 
-    // Print a dual-purpose QR code on every start: any camera app opens the
-    // panel, while another Citadel's Pair screen uses the same code to pair.
-    // The invitation is single-use and expires, so it is only a convenience;
-    // Settings always shows a fresh one.
+    // Print a pairing QR code on every start. Any camera can still open the
+    // panel URL, while another Citadel's Pair screen redeems the invitation.
     let connect = { url: `http://${HOST}:${PORT}`, source: 'localhost' };
     try {
       connect = connectService.getConnectInfo();
@@ -243,27 +241,16 @@ async function startServer() {
       // QR/URL detection is best-effort; fall back to the local address.
     }
 
-    let qrText = connect.url;
-    let invite = null;
-    let dualPurpose = false;
+    let qrText = null;
     try {
-      invite = hostService.createInvite({ userId: null });
-      // The full invitation embeds every candidate address, which can make the
-      // terminal code wider than 80 columns and wrap. Use the compact payload
-      // when it fits; otherwise fall back to the (short) panel URL so the QR is
-      // always scannable. Settings still shows the full dual-purpose code.
-      const candidate = invite.compactLink || invite.link;
-      if (connectService.qrFits(candidate)) {
-        qrText = candidate;
-        dualPurpose = true;
-      }
+      const invite = hostService.createInvite({ userId: null });
+      qrText = invite.compactLink;
       // The installer banner runs right after the service starts. Handing it
       // the same text keeps the post-install QR legible and, when it fits,
       // dual-purpose too.
       fs.writeFileSync(path.join(DATA_DIR, 'connect-qr'), `${qrText}\n`, { mode: 0o600 });
     } catch {
-      // No invitation (for example before the first setup) is not fatal, but do
-      // not leave a stale code behind for the installer banner to reuse.
+      // No invitation is not fatal, but do not leave a stale code behind.
       try { fs.rmSync(path.join(DATA_DIR, 'connect-qr'), { force: true }); } catch { /* ignore */ }
     }
 
@@ -278,10 +265,10 @@ async function startServer() {
 ==================================================================`);
 
     try {
-      console.log(connectService.qrAnsi(qrText));
-      console.log(dualPurpose
-        ? '  Scan with any camera to open the panel, or from another Citadel\'s Pair screen to pair.'
-        : '  Scan to open the panel. Pair from Settings → Connection.');
+      if (qrText) {
+        console.log(connectService.qrAnsi(qrText));
+        console.log('  Scan with any camera to open the panel, or from another Citadel\'s Pair screen to pair.');
+      }
     } catch {
       // If QR rendering fails, it is not a fatal condition.
     }

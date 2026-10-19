@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
+const hostService = require('../server/services/hostService');
+const connectService = require('../server/services/connectService');
 
 function cleanDb(file) {
   for (const suffix of ['', '-wal', '-shm']) {
@@ -69,12 +71,11 @@ describe('Peer pairing (invite + accept)', () => {
     // it still carries everything redeem needs.
     assert.ok(invite.compactLink.includes('#pair='));
     assert.ok(invite.compactLink.length < invite.link.length);
-    const compactPayload = JSON.parse(Buffer.from(
-      invite.compactLink.split('#pair=')[1], 'base64url',
-    ).toString('utf8'));
+    assert.ok(connectService.qrFits(invite.compactLink));
+    const compactPayload = hostService.parsePairingCode(invite.compactLink);
     assert.equal(compactPayload.inviteId, invite.inviteId);
     assert.equal(compactPayload.url, invite.payload.url);
-    assert.equal(compactPayload.urls, undefined);
+    assert.deepEqual(compactPayload.urls, [invite.payload.url]);
 
     // The link is dual-purpose: a normal camera follows the panel URL, while
     // the fragment carries everything another Citadel needs to pair.

@@ -30,7 +30,7 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
 
 ## 2. System Requirements
 
-- **Operating System**: Debian 11/12, Ubuntu 20.04/22.04/24.04 (or macOS for local development).
+- **Operating System**: Debian 11/12, Ubuntu 20.04/22.04/24.04, or macOS 13+.
 - **Architecture**: `x86_64` or `arm64 / aarch64`.
 - **Node.js**: v18 LTS, v20 LTS, v22 LTS or later.
 - **tmux**: For full session persistence (optional: direct PTY fallback).
@@ -41,9 +41,15 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
 
 ## 3. Quick Start
 
-### One-line install (Debian / Ubuntu)
+### One-line install (Linux and macOS)
 
 Run the installer directly from the repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash
+```
+
+On Debian/Ubuntu, add `sudo` before `bash` to install the system service:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | sudo bash
@@ -57,7 +63,8 @@ That command installs the service **local-only and unprivileged by default**. Ev
 | `--tunnel` | Public Cloudflare Quick Tunnel URL |
 | `--admin-terminal[=user]` | Root-capable System Terminal (privileged) |
 | `--enable-updater` | Root-owned in-panel updater |
-| `--24-7` (or `--keep-awake`) | Laptop mode: ignore lid close and block suspend/hibernate |
+| `--24-7` (or `--keep-awake`) | Default: ignore lid close and block suspend/hibernate |
+| `--no-24-7` (or `--no-keep-awake`) | Allow the host to suspend normally |
 
 The panel listens on `127.0.0.1` unless you pass `--lan`/`--host`, and nothing privileged is enabled until a flag asks for it. **Until you create the administrator account, whoever reaches the panel first can claim it** — so prefer the local QR flow, set up the admin, and only then add a tunnel if you need one.
 
@@ -67,15 +74,19 @@ Preview what it will do without changing the system:
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash -s -- --check-only
 ```
 
-### One-line uninstall
+On macOS, install prerequisites first (`brew install node git tmux`) and run the same command **without** `sudo`. It creates a per-user `launchd` service that starts Citadel after login and restarts it if it exits. Use `~/.local/bin/citadel status`, `logs` and `restart`; add `~/.local/bin` to your `PATH` if necessary. Pair the Mac with the VPS through Tailscale or another reachable private address. A closed MacBook normally sleeps, so keep it powered and awake when it must remain an online paired host.
+
+### One-line uninstall (Linux and macOS)
 
 Remove the service, helper scripts, `/srv/citadel` (data/projects) and the service user. The local source checkout the installer ran from is **kept** by default:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/scripts/uninstall.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash -s -- --uninstall
 ```
 
-Pass `--keep-data` to preserve `/srv/citadel` (database and projects). To also delete the local checkout use `--remove-source`, which always asks for an interactive confirmation (a non-interactive shell preserves it). Before any change the installer canonicalises `CITADEL_TARGET_DIR`/`CITADEL_AGENTS_DIR` and refuses protected system paths (`/`, `/etc`, `/usr`, `/var`, …) and directories without Citadel evidence. `--dry-run` (`--check-only`) prints the canonical paths and planned actions without touching anything.
+On Debian/Ubuntu, add `sudo` before `bash` (or allow the uninstaller to request it) to remove the system service.
+
+Pass `--keep-data` after `--uninstall` to preserve the database and projects. On Linux, `--remove-source` also deletes the local checkout after an interactive confirmation. Before any change the installer validates the target and requires Citadel installation evidence; `--dry-run` (`--check-only`) prints the plan without touching anything.
 
 ### Install from a clone
 
@@ -113,7 +124,7 @@ Once installed, a small `citadel` command is available system-wide:
 ```bash
 citadel status     # service, version, panel URL and health
 citadel url        # print the panel URL
-citadel qr         # scannable QR code for the panel URL
+citadel qr         # one-time QR code to pair another Citadel (valid 10 minutes)
 citadel logs       # follow the service logs
 citadel restart    # restart the service
 citadel update     # update to the latest version
@@ -127,7 +138,7 @@ citadel power off  # restore the system sleep defaults
 
 ### Laptop server / always-on mode
 
-When Citadel runs on a laptop, closing the lid normally suspends the machine and takes the panel, terminals and agents offline. Install with `--24-7` (or run `sudo citadel power on` later) to:
+Citadel enables 24/7 mode by default so closing a laptop lid does not suspend the panel, terminals or agents. Use `--no-24-7` during installation to opt out, or run `sudo citadel power on` later to enable it:
 
 - make **systemd-logind ignore the lid switch** (on battery, AC and docked);
 - mask the **sleep, suspend, hibernate and hybrid-sleep** targets so nothing else can suspend the host;
@@ -257,7 +268,7 @@ The **Files** view browses the host filesystem: navigate directories, read and e
 
 ### Access from your phone (no domain needed)
 
-The installer prints one scannable QR code pointing at the panel, and **Settings → Connection** shows the same dual-purpose code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise an active **Cloudflare Quick Tunnel**, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
+The installer and `citadel qr` print a scannable one-time pairing QR code, and **Settings → Connection** shows a fresh pairing code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise an active **Cloudflare Quick Tunnel**, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
 
 The same code does both jobs: scanning it with any camera app opens the panel, while scanning it from another Citadel's **Pair a machine** screen pairs the two hosts. **Settings → Connection** always shows a fresh single-use pairing code (it expires in 10 minutes); use **New code** to generate another one.
 
@@ -297,7 +308,7 @@ A Quick Tunnel URL is disposable: when `cloudflared` disconnects or restarts, th
 - **Named Cloudflare Tunnel**: create a tunnel and DNS route for a domain you own (`cloudflared tunnel login`, `cloudflared tunnel create citadel`, `cloudflared tunnel route dns citadel citadel.example.com`), run it as a service, then set `CITADEL_PUBLIC_URL=https://citadel.example.com` in `.env` and restart Citadel.
 - **VPS with a public IP**: point a DNS record at the VPS, put Caddy/Nginx with TLS in front of `127.0.0.1:3000`, and set `CITADEL_PUBLIC_URL` to that HTTPS address. Do not expose port 3000 directly over plain HTTP.
 
-On a laptop, also run `sudo citadel power on` (or install with `--24-7`) so closing the lid does not suspend the panel and its agents. A laptop behind NAT should use Tailscale or a named tunnel rather than depending on a Quick Tunnel URL.
+On a laptop, 24/7 mode is enabled during installation by default. Run `sudo citadel power on` to re-enable it later if it was disabled. A laptop behind NAT should use Tailscale or a named tunnel rather than depending on a Quick Tunnel URL.
 
 
 To reach the panel privately instead (only your own devices), use Tailscale:

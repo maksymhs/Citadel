@@ -16,6 +16,13 @@ qr.make();
 const count = qr.getModuleCount();
 const quiet = 2;
 const size = count + quiet * 2;
+const columns = Number(process.stdout.columns || process.env.COLUMNS);
+// Leave one spare column: terminals with auto-wrap enabled wrap when the last
+// cell is written, which shifts every following QR row.
+if (Number.isFinite(columns) && columns > 0 && size >= columns) {
+  console.error(`QR needs ${size + 1} columns, but this terminal has ${columns}. Resize it and try again.`);
+  process.exit(2);
+}
 const isDark = (row, col) => row >= quiet && row < quiet + count
   && col >= quiet && col < quiet + count
   && qr.isDark(row - quiet, col - quiet);

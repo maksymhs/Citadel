@@ -29,9 +29,6 @@ const REQUEST_TIMEOUT_MS = 12000;
 const STREAM_TIMEOUT_MS = 120000;
 const INVITE_MAX = 32;
 
-// inviteId -> { secretHash, userId, expiresAt, instanceId }
-const invites = new Map();
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -382,10 +379,7 @@ function listHosts() {
 // --- Invites --------------------------------------------------------------
 
 function cleanupInvites() {
-  const now = Date.now();
-  for (const [id, invite] of invites.entries()) {
-    if (invite.expiresAt <= now) invites.delete(id);
-  }
+  getDatabase().prepare('DELETE FROM pairing_invites WHERE expires_at <= ?').run(Date.now());
 }
 
 /**
@@ -395,21 +389,24 @@ function cleanupInvites() {
  */
 function createInvite({ userId }) {
   cleanupInvites();
-  while (invites.size >= INVITE_MAX) {
-    const oldest = invites.keys().next().value;
-    invites.delete(oldest);
+  const db = getDatabase();
+  const overflow = db.prepare(`
+    SELECT id FROM pairing_invites ORDER BY created_at ASC LIMIT -1 OFFSET ?
+  `).all(INVITE_MAX - 1);
+  if (overflow.length) {
+    const remove = db.prepare('DELETE FROM pairing_invites WHERE id = ?');
+    const transaction = db.transaction((rows) => rows.forEach((row) => remove.run(row.id)));
+    transaction(overflow);
   }
 
   const identity = getIdentity();
   const inviteId = crypto.randomUUID();
   const secret = crypto.randomBytes(24).toString('hex');
   const expiresAt = Date.now() + INVITE_TTL_MS;
-  invites.set(inviteId, {
-    secretHash: hashToken(secret),
-    userId: userId || null,
-    instanceId: identity.instanceId,
-    expiresAt,
-  });
+  db.prepare(`
+    INSERT INTO pairing_invites (id, secret_hash, user_id, instance_id, expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(inviteId, hashToken(secret), userId || null, identity.instanceId, expiresAt, nowIso());
 
   const primaryUrl = identity.urls[0] || identity.url;
   const payload = {
@@ -423,19 +420,7 @@ function createInvite({ userId }) {
   };
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const link = `${primaryUrl.replace(/\/+$/, '')}/#pair=${encoded}`;
-  // Terminal/installer rendering has a hard 80-column budget. The full payload
-  // repeats every candidate address (and can easily exceed it), so pair the
-  // terminal QR from a compact payload containing just the primary address.
-  // The accept response still returns the inviter's complete address list.
-  const compactPayload = {
-    v: 1,
-    instanceId: identity.instanceId,
-    url: primaryUrl,
-    inviteId,
-    secret,
-  };
-  const compactEncoded = Buffer.from(JSON.stringify(compactPayload), 'utf8').toString('base64url');
-  const compactLink = `${primaryUrl.replace(/\/+$/, '')}/#pair=${compactEncoded}`;
+  const compactLink = `${primaryUrl.replace(/\/+$/, '')}/#pair=v1.${inviteId.replace(/-/g, '')}.${secret}`;
 
   return {
     inviteId,
@@ -457,18 +442,26 @@ function createInvite({ userId }) {
 function parsePairingCode(code) {
   const raw = String(code || '').trim();
   if (!raw) throw new Error('Paste the pairing link or scan its QR code.');
+  let linkUrl = null;
   let encoded = raw;
-  const marker = raw.indexOf('#pair=');
-  if (marker !== -1) encoded = raw.slice(marker + 6);
-  else if (/^https?:\/\//i.test(raw)) {
+  if (/^https?:\/\//i.test(raw)) {
     try {
       const url = new URL(raw);
       const value = new URLSearchParams(url.hash.replace(/^#/, '')).get('pair');
       if (!value) throw new Error('missing pair payload');
       encoded = value;
+      url.hash = '';
+      linkUrl = url.toString().replace(/\/+$/, '');
     } catch {
       throw new Error('That link does not contain a pairing code.');
     }
+  }
+
+  const compact = encoded.match(/^v1\.([0-9a-f]{32})\.([0-9a-f]{48})$/i);
+  if (compact) {
+    if (!linkUrl) throw new Error('The compact pairing code must include its link address.');
+    const inviteId = `${compact[1].slice(0, 8)}-${compact[1].slice(8, 12)}-${compact[1].slice(12, 16)}-${compact[1].slice(16, 20)}-${compact[1].slice(20)}`;
+    return { v: 1, inviteId, secret: compact[2], url: linkUrl, urls: [linkUrl] };
   }
 
   let payload;
@@ -489,19 +482,22 @@ function parsePairingCode(code) {
  */
 function consumeInvite(inviteId, secret) {
   cleanupInvites();
-  const invite = invites.get(inviteId);
-  if (!invite) throw new Error('This invitation has expired or was already used.');
-  if (invite.expiresAt <= Date.now()) {
-    invites.delete(inviteId);
-    throw new Error('This invitation has expired.');
-  }
-  const provided = Buffer.from(hashToken(secret));
-  const expected = Buffer.from(invite.secretHash);
-  if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
-    throw new Error('The invitation secret is not valid.');
-  }
-  invites.delete(inviteId);
-  return invite;
+  const db = getDatabase();
+  return db.transaction(() => {
+    const invite = db.prepare('SELECT * FROM pairing_invites WHERE id = ?').get(inviteId);
+    if (!invite) throw new Error('This invitation has expired or was already used.');
+    if (invite.expires_at <= Date.now()) {
+      db.prepare('DELETE FROM pairing_invites WHERE id = ?').run(inviteId);
+      throw new Error('This invitation has expired.');
+    }
+    const provided = Buffer.from(hashToken(secret));
+    const expected = Buffer.from(invite.secret_hash);
+    if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
+      throw new Error('The invitation secret is not valid.');
+    }
+    db.prepare('DELETE FROM pairing_invites WHERE id = ?').run(inviteId);
+    return { userId: invite.user_id, instanceId: invite.instance_id, expiresAt: invite.expires_at };
+  })();
 }
 
 // --- Network helpers ------------------------------------------------------

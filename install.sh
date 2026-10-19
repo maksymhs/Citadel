@@ -19,6 +19,7 @@ echo "=================================================================="
 echo -e "${NC}"
 
 CHECK_ONLY=false
+UNINSTALL=false
 # A bare `curl | sudo bash` installs a panel that is publicly reachable through a
 # Cloudflare Quick Tunnel (a random https://*.trycloudflare.com URL, no account or
 # domain) so the QR code works from any network on first boot. The privileged
@@ -27,6 +28,7 @@ CHECK_ONLY=false
 #   --enable-updater         root-owned in-panel updater
 #   --lan / --host=ADDR      also bind on the local network (QR from phone)
 #   --no-tunnel              keep the panel off the public internet
+#   --no-24-7                allow the host to suspend normally
 # The legacy flags (--no-admin-terminal, --no-updater, --local, --no-tunnel) keep
 # working; --local implies --no-tunnel.
 DEFAULT_ADMIN_USER="${SUDO_USER:-}"
@@ -42,7 +44,7 @@ HOST_ADDR=""
 PANEL_PORT=3000
 UPDATE_MODE=false
 TUNNEL=true
-KEEP_AWAKE=false
+KEEP_AWAKE=true
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
@@ -50,6 +52,9 @@ for arg in "$@"; do
       ;;
     --update|--upgrade)
       UPDATE_MODE=true
+      ;;
+    --uninstall)
+      UNINSTALL=true
       ;;
     --no-admin-terminal)
       ADMIN_TERMINAL_USER=""
@@ -96,6 +101,44 @@ for arg in "$@"; do
   esac
 done
 
+SCRIPT_DIR=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]:-}" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+delegate_platform_script() {
+  local script_name="$1"
+  shift
+  if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/scripts/$script_name" ]; then
+    exec bash "$SCRIPT_DIR/scripts/$script_name" "$@"
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "ERROR: curl is required to fetch the platform installer." >&2
+    exit 1
+  fi
+  local branch="${CITADEL_REPO_BRANCH:-main}"
+  local raw_base="${CITADEL_RAW_BASE_URL:-https://raw.githubusercontent.com/maksymhs/Citadel/$branch}"
+  curl -fsSL "$raw_base/scripts/$script_name" | bash -s -- "$@"
+  exit $?
+}
+
+PLATFORM_ARGS=()
+for arg in "$@"; do
+  [ "$arg" = "--uninstall" ] || PLATFORM_ARGS+=("$arg")
+done
+
+INSTALL_OS="$(uname -s)"
+if [ "$INSTALL_OS" = "Darwin" ]; then
+  if [ "$UNINSTALL" = true ]; then
+    delegate_platform_script uninstall-macos.sh "${PLATFORM_ARGS[@]}"
+  fi
+  delegate_platform_script install-macos.sh "${PLATFORM_ARGS[@]}"
+fi
+
+if [ "$UNINSTALL" = true ]; then
+  delegate_platform_script uninstall.sh "${PLATFORM_ARGS[@]}"
+fi
+
 # Validate the requested privileged-terminal user BEFORE touching the system: an
 # invalid value must never silently produce a sudoers rule or a parseable .env.
 if [ -n "$ADMIN_TERMINAL_USER" ]; then
@@ -141,7 +184,7 @@ fi
 
 if [ "$KEEP_AWAKE" = true ]; then
   echo -e "${YELLOW}[24/7] Ignoring lid close and blocking system sleep so Citadel keeps running"
-  echo -e "       when a laptop host is closed. Undo with: sudo citadel power off${NC}\n"
+  echo -e "       when a laptop host is closed. Opt out with --no-24-7; undo later with: sudo citadel power off${NC}\n"
 fi
 
 # Official Citadel repository (enables one-line install via curl | bash)

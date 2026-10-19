@@ -14,6 +14,13 @@ test('print-qr renders a scannable grid', () => {
   assert.ok(out.split('\n').length > 10);
 });
 
+test('print-qr refuses to wrap a QR on a narrow terminal', () => {
+  assert.throws(() => execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'print-qr.js'), 'https://example.com'], {
+    encoding: 'utf8',
+    env: { ...process.env, COLUMNS: '20' },
+  }));
+});
+
 test('citadel help lists the available commands', () => {
   const out = execFileSync('bash', [path.join(ROOT, 'scripts', 'citadel'), 'help'], { encoding: 'utf8' });
   assert.match(out, /citadel status/);

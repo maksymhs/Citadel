@@ -8,13 +8,24 @@
 # ==============================================================================
 set -euo pipefail
 
-APP_DIR="${CITADEL_APP_DIR:-/srv/citadel/app}"
+if [ "$(uname -s)" = "Darwin" ]; then
+  DEFAULT_TARGET_DIR="$HOME/Library/Application Support/Citadel"
+else
+  DEFAULT_TARGET_DIR="/srv/citadel"
+fi
+APP_DIR="${CITADEL_APP_DIR:-$DEFAULT_TARGET_DIR/app}"
 SERVICE="${CITADEL_SERVICE:-citadel}"
 UPDATER="${CITADEL_UPDATER_PATH:-/usr/local/sbin/citadel-update}"
 PORT="${PORT:-3000}"
 # The panel stores the Cloudflare tunnel URL and the configured public URL under
 # DATA_DIR; pass it so `citadel url|qr` resolve the same address the panel shows.
-DATA_DIR="${CITADEL_DATA_DIR:-${DATA_DIR:-/srv/citadel/data}}"
+DATA_DIR="${CITADEL_DATA_DIR:-${DATA_DIR:-$DEFAULT_TARGET_DIR/data}}"
+OS="$(uname -s)"
+MACOS_LABEL="com.citadel.server"
+
+launchd_domain() {
+  printf 'gui/%s/%s' "$(id -u)" "$MACOS_LABEL"
+}
 
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then
@@ -41,8 +52,8 @@ Citadel CLI
   citadel power on       Ignore lid close and block sleep for 24/7 operation
   citadel power off      Restore the system sleep defaults
   citadel url            Print the panel URL
-  citadel qr             Print a scannable QR code for the panel URL
-  citadel logs           Follow the service logs (journalctl -f)
+  citadel qr             Print a scannable pairing QR code
+  citadel logs           Follow the service logs
   citadel restart        Restart the service
   citadel update         Update to the latest version
   citadel tunnel         Expose the panel globally via a Cloudflare Quick Tunnel
@@ -71,7 +82,15 @@ shift || true
 
 case "$cmd" in
   status)
-    active="$(systemctl is-active "$SERVICE" 2>/dev/null || echo unknown)"
+    if [ "$OS" = "Darwin" ]; then
+      if launchctl print "$(launchd_domain)" >/dev/null 2>&1; then
+        active="active"
+      else
+        active="inactive"
+      fi
+    else
+      active="$(systemctl is-active "$SERVICE" 2>/dev/null || echo unknown)"
+    fi
     version="$(node -e "process.stdout.write(require('$APP_DIR/package.json').version)" 2>/dev/null || echo '?')"
     health="not checked"
     if command -v curl >/dev/null 2>&1; then
@@ -93,9 +112,10 @@ case "$cmd" in
     ;;
 
   qr)
-    url="$(panel_url)"
-    echo "Panel URL: $url"
-    (cd "$APP_DIR" && node scripts/print-qr.js "$url")
+    pair_link="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" node scripts/pair-qr.js)"
+    echo "Pairing QR (valid for 10 minutes):"
+    (cd "$APP_DIR" && node scripts/print-qr.js "$pair_link")
+    echo "Panel URL: $(panel_url)"
     ;;
 
   doctor|network|wifi|repair)
@@ -111,6 +131,10 @@ case "$cmd" in
     ;;
 
   power)
+    if [ "$OS" = "Darwin" ]; then
+      echo "24/7 power control is only available on Linux hosts." >&2
+      exit 1
+    fi
     if [ ! -f "$APP_DIR/scripts/power.sh" ]; then
       echo "ERROR: $APP_DIR/scripts/power.sh not found (set CITADEL_APP_DIR)." >&2
       exit 1
@@ -126,19 +150,35 @@ case "$cmd" in
     ;;
 
   logs)
+    if [ "$OS" = "Darwin" ]; then
+      touch "$DATA_DIR/logs/citadel.log"
+      exec tail -f "$DATA_DIR/logs/citadel.log"
+    fi
     as_root journalctl -u "$SERVICE" -f
     ;;
 
   restart)
+    if [ "$OS" = "Darwin" ]; then
+      launchctl kickstart -k "$(launchd_domain)"
+      echo "Restarted $MACOS_LABEL."
+      exit 0
+    fi
     as_root systemctl restart "$SERVICE"
     echo "Restarted $SERVICE."
     ;;
 
   update)
+    if [ "$OS" = "Darwin" ]; then
+      exec bash "$APP_DIR/scripts/install-macos.sh" --update
+    fi
     as_root "$UPDATER" "$@"
     ;;
 
   tunnel)
+    if [ "$OS" = "Darwin" ]; then
+      echo "Cloudflare Quick Tunnel setup is currently supported by the Linux installer only. Use Tailscale or configure a tunnel manually." >&2
+      exit 1
+    fi
     as_root bash "$APP_DIR/scripts/tunnel.sh" "$@"
     ;;
 
