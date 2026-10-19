@@ -135,6 +135,44 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    name: '007_peer_pairing',
+    up: (db) => {
+      // Peer pairing makes the association depend on a stable instance id and a
+      // rotating set of candidate URLs, not on a single address. A Cloudflare
+      // Quick Tunnel URL changes on every restart; the identity survives it and
+      // peers re-learn the new address via /api/host/peers/announce.
+      if (!columnExists(db, 'fleet_hosts', 'instance_id')) db.exec('ALTER TABLE fleet_hosts ADD COLUMN instance_id TEXT');
+      if (!columnExists(db, 'fleet_hosts', 'urls')) db.exec('ALTER TABLE fleet_hosts ADD COLUMN urls TEXT');
+      if (!columnExists(db, 'fleet_hosts', 'paired_at')) db.exec('ALTER TABLE fleet_hosts ADD COLUMN paired_at TEXT');
+      if (!columnExists(db, 'fleet_hosts', 'last_seen')) db.exec('ALTER TABLE fleet_hosts ADD COLUMN last_seen TEXT');
+
+      // Inbound credentials: a peer presents one of these as a bearer token.
+      // Only the SHA-256 hash is stored; the plaintext exists only on the peer.
+      // The outbound credential stays in fleet_hosts.token_encrypted so the
+      // proxy can call that peer back.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS peer_tokens (
+          id TEXT PRIMARY KEY,
+          host_id TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          user_id TEXT,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT,
+          revoked_at TEXT,
+          FOREIGN KEY (host_id) REFERENCES fleet_hosts(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_peer_tokens_host ON peer_tokens(host_id);
+      `);
+
+      // One row per known instance. Legacy manual fleet hosts keep a NULL
+      // instance id, so the unique index does not conflict with them.
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fleet_hosts_instance
+        ON fleet_hosts(instance_id) WHERE instance_id IS NOT NULL;
+      `);
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -294,8 +332,25 @@ function initDatabase(customPath = null) {
       name TEXT NOT NULL,
       base_url TEXT NOT NULL,
       token_encrypted TEXT NOT NULL,
+      instance_id TEXT,
+      urls TEXT,
+      paired_at TEXT,
+      last_seen TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    -- Inbound peer credentials (one per paired host). Only the SHA-256 hash of
+    -- the bearer token is stored; the peer keeps the plaintext.
+    CREATE TABLE IF NOT EXISTS peer_tokens (
+      id TEXT PRIMARY KEY,
+      host_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      user_id TEXT,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      FOREIGN KEY (host_id) REFERENCES fleet_hosts(id) ON DELETE CASCADE
     );
 
     -- Distributed work queue: an orchestrator enqueues tasks, a per-node
@@ -396,6 +451,9 @@ function initDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
     CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metric_samples(ts);
     CREATE INDEX IF NOT EXISTS idx_metrics_host ON metric_samples(host);
+    CREATE INDEX IF NOT EXISTS idx_peer_tokens_host ON peer_tokens(host_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_fleet_hosts_instance
+      ON fleet_hosts(instance_id) WHERE instance_id IS NOT NULL;
   `);
 
   // Seed module enablement exactly once. Existing installs (any user already

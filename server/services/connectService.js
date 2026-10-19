@@ -190,12 +190,61 @@ function getConnectInfo() {
   return { url, source, qrSvg: qrSvg(url) };
 }
 
+/**
+ * Every address this panel may currently be reachable at, most-likely first.
+ * Peer pairing stores the whole list so an address rotation (a Cloudflare Quick
+ * Tunnel URL changes on every restart) never loses the association: callers try
+ * each candidate until one answers.
+ */
+let candidatesCache = null;
+let candidatesAt = 0;
+
+function getCandidateUrls() {
+  const now = Date.now();
+  if (candidatesCache && now - candidatesAt < CACHE_TTL_MS) return candidatesCache.slice();
+
+  const urls = [];
+  const push = (value) => {
+    const normalized = normalizeUrl(value);
+    if (normalized && !urls.includes(normalized)) urls.push(normalized);
+  };
+
+  push(getConfiguredPublicUrl());
+  push(getTunnelUrl());
+
+  const tailscale = detectTailscale();
+  if (tailscale) push(tailscale.url);
+
+  if (!isLoopbackHost(HOST) && HOST !== '0.0.0.0' && HOST !== '::') {
+    push(`http://${HOST}:${PORT}`);
+  } else {
+    const ip = detectLanIp();
+    if (ip) push(`http://${ip}:${PORT}`);
+  }
+
+  // The effective address first, then localhost as a last-resort same-host hop.
+  push(resolve().url);
+  push(`http://127.0.0.1:${PORT}`);
+
+  candidatesCache = urls;
+  candidatesAt = now;
+  return urls.slice();
+}
+
 module.exports = {
   getConnectInfo,
+  getCandidateUrls,
   getConfiguredPublicUrl,
   writeStoredPublicUrl,
   qrSvg,
   qrAnsi,
   normalizeUrl,
-  _reset: () => { cache = null; cacheAt = 0; configuredCache = undefined; configuredAt = 0; },
+  _reset: () => {
+    cache = null;
+    cacheAt = 0;
+    configuredCache = undefined;
+    configuredAt = 0;
+    candidatesCache = null;
+    candidatesAt = 0;
+  },
 };

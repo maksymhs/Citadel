@@ -2,9 +2,10 @@
  * WebSocket Route for Interactive Terminal Streaming
  */
 const { isAllowedOrigin } = require('../security/guard');
-const { getSessionUser } = require('../security/auth');
+const { getSessionUser, getPeerTokenUser } = require('../security/auth');
 const { getDatabase } = require('../database/db');
 const terminalManager = require('../services/terminalManager');
+const hostService = require('../services/hostService');
 
 function wsTerminalRoutes(fastify) {
   fastify.get('/ws/terminal/:sessionId', { websocket: true }, (socket, req) => {
@@ -25,11 +26,14 @@ function wsTerminalRoutes(fastify) {
       ? authHeader.slice(7).trim()
       : null;
 
-    const user = getSessionUser(sessionIdCookie || bearerToken);
+    const user = getSessionUser(sessionIdCookie || bearerToken) || getPeerTokenUser(bearerToken);
     if (!user) {
       socket.send(JSON.stringify({ type: 'error', message: 'Unauthorized: valid session required.' }));
       socket.close();
       return;
+    }
+    if (user.isPeer && user.peerHostId) {
+      hostService.absorbIdentityHeaders(user.peerHostId, req.headers);
     }
 
     // 3. Authorize the requested terminal session: it must exist and belong to a

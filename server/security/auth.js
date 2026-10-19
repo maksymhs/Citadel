@@ -169,12 +169,58 @@ function destroySession(sessionId) {
   db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
 }
 
+function hashPeerToken(token) {
+  return crypto.createHash('sha256').update(String(token), 'utf8').digest('hex');
+}
+
+/**
+ * Resolve an inbound peer bearer token to a synthetic admin identity bound to
+ * the paired host. Only the SHA-256 hash is stored, so a database leak does not
+ * expose usable credentials. Returns null for unknown/revoked tokens.
+ */
+function getPeerTokenUser(token) {
+  if (!token || typeof token !== 'string') return null;
+  const db = getDatabase();
+  const row = db.prepare(`
+    SELECT t.id AS token_id, t.host_id, t.user_id, h.name AS host_name
+    FROM peer_tokens t
+    JOIN fleet_hosts h ON h.id = t.host_id
+    WHERE t.token_hash = ? AND t.revoked_at IS NULL
+  `).get(hashPeerToken(token));
+
+  if (!row) return null;
+
+  db.prepare('UPDATE peer_tokens SET last_used_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), row.token_id);
+
+  return {
+    id: row.user_id || `peer:${row.host_id}`,
+    username: `peer:${row.host_name}`,
+    role: 'admin',
+    sessionId: null,
+    peerHostId: row.host_id,
+    isPeer: true,
+  };
+}
+
+/**
+ * Resolve the caller from either a browser session (cookie or bearer session
+ * id) or an inbound peer token. Peer tokens are scoped to a paired host and
+ * grant the same privileges as an administrator, because the remote proxy has
+ * to be able to reach the whole panel API on the peer's behalf.
+ */
+function resolveAuthUser(request) {
+  const sessionId = request.cookies?.session_id || extractBearerToken(request.headers?.authorization);
+  const user = getSessionUser(sessionId);
+  if (user) return user;
+  return getPeerTokenUser(extractBearerToken(request.headers?.authorization));
+}
+
 /**
  * Fastify preHandler hook for routes requiring authentication
  */
 async function requireAuth(request, reply) {
-  const sessionId = request.cookies?.session_id || extractBearerToken(request.headers?.authorization);
-  const user = getSessionUser(sessionId);
+  const user = resolveAuthUser(request);
 
   if (!user) {
     return reply.status(401).send({
@@ -183,6 +229,38 @@ async function requireAuth(request, reply) {
     });
   }
 
+  request.user = user;
+}
+
+/**
+ * Fastify preHandler hook for local-management routes (pairing, host list,
+ * fleet CRUD). A paired host token is admin-equivalent for proxied panel APIs,
+ * but it must not be able to create invitations or manage the peer list.
+ */
+async function requireSessionAuth(request, reply) {
+  const sessionId = request.cookies?.session_id || extractBearerToken(request.headers?.authorization);
+  const user = getSessionUser(sessionId);
+  if (!user) {
+    return reply.status(401).send({
+      error: 'Unauthorized',
+      message: 'A local panel session is required for this resource.',
+    });
+  }
+  request.user = user;
+}
+
+/**
+ * Fastify preHandler hook for peer-only routes (announce/revoke). A browser
+ * session is not sufficient: the caller must present a paired host token.
+ */
+async function requirePeerAuth(request, reply) {
+  const user = resolveAuthUser(request);
+  if (!user || !user.isPeer) {
+    return reply.status(401).send({
+      error: 'Unauthorized',
+      message: 'A paired host token is required for this resource.',
+    });
+  }
   request.user = user;
 }
 
@@ -202,4 +280,10 @@ module.exports = {
   getSessionUser,
   destroySession,
   requireAuth,
+  requireSessionAuth,
+  requirePeerAuth,
+  resolveAuthUser,
+  getPeerTokenUser,
+  hashPeerToken,
+  extractBearerToken,
 };

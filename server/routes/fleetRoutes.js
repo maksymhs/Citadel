@@ -5,7 +5,7 @@
  * requires an authenticated panel session; the stored per-host token never
  * leaves the server.
  */
-const { requireAuth } = require('../security/auth');
+const { requireSessionAuth } = require('../security/auth');
 const { requireModule } = require('../modules/registry');
 const fleetService = require('../services/fleetService');
 const auditService = require('../services/auditService');
@@ -35,7 +35,7 @@ async function forward(reply, hostId, apiPath, options, request, action, details
 }
 
 async function fleetRoutes(fastify) {
-  fastify.addHook('preHandler', requireAuth);
+  fastify.addHook('preHandler', requireSessionAuth);
   fastify.addHook('preHandler', requireModule('fleet'));
 
   fastify.get('/api/fleet/hosts', async () => ({ hosts: fleetService.listHosts() }));

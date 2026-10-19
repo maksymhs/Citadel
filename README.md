@@ -20,7 +20,7 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
   - Audit log with automatic credential redaction.
 - **Domain Publishing (Optional)**: Caddy integration through its local admin API for reverse proxying and automatic HTTPS via Let's Encrypt.
 - **Docker Monitoring (Optional)**: Container inspection over a protected Unix socket. The core works 100% without Docker or Caddy.
-- **Fleet (Multi-Host)**: Register other Citadel instances (URL + token, encrypted at rest) and manage them from one panel — a **single-pane-of-glass dashboard** shows every device (online/offline, version, updates, agents installed) and offers **Check All** / **Update All** bulk actions. You can also browse each host's status/version, list and install AI agents and trigger self-updates remotely. The token is a bearer session id accepted by the remote API.
+- **Paired Machines (single URL, multiple hosts)**: Pair two Citadel installations by scanning a QR code (or pasting its link) and switch between them from the machine selector at the top of the sidebar. The browser always stays on the same URL: the local server proxies API calls and terminal WebSockets to the selected machine, so projects, files, terminals and settings all follow the switch. Pairing is **bidirectional** (both machines can reach each other), uses independent revocable tokens per direction, and is keyed by a stable instance id plus a list of candidate addresses, so a rotating **Cloudflare Quick Tunnel URL never loses the association**: peers re-announce on boot and every five minutes, and every peer response includes the sender's current addresses so the stored row heals itself on the next successful call. The legacy **Fleet** module remains for bulk status/update/agent actions over manual URL+token hosts.
 - **Distributed Task Mesh**: A minimal, pull-based work queue so one smart orchestrator agent can split work across many nodes. A per-node **sentinel** pulls one task at a time when it has a free slot, so load balancing is emergent; a short lease keeps crashed workers harmless. Exposed over HTTP and as a dependency-free **MCP server** (`scripts/citadel-mcp.js`).
 - **Observability (Logs & Metrics)**: A built-in **event trace** (task lifecycle, node health) plus periodic **resource samples** (load, memory, terminals/tasks), shown as a live sparkline and a filterable timeline with **JSON/CSV export** — so you can debug and tune from real data. Retention and sampling interval are configurable.
 - **Plugin System**: Standardized `plugin.json` manifests with fault isolation so no plugin can take down the core.
@@ -243,7 +243,19 @@ The **Files** view browses the host filesystem: navigate directories, read and e
 
 ### Access from your phone (no domain needed)
 
-The installer prints a scannable QR code pointing at the panel, and the **System** view has a **"Connect from your phone"** card with the same code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise an active **Cloudflare Quick Tunnel**, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
+The installer prints a scannable QR code pointing at the panel, and **Settings → Connection** has the same code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise an active **Cloudflare Quick Tunnel**, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
+
+### Switching between paired machines
+
+The machine selector above the sidebar lists this host plus every paired machine with a live status dot. **Pair a machine…** shows a QR/link for the other side, or accepts a scanned/pasted code:
+
+1. On machine A: sidebar → machine selector → **Pair a machine… → Show my QR**.
+2. On machine B (or from the phone, opening the link): scan the QR or paste the link and confirm.
+3. Both sides store each other. Use the selector to jump between them; the browser URL never changes.
+
+Pairing stores a stable instance id and **every candidate address** the host reports. A Cloudflare Quick Tunnel URL changes on every restart, so paired hosts re-announce their current addresses right after boot and every five minutes; the proxy tries each candidate until one answers. If an address is stale, the next announcement repairs it — no re-pairing needed. Because every peer request and response carries the sender's identity and current addresses, a single successful call in either direction repairs both sides. The browser also caches addresses it has seen and syncs them back on load, which covers the case where only the panel's own tunnel rotated. Unpair from **Settings → Machines** (or the selector's **Manage machines…**), which also revokes the token on the remote side.
+
+Peer credentials are separate per direction: the inbound token is stored only as a SHA-256 hash, the outbound token is encrypted at rest with the existing vault key, and neither is ever exposed to the browser. Pairing links carry the secret in the URL fragment (`#pair=…`), so it is not sent to the server or written to proxy logs.
 
 ### Global URL with a Cloudflare Quick Tunnel (no account, no domain)
 
@@ -255,7 +267,7 @@ citadel tunnel stop     # stop it
 citadel tunnel remove   # stop and delete the service
 ```
 
-It gives you a public `https://<random>.trycloudflare.com` URL that works everywhere. The installer no longer starts it by default: pass `--tunnel` at install time, or run `citadel tunnel` afterwards. The URL **changes on every restart**, so the panel reads it dynamically and the QR always shows the current one (no need to touch `.env`). Because it is a **public** URL, create your administrator account before starting the tunnel and use a strong password.
+It gives you a public `https://<random>.trycloudflare.com` URL that works everywhere. The installer no longer starts it by default: pass `--tunnel` at install time, or run `citadel tunnel` afterwards. The URL **changes on every restart**, so the panel reads it dynamically and the QR always shows the current one (no need to touch `.env`). If two machines are paired **only** through Quick Tunnels and both restart at the same time, neither can reach the other until one address is supplied again (switch to that panel once, or enter the new address in Settings → Machines). Giving at least one machine a stable address — Tailscale, a named tunnel or `CITADEL_PUBLIC_URL` — makes recovery fully automatic. Because it is a **public** URL, create your administrator account before starting the tunnel and use a strong password.
 
 To reach the panel privately instead (only your own devices), use Tailscale:
 

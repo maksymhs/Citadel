@@ -39,7 +39,10 @@ const pluginRoutes = require('./routes/pluginRoutes');
 const moduleRoutes = require('./routes/moduleRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const secretRoutes = require('./routes/secretRoutes');
+const hostRoutes = require('./routes/hostRoutes');
+const remoteProxyRoutes = require('./routes/remoteProxyRoutes');
 const wsTerminalRoutes = require('./routes/wsTerminal');
+const hostService = require('./services/hostService');
 
 async function buildServer(options = {}) {
   // Only honour X-Forwarded-* from explicitly trusted peers (default loopback).
@@ -129,6 +132,17 @@ async function buildServer(options = {}) {
   fastify.get('/', serveIndex);
   fastify.get('/index.html', serveIndex);
 
+  // Every API response advertises this host's identity and current addresses so
+  // peers can heal stored URLs after a tunnel rotates.
+  fastify.addHook('onSend', async (request, reply, payload) => {
+    if (request.url.startsWith('/api/')) {
+      for (const [name, value] of Object.entries(hostService.identityHeaders())) {
+        reply.header(name, value);
+      }
+    }
+    return payload;
+  });
+
   // 7. Register API routes
   await fastify.register(authRoutes);
   await fastify.register(projectRoutes);
@@ -147,6 +161,8 @@ async function buildServer(options = {}) {
   await fastify.register(moduleRoutes);
   await fastify.register(settingsRoutes);
   await fastify.register(secretRoutes);
+  await fastify.register(hostRoutes);
+  await fastify.register(remoteProxyRoutes);
 
   // 8. Register WebSocket endpoints
   wsTerminalRoutes(fastify);
@@ -179,12 +195,27 @@ async function startServer() {
   logService.record({ category: 'system', action: 'server_started', message: `Citadel started (v${APP_VERSION}).` });
   logService.startSampler();
 
+  // Peer address announcements. A Cloudflare Quick Tunnel URL changes on every
+  // restart, so paired hosts re-learn this host's current address shortly after
+  // boot and then periodically. Best-effort: no peer being online is normal.
+  const announce = () => {
+    hostService.announceToPeers().catch((err) => {
+      fastify.log.debug(`[Citadel] Peer announce failed: ${err.message}`);
+    });
+  };
+  const announceStartup = setTimeout(announce, 5000);
+  const announceTimer = setInterval(announce, 5 * 60 * 1000);
+  if (typeof announceStartup.unref === 'function') announceStartup.unref();
+  if (typeof announceTimer.unref === 'function') announceTimer.unref();
+
   // Graceful shutdown
   const signals = ['SIGINT', 'SIGTERM'];
   for (const signal of signals) {
     process.on(signal, async () => {
       console.log(`\n[Citadel] Received ${signal}. Shutting down gracefully...`);
       try {
+        clearInterval(announceTimer);
+        clearTimeout(announceStartup);
         logService.stopSampler();
         await fastify.close();
         closeDatabase();

@@ -11,8 +11,9 @@
     setupComplete: true,
     user: null,
     currentView: 'dashboard',
-    modules: [], // module descriptors from GET /api/modules
+    modules: [], // module descriptors from the active host
     modulesById: {},
+    localModulesById: {}, // this machine's modules (nav gating for local features)
     projects: [],
     activeProjectId: null,
     activeRepoId: null,
@@ -33,6 +34,11 @@
     fleetHosts: [],
     fleetAgents: {}, // hostId -> agents[]
     fleetStatus: {}, // hostId -> { ok, version, commit } | { error }
+    activeHostId: 'local', // 'local' or a paired host id
+    hostIdentity: null, // this machine's { instanceId, name, url, urls }
+    hosts: [], // paired hosts (server rows, no tokens)
+    hostStatus: { local: true }, // hostId -> true (online) | false | null
+    hostStatusTimer: null,
     logsEvents: [],
     logsMetrics: [],
     logsSummary: null,
@@ -58,7 +64,11 @@
   const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace'];
   const CORE_NAV = [
     { view: 'files', label: 'Files', icon: 'files' },
+    { view: 'settings', label: 'Settings', icon: 'settings' },
   ];
+
+  // Always called on this machine, never proxied to the selected host.
+  const LOCAL_ONLY_API = ['/api/auth/', '/api/pair/', '/api/hosts', '/api/host/', '/api/fleet/'];
   const OPTIONAL_NAV = [
     { module: 'proxy', view: 'proxy', label: 'Proxy & Domains', icon: 'globe-icon' },
     { module: 'docker', view: 'docker', label: 'Docker', icon: 'docker-icon' },
@@ -105,7 +115,13 @@
 
   function moduleEnabled(id) {
     if (CORE_MODULE_IDS.includes(id)) return true;
-    const m = state.modulesById[id];
+    // Fleet is a local capability (it manages the host list and bulk actions),
+    // so its navigation must not disappear when the selected peer has the
+    // module disabled.
+    const source = id === 'fleet' && state.localModulesById[id]
+      ? state.localModulesById
+      : state.modulesById;
+    const m = source[id];
     return m ? Boolean(m.enabled) : false;
   }
 
@@ -123,6 +139,18 @@
       state.modules = [];
       state.modulesById = {};
       console.warn('Error loading modules:', err.message);
+    }
+  }
+
+  // This machine's module flags, independent of the selected host. Used only for
+  // local-only navigation such as Fleet.
+  async function loadLocalModules() {
+    try {
+      const res = await localApi('/api/modules');
+      const modules = res.modules || [];
+      state.localModulesById = Object.fromEntries(modules.map((m) => [m.id, m]));
+    } catch {
+      state.localModulesById = {};
     }
   }
 
@@ -151,8 +179,35 @@
     </a>`;
   }
 
+  function isLocalOnlyApi(path) {
+    return LOCAL_ONLY_API.some((prefix) => path === prefix.replace(/\/$/, '') || path.startsWith(prefix));
+  }
+
+  // Rewrite a panel API path to the selected host. Local routes (auth, pairing,
+  // host list) always stay local; everything else is proxied by this server so
+  // the browser URL never changes when switching machines.
+  function hostApiPath(path) {
+    if (state.activeHostId === 'local' || !path.startsWith('/api/') || isLocalOnlyApi(path)) return path;
+    return `/api/remote/${encodeURIComponent(state.activeHostId)}${path.slice(4)}`;
+  }
+
   // API helper with cookie credentials
   async function api(path, options = {}) {
+    const opts = { ...options, headers: { ...(options.headers || {}) } };
+    if (opts.body && typeof opts.body === 'object') {
+      opts.body = JSON.stringify(opts.body);
+      opts.headers['Content-Type'] = 'application/json';
+    }
+    const res = await fetch(hostApiPath(path), opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || data.message || `Request failed (${res.status})`);
+    }
+    return data;
+  }
+
+  // Always talks to this machine, even when another host is selected.
+  async function localApi(path, options = {}) {
     const opts = { ...options, headers: { ...(options.headers || {}) } };
     if (opts.body && typeof opts.body === 'object') {
       opts.body = JSON.stringify(opts.body);
@@ -238,7 +293,7 @@
   }
 
   // Generic modal helper
-  function openModal({ title, bodyHtml, confirmText = 'Confirm', onConfirm }) {
+  function openModal({ title, bodyHtml, confirmText = 'Confirm', onConfirm, onClose }) {
     const root = document.getElementById('modal-root');
     const previouslyFocused = document.activeElement;
     root.innerHTML = `
@@ -263,6 +318,9 @@
     const close = () => {
       document.removeEventListener('keydown', onKeydown);
       root.innerHTML = '';
+      if (typeof onClose === 'function') {
+        try { onClose(); } catch { /* ignore */ }
+      }
       if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
     };
 
@@ -499,6 +557,11 @@
     };
 
     // Load initial data (only fetch optional-module data when it is enabled).
+    loadHosts().then(() => {
+      renderSidebarNav();
+      refreshHostStatus(true);
+      startHostStatusPolling();
+    });
     loadProjects();
     loadSessions();
     loadVersionTag();
@@ -530,7 +593,8 @@
     if (!nav) return;
     const optional = OPTIONAL_NAV.filter((n) => moduleEnabled(n.module));
 
-    let html = '<div class="nav-section-title">Platform</div>';
+    let html = hostSelectorHtml();
+    html += '<div class="nav-section-title">Platform</div>';
     html += navItemHtml('dashboard', 'Dashboard', 'dashboard');
     html += navItemHtml('projects', 'Projects', 'projects', '<span class="nav-badge" id="nav-projects-count">' + (state.projects.length || 0) + '</span>');
     html += workspaceNavHtml();
@@ -543,9 +607,163 @@
       }
     }
 
-    html += '<div class="nav-section-title">Host</div>';
-    html += navItemHtml('settings', 'Settings', 'settings');
     nav.innerHTML = html;
+  }
+
+  // Machine selector pinned at the top of the sidebar. The current machine is
+  // always visible with a status dot; the menu lists paired hosts and the
+  // pairing entry point.
+  function hostStatusClass(hostId) {
+    const online = state.hostStatus[hostId];
+    if (online === true) return ' host-dot-on';
+    if (online === false) return ' host-dot-off';
+    return '';
+  }
+
+  function activeHostName() {
+    if (state.activeHostId === 'local') {
+      return (state.hostIdentity && state.hostIdentity.name) || 'This machine';
+    }
+    const host = state.hosts.find((h) => h.id === state.activeHostId);
+    return host ? host.name : 'Unknown host';
+  }
+
+  function hostSelectorHtml() {
+    return `
+      <div class="host-selector">
+        <button class="host-current" id="host-selector-btn" title="Switch machine">
+          <span class="host-dot${hostStatusClass(state.activeHostId)}"></span>
+          <span class="host-current-name">${escapeHtml(activeHostName())}</span>
+          <span class="host-chevron">▾</span>
+        </button>
+      </div>`;
+  }
+
+  function openHostMenu(anchorEl) {
+    const items = [{
+      label: `${state.activeHostId === 'local' ? '● ' : '○ '}${(state.hostIdentity && state.hostIdentity.name) || 'This machine'} (local)`,
+      onSelect: () => switchHost('local'),
+    }];
+    for (const host of state.hosts) {
+      const online = state.hostStatus[host.id];
+      const dot = online === true ? '● ' : online === false ? '○ ' : '◌ ';
+      items.push({
+        label: `${dot}${host.name}`,
+        onSelect: () => switchHost(host.id),
+      });
+    }
+    items.push({ sep: true });
+    items.push({ label: 'Pair a machine…', onSelect: showPairModal });
+    items.push({ label: 'Manage machines…', onSelect: () => navigateTo('settings') });
+    openContextMenu(anchorEl, items);
+  }
+
+  async function loadHosts() {
+    try {
+      const res = await api('/api/host/identity');
+      state.hostIdentity = res.host || null;
+      state.hosts = res.hosts || [];
+      if (state.activeHostId !== 'local' && !state.hosts.some((h) => h.id === state.activeHostId)) {
+        state.activeHostId = 'local';
+        saveUiState({ activeHostId: 'local' });
+      }
+    } catch (err) {
+      console.warn('Error loading hosts:', err.message);
+    }
+  }
+
+  // Probe every paired host so the selector shows an accurate status dot.
+  async function refreshHostStatus(quiet = true) {
+    if (!state.hosts.length) {
+      state.hostStatus = { local: true };
+      renderSidebarNav();
+      return;
+    }
+    try {
+      const res = await api('/api/hosts/status');
+      const rows = res.hosts || [];
+      const next = { local: true };
+      for (const host of state.hosts) {
+        const row = rows.find((h) => h.id === host.id);
+        next[host.id] = row ? Boolean(row.online) : null;
+      }
+      state.hostStatus = next;
+      renderSidebarNav();
+    } catch (err) {
+      if (!quiet) showToast(`Status check failed: ${err.message}`, 'error');
+    }
+  }
+
+  function startHostStatusPolling() {
+    if (state.hostStatusTimer) clearInterval(state.hostStatusTimer);
+    state.hostStatusTimer = setInterval(() => {
+      if (!document.hidden) refreshHostStatus(true);
+    }, 60000);
+  }
+
+  function stopHostStatusPolling() {
+    if (state.hostStatusTimer) {
+      clearInterval(state.hostStatusTimer);
+      state.hostStatusTimer = null;
+    }
+  }
+
+  // Switching machines tears down every host-bound client resource and reloads
+  // the views from the new host. The page URL never changes.
+  async function switchHost(hostId) {
+    if (hostId === state.activeHostId) return;
+    const previousHostId = state.activeHostId;
+
+    // Refuse to switch to a machine that is not answering, so the panel does
+    // not end up showing an empty project list that looks like data loss.
+    if (hostId !== 'local') {
+      try {
+        const status = await localApi(`/api/hosts/status?id=${encodeURIComponent(hostId)}`);
+        const row = (status.hosts || []).find((h) => h.id === hostId);
+        if (!row || !row.online) {
+          const host = state.hosts.find((h) => h.id === hostId);
+          showToast(`${(host && host.name) || 'That machine'} is offline.`, 'error');
+          return;
+        }
+      } catch {
+        // If the probe itself fails, let the switch attempt decide.
+      }
+    }
+
+    teardownSession();
+    state.terminals.clear();
+    state.sysTerminals.clear();
+    state.allSessions = [];
+    state.projects = [];
+    state.workspaceContext = null;
+    state.activeProjectId = null;
+    state.activeRepoId = null;
+    state.fleetStatus = {};
+    state.fleetAgents = {};
+    state.activeHostId = hostId;
+    saveUiState({ activeHostId: hostId });
+
+    try {
+      await loadModules();
+      await loadProjects();
+      await loadSessions();
+      renderSidebarNav();
+      loadVersionTag();
+      startHostStatusPolling();
+      navigateTo('dashboard');
+      showToast(`Switched to ${activeHostName()}.`, 'success');
+    } catch (err) {
+      // The probe passed but the host died mid-switch: return to a working view
+      // instead of leaving the panel pointed at an unreachable machine.
+      state.activeHostId = previousHostId;
+      saveUiState({ activeHostId: previousHostId });
+      try {
+        await loadModules();
+        await loadProjects();
+        renderSidebarNav();
+      } catch { /* keep whatever is renderable */ }
+      showToast(`Could not switch host: ${err.message}`, 'error');
+    }
   }
 
   function navChevron(toggleKey, expanded) {
@@ -609,6 +827,12 @@
     };
 
     nav.onclick = (e) => {
+      const hostBtn = e.target.closest('#host-selector-btn');
+      if (hostBtn) {
+        e.preventDefault();
+        openHostMenu(hostBtn);
+        return;
+      }
       const toggle = e.target.closest('[data-nav-toggle]');
       if (toggle) {
         e.preventDefault();
@@ -682,9 +906,28 @@
     state.activityTab = ui.activityTab === 'audit' ? 'audit' : 'activity';
     state.filesMode = ui.filesMode === 'grid' ? 'grid' : 'list';
     state.dashboardWidgets = Array.isArray(ui.dashboardWidgets) ? ui.dashboardWidgets.slice() : null;
+    state.activeHostId = typeof ui.activeHostId === 'string' && ui.activeHostId ? ui.activeHostId : 'local';
+    await loadLocalModules();
+    await loadHosts();
+    if (state.activeHostId !== 'local') {
+      // Do not start on a machine that is unreachable: every view would proxy
+      // to it and fail. Fall back to the local panel instead.
+      try {
+        const status = await localApi(`/api/hosts/status?id=${encodeURIComponent(state.activeHostId)}`);
+        const row = (status.hosts || [])[0];
+        if (!row || !row.online) {
+          state.activeHostId = 'local';
+          saveUiState({ activeHostId: 'local' });
+        }
+      } catch {
+        state.activeHostId = 'local';
+        saveUiState({ activeHostId: 'local' });
+      }
+    }
     await loadModules();
     renderAppShell();
     navigateTo(resolveView(ui.currentView));
+    maybeOpenPairingLink();
   }
 
   // Resolve a (possibly legacy/persisted) view id to a view that is currently
@@ -1786,7 +2029,10 @@
 
   function connectTerminalSocket(item) {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${item.sessionId}`);
+    const wsPath = state.activeHostId === 'local'
+      ? `/ws/terminal/${item.sessionId}`
+      : `/ws/remote/${encodeURIComponent(state.activeHostId)}/terminal/${item.sessionId}`;
+    const ws = new WebSocket(`${protocol}//${location.host}${wsPath}`);
     item.ws = ws;
 
     ws.onopen = () => {
@@ -1883,6 +2129,7 @@
   // poll timer and all open terminal sockets/timers. Called on logout so a
   // signed-out browser stops talking to the server.
   function teardownSession() {
+    stopHostStatusPolling();
     if (state.dashboardTimer) {
       clearInterval(state.dashboardTimer);
       state.dashboardTimer = null;
@@ -2005,7 +2252,7 @@
       items.push({ label: 'Edit', onSelect: () => openFileEditor(nodePath) });
       items.push({
         label: 'Download',
-        onSelect: () => { window.location.href = `/api/files/download?path=${encodeURIComponent(nodePath)}`; },
+        onSelect: () => { window.location.href = hostApiPath(`/api/files/download?path=${encodeURIComponent(nodePath)}`); },
       });
     }
     items.push({ sep: true });
@@ -2360,6 +2607,184 @@
         renderFilesView();
       },
     });
+  }
+
+  // --- Pairing UI -----------------------------------------------------------
+  // Shows this machine's invite QR/link and accepts a scanned or pasted code.
+  // The payload travels in the URL fragment so it is never sent in a request
+  // line or logged by a reverse proxy.
+  function showPairModal(initialCode = null) {
+    const identity = state.hostIdentity || {};
+    openModal({
+      title: 'Pair a machine',
+      bodyHtml: `
+        <div class="segmented" role="tablist" style="margin-bottom:14px;">
+          <button class="seg-btn active" data-pair-tab="scan" role="tab">Scan / paste</button>
+          <button class="seg-btn" data-pair-tab="invite" role="tab">Show my QR</button>
+        </div>
+
+        <div data-pair-panel="scan">
+          <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
+            Scan the QR code shown by the other Citadel with your phone, or paste its pairing link.
+            Both machines end up paired, so either one can switch to the other.
+          </p>
+          <div class="form-group">
+            <label class="form-label">Pairing link or code</label>
+            <input class="form-input" id="pair-code" autocomplete="off" placeholder="https://host/#pair=…" value="${escapeHtml(initialCode || '')}" />
+          </div>
+          <button class="btn btn-primary btn-sm" id="pair-redeem-btn">Pair this machine</button>
+          <div id="pair-scan-area" style="margin-top:14px;display:none;">
+            <video id="pair-scan-video" playsinline muted style="width:100%;border-radius:8px;background:#000;"></video>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Point the camera at the other machine's QR code.</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="pair-scan-btn" style="margin-top:12px;">Use camera</button>
+          <div id="pair-error" style="color:var(--danger-color);font-size:12px;margin-top:8px;"></div>
+        </div>
+
+        <div data-pair-panel="invite" style="display:none;">
+          <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
+            Scan this from the other Citadel to pair them. The code expires in 10 minutes and works once.
+          </p>
+          <div id="pair-invite-body" style="color:var(--text-secondary);font-size:13px;">Generating…</div>
+        </div>
+
+        <div style="margin-top:16px;font-size:12px;color:var(--text-muted);">
+          This machine: <strong>${escapeHtml(identity.name || '')}</strong>
+          <span style="font-family:var(--font-mono);word-break:break-all;">${escapeHtml(identity.url || '')}</span>
+        </div>
+      `,
+      confirmText: 'Done',
+      onConfirm: async () => {},
+      onClose: () => stopScan(),
+    });
+
+    const tabs = document.querySelectorAll('[data-pair-tab]');
+    tabs.forEach((tab) => {
+      tab.onclick = () => {
+        tabs.forEach((t) => t.classList.toggle('active', t === tab));
+        document.querySelectorAll('[data-pair-panel]').forEach((panel) => {
+          panel.style.display = panel.getAttribute('data-pair-panel') === tab.getAttribute('data-pair-tab') ? '' : 'none';
+        });
+        if (tab.getAttribute('data-pair-tab') === 'invite') generateInvite();
+      };
+    });
+
+    const errorEl = () => document.getElementById('pair-error');
+    const redeemBtn = document.getElementById('pair-redeem-btn');
+    const redeem = async () => {
+      const code = document.getElementById('pair-code').value.trim();
+      if (!code) return;
+      redeemBtn.disabled = true;
+      redeemBtn.textContent = 'Pairing…';
+      try {
+        const res = await api('/api/pair/redeem', { method: 'POST', body: { code } });
+        await loadHosts();
+        await refreshHostStatus(true);
+        renderSidebarNav();
+        showToast(`Paired with ${res.host.name}.`, 'success');
+        document.getElementById('modal-close-btn')?.click();
+        if (res.host && res.host.id) switchHost(res.host.id);
+      } catch (err) {
+        if (errorEl()) {
+          errorEl().textContent = /same host/i.test(err.message)
+            ? 'This code was created by this machine. Open the other Citadel, choose “Pair a machine” and paste this code there.'
+            : err.message;
+        }
+        redeemBtn.disabled = false;
+        redeemBtn.textContent = 'Pair this machine';
+      }
+    };
+    redeemBtn.onclick = redeem;
+    document.getElementById('pair-code').onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); redeem(); }
+    };
+
+    let scanStream = null;
+    const stopScan = () => {
+      if (scanStream) {
+        scanStream.getTracks().forEach((track) => track.stop());
+        scanStream = null;
+      }
+    };
+    document.getElementById('pair-scan-btn').onclick = async () => {
+      const area = document.getElementById('pair-scan-area');
+      const video = document.getElementById('pair-scan-video');
+      if (!('BarcodeDetector' in window)) {
+        if (errorEl()) errorEl().textContent = 'This browser cannot scan QR codes. Paste the link instead.';
+        return;
+      }
+      try {
+        scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        area.style.display = '';
+        video.srcObject = scanStream;
+        await video.play();
+        const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+        const tick = async () => {
+          if (!scanStream) return;
+          try {
+            const codes = await detector.detect(video);
+            if (codes && codes.length) {
+              stopScan();
+              const value = codes[0].rawValue;
+              document.getElementById('pair-code').value = value;
+              await redeem();
+              return;
+            }
+          } catch {
+            // Transient detector errors are normal while the frame settles.
+          }
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      } catch (err) {
+        if (errorEl()) errorEl().textContent = `Camera unavailable: ${err.message}`;
+        stopScan();
+      }
+    };
+
+    async function generateInvite() {
+      const body = document.getElementById('pair-invite-body');
+      if (!body) return;
+      body.textContent = 'Generating…';
+      try {
+        const res = await api('/api/pair/invite', { method: 'POST' });
+        const invite = res.invite || {};
+        body.innerHTML = `
+          <div class="connect-qr" style="margin:10px 0;">${invite.qrSvg || ''}</div>
+          <div style="font-family:var(--font-mono);font-size:11px;word-break:break-all;color:var(--text-muted);">${escapeHtml(invite.link || '')}</div>
+          ${invite.reachableWarning ? `<p style="color:var(--warning-color);font-size:12px;margin-top:10px;">${escapeHtml(invite.reachableWarning)}</p>` : ''}
+          <button class="btn btn-secondary btn-sm" id="pair-copy-link" style="margin-top:10px;">Copy link</button>
+        `;
+        document.getElementById('pair-copy-link').onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(invite.link || '');
+            showToast('Pairing link copied.', 'success');
+          } catch {
+            showToast('Could not copy the link.', 'error');
+          }
+        };
+      } catch (err) {
+        body.innerHTML = `<span style="color:var(--danger-color);">${escapeHtml(err.message)}</span>`;
+      }
+    }
+
+    // A #pair=... fragment means the user opened a pairing link.
+    if (initialCode) {
+      document.querySelector('[data-pair-tab="scan"]').click();
+    }
+  }
+
+  // Handle a pairing link opened directly (e.g. scanned with the phone camera).
+  function maybeOpenPairingLink() {
+    const hash = location.hash || '';
+    if (!hash.startsWith('#pair=')) return false;
+    const code = hash.slice(1);
+    // Keep the hash until we are authenticated, so logging in does not lose a
+    // scanned pairing link. startApp calls this again after login.
+    if (!state.user) return false;
+    history.replaceState(null, '', location.pathname + location.search);
+    showPairModal(code);
+    return true;
   }
 
   // --- System (host) Terminal View ---
@@ -3367,7 +3792,7 @@
     if (state.logsFilter.level) qs.set('level', state.logsFilter.level);
     if (state.logsFilter.category) qs.set('category', state.logsFilter.category);
     const a = document.createElement('a');
-    a.href = `/api/logs/export?${qs.toString()}`;
+    a.href = hostApiPath(`/api/logs/export?${qs.toString()}`);
     a.download = '';
     document.body.appendChild(a);
     a.click();
@@ -3740,14 +4165,55 @@
       const node = nodeRes.node || {};
       const ver = versionRes.version || {};
       const secretsList = secretsRes.secrets || [];
+      const activeHost = state.activeHostId === 'local'
+        ? (state.hostIdentity && state.hostIdentity.name)
+        : ((state.hosts.find((h) => h.id === state.activeHostId) || {}).name);
+      const panelHost = (state.hostIdentity && state.hostIdentity.name) || 'this machine';
 
       content.innerHTML = `
         <div style="margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Settings</h2>
+          <h2 style="font-size:18px;margin-bottom:6px;">Settings${activeHost ? ` · ${escapeHtml(activeHost)}` : ''}</h2>
           <p style="color:var(--text-secondary);font-size:13px;">
-            Configure how this panel is reached from other devices. This only changes the address
+            Configure how this host is reached from other devices. This only changes the address
             Citadel advertises — it never opens ports or exposes anything by itself.
           </p>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+            <div>
+              <h3 style="font-size:16px;font-weight:600;">Machines</h3>
+              <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
+                Pair another Citadel to reach it from this panel. Pairing is bidirectional and survives
+                address changes (including rotating Cloudflare tunnel URLs).
+              </p>
+              <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">
+                Pairing is managed by <strong>${escapeHtml(panelHost)}</strong> (the panel you are connected to)
+                · <span style="font-family:var(--font-mono);">${escapeHtml((state.hostIdentity && state.hostIdentity.url) || '')}</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0;">
+              <button class="btn btn-secondary btn-sm" id="settings-pair-btn">Pair a machine</button>
+            </div>
+          </div>
+          <div id="settings-hosts-list" style="margin-top:14px;">
+            ${state.hosts.length === 0
+              ? '<div style="color:var(--text-muted);font-size:13px;">No paired machines yet.</div>'
+              : state.hosts.map((h) => `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:8px;">
+                  <div style="min-width:0;">
+                    <strong>${escapeHtml(h.name)}</strong>
+                    ${state.activeHostId === h.id ? '<span class="badge badge-success" style="margin-left:6px;">Active</span>' : ''}
+                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);word-break:break-all;">${escapeHtml((h.urls && h.urls[0]) || h.baseUrl)}</div>
+                    ${h.lastSeen ? `<div style="font-size:11px;color:var(--text-muted);">Last seen ${escapeHtml(new Date(h.lastSeen).toLocaleString())}</div>` : ''}
+                  </div>
+                  <div style="display:flex;gap:6px;flex-shrink:0;">
+                    ${state.activeHostId === h.id ? '' : `<button class="btn btn-secondary btn-sm" data-use-host="${h.id}">Use</button>`}
+                    <button class="btn btn-secondary btn-sm" data-address-host="${h.id}" title="Set this machine's current address">Address</button>
+                    <button class="btn btn-secondary btn-sm" data-unpair-host="${h.id}">Unpair</button>
+                  </div>
+                </div>`).join('')}
+          </div>
         </div>
 
         <div class="card" style="margin-bottom:24px;">
@@ -3875,6 +4341,50 @@
       bindUpdatesCard();
       bindSecretsCard();
       bindActivityButtons();
+
+      document.getElementById('settings-pair-btn').onclick = () => showPairModal();
+      document.querySelectorAll('[data-use-host]').forEach((btn) => {
+        btn.onclick = () => switchHost(btn.getAttribute('data-use-host'));
+      });
+      document.querySelectorAll('[data-address-host]').forEach((btn) => {
+        btn.onclick = async () => {
+          const id = btn.getAttribute('data-address-host');
+          const host = state.hosts.find((h) => h.id === id) || {};
+          const url = window.prompt(`Current address for ${host.name || 'this machine'}:`, (host.urls && host.urls[0]) || host.baseUrl || '');
+          if (url === null) return;
+          try {
+            await localApi(`/api/hosts/${id}/address`, { method: 'PUT', body: { url: url.trim() } });
+            await loadHosts();
+            await refreshHostStatus(true);
+            renderSettingsView();
+            showToast('Address updated.', 'success');
+          } catch (err) {
+            showToast(`Address update failed: ${err.message}`, 'error');
+          }
+        };
+      });
+
+      document.querySelectorAll('[data-unpair-host]').forEach((btn) => {
+        btn.onclick = async () => {
+          const id = btn.getAttribute('data-unpair-host');
+          const host = state.hosts.find((h) => h.id === id) || {};
+          if (!window.confirm(`Unpair ${host.name || 'this machine'}? It is removed from both sides.`)) return;
+          try {
+            await localApi(`/api/hosts/${id}`, { method: 'DELETE' });
+            await loadHosts();
+            await refreshHostStatus(true);
+            showToast('Machine unpaired.', 'success');
+            if (state.activeHostId === id) {
+              await switchHost('local');
+            } else {
+              renderSidebarNav();
+              renderSettingsView();
+            }
+          } catch (err) {
+            showToast(`Unpair failed: ${err.message}`, 'error');
+          }
+        };
+      });
 
       const input = document.getElementById('settings-public-url');
       const saveBtn = document.getElementById('settings-save-url');
