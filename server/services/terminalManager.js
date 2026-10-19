@@ -242,7 +242,7 @@ class TerminalManager {
   /**
    * Get or create a terminal session for a project
    */
-  createSession({ projectId = null, repoId = null, name = 'Terminal', cwd = null, agentId = null, cols = 80, rows = 24 }) {
+  createSession({ projectId = null, repoId = null, name = 'Terminal', cwd = null, agentId = null, cols = 80, rows = 24, command = null, args = [] }) {
     const db = getDatabase();
     let targetCwd = cwd || (projectId ? process.cwd() : os.homedir());
     let projectSlug = 'global';
@@ -288,6 +288,10 @@ class TerminalManager {
 
     // Spawn the PTY. If the spawn fails the DB row must not be left claiming an
     // active session that has no process behind it.
+    // An explicit command/args override is honoured for internal callers (e.g.
+    // the integration installer); the public terminals API never sets it.
+    const spawnCommand = command || (runAs ? runAs.command : null);
+    const spawnArgs = command ? args : (runAs ? runAs.args : []);
     try {
       this._spawnPty({
         sessionId,
@@ -296,8 +300,8 @@ class TerminalManager {
         cwd: targetCwd,
         cols,
         rows,
-        command: runAs ? runAs.command : null,
-        args: runAs ? runAs.args : [],
+        command: spawnCommand,
+        args: spawnArgs,
       });
     } catch (err) {
       try {

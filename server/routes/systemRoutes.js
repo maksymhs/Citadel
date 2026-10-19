@@ -10,6 +10,15 @@ const dockerService = require('../services/dockerService');
 const updateService = require('../services/updateService');
 const auditService = require('../services/auditService');
 const connectService = require('../services/connectService');
+const agentInstallService = require('../services/agentInstallService');
+
+function requireAdmin(request, reply, done) {
+  if (!request.user || request.user.role !== 'admin') {
+    reply.status(403).send({ error: 'Administrator privileges are required.' });
+    return;
+  }
+  done();
+}
 
 async function systemRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
@@ -36,7 +45,7 @@ async function systemRoutes(fastify) {
     };
   });
 
-  // Integrations diagnostic check (tmux, git, caddy, docker)
+  // Integrations diagnostic check (tmux, git, caddy, docker, AI agents)
   fastify.get('/api/system/integrations', async () => {
     const tmux = terminalManager.isTmuxAvailable();
     const gitAvailable = true; // We checked which git
@@ -57,8 +66,39 @@ async function systemRoutes(fastify) {
         },
         caddy,
         docker,
+        agents: agentInstallService.detectAgents(),
       },
     };
+  });
+
+  // Install a supported AI coding agent by running its official one-liner in a
+  // (privileged, if configured) System Terminal session. The client only names a
+  // known tool; the command itself is fixed server-side.
+  fastify.post('/api/system/integrations/install', { preHandler: requireAdmin }, async (request, reply) => {
+    const agent = agentInstallService.getAgent(request.body ? request.body.tool : null);
+    if (!agent) {
+      return reply.status(400).send({ error: 'Unknown tool.' });
+    }
+
+    try {
+      const spec = agentInstallService.buildInstallSpec(agent, terminalManager.getAdminTerminalUser());
+      const session = terminalManager.createSession({
+        name: `Install ${agent.name}`,
+        command: spec.command,
+        args: spec.args,
+      });
+      auditService.logAction({
+        userId: request.user.id,
+        action: 'integration_install_started',
+        targetType: 'integration',
+        targetId: agent.id,
+        details: { tool: agent.id, terminal: session.sessionId },
+        ip: request.ip,
+      });
+      return { session };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
   });
 
   // Running application version and updater availability

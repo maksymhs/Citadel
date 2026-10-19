@@ -1234,6 +1234,31 @@ html.is-mobile-ui .files-table .file-name {
   shape-rendering: crispEdges;
 }
 
+/* --- Settings --- */
+.settings-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.settings-row .form-input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.settings-warn {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
 @media (max-width: 768px) {
   .connect-grid {
     flex-direction: column;
@@ -1270,9 +1295,23 @@ html.is-mobile-ui .files-table .file-name {
 }
 
 .dash-widget[data-widget="integrations"],
-.dash-widget[data-widget="quick-access"],
-.dash-widget[data-widget="activity"] {
+.dash-widget[data-widget="quick-access"] {
   grid-column: span 6;
+}
+
+.dash-widget-clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.dash-widget-clickable:hover,
+.dash-widget-clickable:focus-visible {
+  border-color: var(--accent-color);
+  outline: none;
+}
+
+.dash-widget-clickable:active {
+  transform: translateY(1px);
 }
 
 .widget-heading {
@@ -1296,8 +1335,7 @@ html.is-mobile-ui .files-table .file-name {
   .dash-widget[data-widget="projects"],
   .dash-widget[data-widget="host"],
   .dash-widget[data-widget="integrations"],
-  .dash-widget[data-widget="quick-access"],
-  .dash-widget[data-widget="activity"] {
+  .dash-widget[data-widget="quick-access"] {
     grid-column: span 12;
   }
 }

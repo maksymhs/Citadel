@@ -5,6 +5,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { PROJECTS_DIR, ALLOWED_ORIGINS } = require('../config');
 const { getTunnelUrl } = require('../services/tunnelService');
+const { getConfiguredPublicUrl } = require('../services/connectService');
 
 /**
  * True when `target` is `base` itself or lives inside it. Uses path.relative
@@ -105,6 +106,16 @@ function isAllowedOrigin(originHeader) {
       if (originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1') {
         return true;
       }
+    }
+
+    // The administrator-configured public URL (Settings → Public URL, or
+    // CITADEL_PUBLIC_URL) is trusted so the terminal WebSocket works when the
+    // panel is opened through it.
+    try {
+      const configured = getConfiguredPublicUrl();
+      if (configured && new URL(configured).host === originUrl.host) return true;
+    } catch {
+      // ignore malformed configured URL
     }
 
     // A Cloudflare Quick Tunnel URL changes on every restart, so it cannot be

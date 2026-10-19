@@ -49,9 +49,10 @@
   // project and active terminal instead of always resetting to the dashboard.
   const UI_STATE_KEY = 'citadel.uiState';
 
-  // The five primary views. Optional module views are added to the sidebar only
-  // when their module is enabled; System is a fixed host-tools entry.
-  const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace', 'activity', 'modules'];
+  // The four primary views. Optional module views are added to the sidebar only
+  // when their module is enabled; System and Settings are fixed host-tools
+  // entries. Activity & Audit lives inside System, not in the main navigation.
+  const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace', 'modules'];
   const OPTIONAL_NAV = [
     { module: 'agents', view: 'agents', label: 'AI Agents', icon: 'bolt-icon' },
     { module: 'files', view: 'files', label: 'Files', icon: 'folder-icon' },
@@ -60,7 +61,7 @@
     { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
   ];
   const KNOWN_VIEWS = [
-    ...PRIMARY_VIEWS, 'system',
+    ...PRIMARY_VIEWS, 'system', 'settings', 'activity', 'processes',
     ...OPTIONAL_NAV.map((n) => n.view),
   ];
   // Legacy view ids → current ids, so a persisted view still resolves.
@@ -73,9 +74,9 @@
   // are dropped at render time so the layout always stays valid.
   const DEFAULT_DASHBOARD_WIDGETS = [
     'memory', 'cpu', 'projects', 'host', 'fleet',
-    'integrations', 'quick-access', 'activity', 'processes',
+    'integrations', 'quick-access',
   ];
-  const WIDGET_REQUIRES = { fleet: 'fleet', activity: 'activity', metrics: 'metrics' };
+  const WIDGET_REQUIRES = { fleet: 'fleet', metrics: 'metrics' };
 
   function loadUiState() {
     try {
@@ -128,6 +129,7 @@
     activity: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>',
     modules: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>',
     system: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>',
+    settings: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/>',
     agents: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>',
     files: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6"/>',
     proxy: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
@@ -479,7 +481,6 @@
     html += navItemHtml('dashboard', 'Dashboard', 'dashboard');
     html += navItemHtml('projects', 'Projects', 'projects', '<span class="nav-badge" id="nav-projects-count">' + (state.projects.length || 0) + '</span>');
     html += navItemHtml('workspace', 'Workspace', 'workspace');
-    html += navItemHtml('activity', 'Activity', 'activity');
     html += navItemHtml('modules', 'Modules', 'modules', enabledOptionalCount ? `<span class="nav-badge">${enabledOptionalCount}</span>` : '');
 
     if (optional.length) {
@@ -491,6 +492,7 @@
 
     html += '<div class="nav-section-title">Host</div>';
     html += navItemHtml('system', 'System', 'system');
+    html += navItemHtml('settings', 'Settings', 'settings');
     nav.innerHTML = html;
 
     document.querySelectorAll('.sidebar-nav .nav-item').forEach((el) => {
@@ -602,6 +604,12 @@
     } else if (view === 'system') {
       titleEl.textContent = 'System';
       renderSystemView();
+    } else if (view === 'settings') {
+      titleEl.textContent = 'Settings';
+      renderSettingsView();
+    } else if (view === 'processes') {
+      titleEl.textContent = 'Top processes';
+      renderProcessesView();
     } else if (view === 'agents') {
       titleEl.textContent = 'AI Agents';
       renderAgentsView();
@@ -664,7 +672,7 @@
     return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`;
   }
 
-  // Refresh only the process table body so the rest of the dashboard stays still.
+  // Refresh only the process table body so the rest of the screen stays still.
   async function refreshProcessTable() {
     const tbody = document.getElementById('process-table-body');
     if (!tbody) return;
@@ -705,9 +713,7 @@
     host: { title: 'VPS host', size: 3, module: 'dashboard' },
     integrations: { title: 'Platform integrations', size: 6, module: 'dashboard' },
     'quick-access': { title: 'Quick project access', size: 6, module: 'projects' },
-    activity: { title: 'Recent activity', size: 6, module: 'activity' },
     fleet: { title: 'Fleet — remote hosts', size: 12, module: 'fleet' },
-    processes: { title: 'Top processes', size: 12, module: 'dashboard' },
   };
 
   // Visible widgets, in the user's saved order (or the defaults).
@@ -744,11 +750,11 @@
       case 'memory':
         return card(`<div class="card-title">MEMORY USAGE</div>
           <div class="card-value">${metrics.memoryUsedPercent}%</div>
-          <div class="card-subtitle">${Math.round(node.memory.usedBytes / 1024 / 1024)} MB of ${Math.round(node.memory.totalBytes / 1024 / 1024)} MB</div>`);
+          <div class="card-subtitle">${Math.round(node.memory.usedBytes / 1024 / 1024)} MB of ${Math.round(node.memory.totalBytes / 1024 / 1024)} MB</div>`, 'processes');
       case 'cpu':
         return card(`<div class="card-title">CPU LOAD (1m)</div>
           <div class="card-value">${metrics.loadAvg.toFixed(2)}</div>
-          <div class="card-subtitle">${node.cpu.cores} cores (${escapeHtml(node.cpu.model.split('@')[0].trim())})</div>`);
+          <div class="card-subtitle">${node.cpu.cores} cores (${escapeHtml(node.cpu.model.split('@')[0].trim())})</div>`, 'processes');
       case 'projects':
         return card(`<div class="card-title">ACTIVE PROJECTS</div>
           <div class="card-value">${state.projects.length}</div>
@@ -764,6 +770,12 @@
             ${integrationRow('Git CLI', integ.git.description, integ.git.available, 'Active', 'Missing')}
             ${integrationRow('Caddy proxy (HTTPS)', integ.caddy.helpMessage, integ.caddy.available, 'Connected', 'Optional / Inactive')}
             ${integrationRow('Docker engine', integ.docker.available ? 'Socket connected' : 'Disabled / Optional', integ.docker.available, 'Active', 'Optional')}
+          </div>
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border-color);">
+            <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">AI coding agents</div>
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              ${(integ.agents || []).map(agentRow).join('')}
+            </div>
           </div>`);
       case 'quick-access':
         return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
@@ -784,12 +796,6 @@
                 <button class="btn btn-secondary btn-sm open-workspace-btn" data-project-id="${p.id}">Open</button>
               </div>`).join('')}
           </div>`);
-      case 'activity':
-        return card(`<div style="display:flex;align-items:center;justify-content:space-between;">
-            <h3 class="widget-heading">Recent activity</h3>
-            <button class="btn btn-secondary btn-sm" id="dash-activity-link">View all</button>
-          </div>
-          <div id="dash-activity-body" style="margin-top:12px;color:var(--text-muted);font-size:13px;">Loading…</div>`);
       case 'fleet':
         return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
             <div>
@@ -802,34 +808,16 @@
             </div>
           </div>
           <div id="dash-fleet-body"><div style="color:var(--text-muted);font-size:13px;">Loading…</div></div>`);
-      case 'processes':
-        return card(`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;">
-            <div>
-              <h3 class="widget-heading">Top processes</h3>
-              <div id="process-summary" style="font-size:12px;color:var(--text-muted);margin-top:2px;">Live CPU &amp; memory per process</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span class="badge badge-muted" id="process-updated">—</span>
-              <button class="btn btn-secondary btn-sm" id="process-pause-btn">Pause</button>
-            </div>
-          </div>
-          <div class="table-container">
-            <table class="data-table">
-              <thead><tr>
-                <th style="width:90px;">PID</th><th>Process</th>
-                <th style="width:100px;">CPU</th><th style="width:120px;">Memory</th><th style="width:100px;">MEM %</th>
-              </tr></thead>
-              <tbody id="process-table-body">
-                <tr><td colspan="5" style="color:var(--text-muted);">Loading processes...</td></tr>
-              </tbody>
-            </table>
-          </div>`);
       default:
         return '';
     }
 
-    function card(inner) {
-      return `<div class="card dash-widget" data-widget="${id}">${inner}</div>`;
+    function card(inner, targetView) {
+      const clickableClass = targetView ? ' dash-widget-clickable' : '';
+      const clickableAttrs = targetView
+        ? ` role="button" tabindex="0" data-target-view="${targetView}"`
+        : '';
+      return `<div class="card dash-widget${clickableClass}" data-widget="${id}"${clickableAttrs}>${inner}</div>`;
     }
   }
 
@@ -841,6 +829,38 @@
       </div>
       <span class="badge ${ok ? 'badge-success' : 'badge-muted'}">${ok ? okLabel : badLabel}</span>
     </div>`;
+  }
+
+  function agentRow(agent) {
+    const badge = agent.available
+      ? `<span class="badge badge-success" title="${escapeHtml(agent.version || '')}">Installed</span>`
+      : '<span class="badge badge-muted">Not installed</span>';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div>
+        <strong>${escapeHtml(agent.name)}</strong>
+        ${agent.available && agent.version ? `<div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${escapeHtml(agent.version)}</div>` : ''}
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        ${badge}
+        ${agent.available ? '' : `<button class="btn btn-primary btn-sm install-agent-btn" data-tool="${agent.id}" data-name="${escapeHtml(agent.name)}">Install</button>`}
+      </div>
+    </div>`;
+  }
+
+  // Launch an agent's official install one-liner in a System Terminal session.
+  async function installAgent(tool, name, btn) {
+    if (!window.confirm(`Install ${name} now? It runs in a System Terminal session.`)) return;
+    btn.disabled = true;
+    try {
+      await api('/api/system/integrations/install', { method: 'POST', body: { tool } });
+      showToast(`${name} install started in the System Terminal.`, 'success');
+      state.workspaceContext = 'system';
+      saveUiState({ workspaceContext: 'system' });
+      navigateTo('workspace');
+    } catch (err) {
+      btn.disabled = false;
+      showToast(err.message, 'error');
+    }
   }
 
   function showDashboardCustomizer() {
@@ -916,24 +936,6 @@
     bindList();
   }
 
-  async function loadDashboardActivity() {
-    const body = document.getElementById('dash-activity-body');
-    if (!body) return;
-    try {
-      const res = await api('/api/logs?limit=6');
-      const events = res.events || [];
-      body.innerHTML = events.length === 0
-        ? '<div style="color:var(--text-muted);">No recent events.</div>'
-        : events.slice(0, 6).map((e) => `
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-color);">
-              <span style="font-size:12px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(e.message || e.action || e.type || 'event')}</span>
-              <span class="badge badge-muted">${escapeHtml(e.level || e.category || '')}</span>
-            </div>`).join('');
-    } catch {
-      body.innerHTML = '<div style="color:var(--text-muted);">Activity unavailable.</div>';
-    }
-  }
-
   async function renderDashboardView() {
     const content = document.getElementById('main-content');
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading system metrics...</div>';
@@ -959,7 +961,6 @@
 
       document.getElementById('dash-new-project-btn')?.addEventListener('click', showCreateProjectModal);
       document.getElementById('dash-clone-btn')?.addEventListener('click', showCloneProjectModal);
-      document.getElementById('dash-activity-link')?.addEventListener('click', () => navigateTo('activity'));
       document.getElementById('dash-fleet-check-all')?.addEventListener('click', () => refreshDashboardFleet(true));
       document.getElementById('dash-fleet-update-all')?.addEventListener('click', fleetUpdateAll);
       document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
@@ -970,39 +971,86 @@
         };
       });
 
-      const pauseBtn = document.getElementById('process-pause-btn');
-      pauseBtn?.addEventListener('click', () => {
-        state.dashboardPaused = !state.dashboardPaused;
-        pauseBtn.textContent = state.dashboardPaused ? 'Resume' : 'Pause';
+      // Memory/CPU cards open the dedicated live processes screen.
+      document.querySelectorAll('.dash-widget-clickable[data-target-view]').forEach((el) => {
+        const go = () => navigateTo(el.getAttribute('data-target-view'));
+        el.onclick = go;
+        el.onkeydown = (e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            go();
+          }
+        };
       });
 
-      if (widgets.includes('processes')) await refreshProcessTable();
       if (widgets.includes('fleet')) refreshDashboardFleet();
-      if (widgets.includes('activity')) loadDashboardActivity();
 
-      if (state.dashboardTimer) clearInterval(state.dashboardTimer);
-      state.dashboardTimer = setInterval(() => {
-        if (state.dashboardPaused || document.hidden) return;
-        if (widgets.includes('processes')) refreshProcessTable();
-      }, 5000);
+      document.querySelectorAll('.install-agent-btn').forEach((btn) => {
+        btn.onclick = () => installAgent(btn.getAttribute('data-tool'), btn.getAttribute('data-name') || btn.getAttribute('data-tool'), btn);
+      });
     } catch (err) {
       content.innerHTML = `<div style="color:var(--danger-color);">Error loading dashboard: ${escapeHtml(err.message)}</div>`;
     }
+  }
+
+  // Dedicated live process screen, opened from the Memory/CPU dashboard cards.
+  async function renderProcessesView() {
+    const content = document.getElementById('main-content');
+    const actions = document.getElementById('top-bar-actions');
+    actions.innerHTML = '';
+
+    content.innerHTML = `
+      <div style="margin-bottom:20px;">
+        <h2 style="font-size:18px;margin-bottom:6px;">Top processes</h2>
+        <p style="color:var(--text-secondary);font-size:13px;">Live CPU &amp; memory usage per process.</p>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;flex-wrap:wrap;">
+          <div id="process-summary" style="font-size:12px;color:var(--text-muted);">Updates every 5 seconds</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="badge badge-muted" id="process-updated">—</span>
+            <button class="btn btn-secondary btn-sm" id="process-pause-btn">Pause</button>
+          </div>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead><tr>
+              <th style="width:90px;">PID</th><th>Process</th>
+              <th style="width:100px;">CPU</th><th style="width:120px;">Memory</th><th style="width:100px;">MEM %</th>
+            </tr></thead>
+            <tbody id="process-table-body">
+              <tr><td colspan="5" style="color:var(--text-muted);">Loading processes...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    const pauseBtn = document.getElementById('process-pause-btn');
+    pauseBtn.onclick = () => {
+      state.dashboardPaused = !state.dashboardPaused;
+      pauseBtn.textContent = state.dashboardPaused ? 'Resume' : 'Pause';
+    };
+
+    await refreshProcessTable();
+    if (state.dashboardTimer) clearInterval(state.dashboardTimer);
+    state.dashboardTimer = setInterval(() => {
+      if (state.dashboardPaused || document.hidden) return;
+      refreshProcessTable();
+    }, 5000);
   }
 
   // 2. Projects View
   async function renderProjectsView() {
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
-      <button class="btn btn-secondary btn-sm" id="proj-creds-btn">Git Credentials</button>
+      <button class="btn btn-secondary btn-sm" id="proj-creds-btn">Git</button>
       <button class="btn btn-secondary btn-sm" id="proj-import-btn">Import Folder</button>
-      <button class="btn btn-secondary btn-sm" id="proj-clone-btn">Clone Git</button>
       <button class="btn btn-primary btn-sm" id="proj-create-btn">+ New Project</button>
     `;
 
     document.getElementById('proj-create-btn').onclick = showCreateProjectModal;
     document.getElementById('proj-import-btn').onclick = showImportProjectModal;
-    document.getElementById('proj-clone-btn').onclick = showCloneProjectModal;
     document.getElementById('proj-creds-btn').onclick = () => renderReposView();
 
     const content = document.getElementById('main-content');
@@ -1397,7 +1445,7 @@
           <input type="text" class="form-input" id="m-clone-branch" placeholder="main">
         </div>
         <p style="font-size:12px;color:var(--text-muted);">
-          Private repositories use the credentials configured under <strong>Projects → Git Credentials</strong>.
+          Private repositories use the credentials configured under <strong>Projects → Git</strong>.
         </p>
       `,
       confirmText: 'Clone & Import',
@@ -3449,6 +3497,17 @@
   }
 
   // 7. System View (host tools, updates and diagnostics)
+  // Human-readable explanation of where the connect URL came from.
+  function connectSourceNote(source) {
+    return {
+      configured: 'Using the public URL configured in Settings — works from anywhere it points to.',
+      tunnel: 'Public Cloudflare Quick Tunnel — works from anywhere. The URL changes when the tunnel restarts.',
+      tailscale: 'Reachable from anywhere over your Tailscale network. Install Tailscale on the phone and sign in to the same account.',
+      lan: '<span style="color:var(--warning-color);">This is a LAN address — it only works on the same Wi-Fi.</span> For access from anywhere, run <code>citadel tunnel</code> (public, one command) or set up Tailscale (<code>tailscale serve</code>).',
+      localhost: '<span style="color:var(--warning-color);">Only reachable on this machine.</span> Run <code>citadel tunnel</code> or set up Tailscale for remote access.',
+    }[source] || '';
+  }
+
   async function renderSystemView() {
     const content = document.getElementById('main-content');
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading diagnostics...</div>';
@@ -3464,13 +3523,7 @@
       const ver = versionRes.version || {};
       const connect = connectRes.connect || {};
 
-      const connectNote = {
-        configured: 'Using the public URL configured via <code>CITADEL_PUBLIC_URL</code>.',
-        tunnel: 'Public Cloudflare Quick Tunnel — works from anywhere. The URL changes when the tunnel restarts.',
-        tailscale: 'Reachable from anywhere over your Tailscale network. Install Tailscale on the phone and sign in to the same account.',
-        lan: '<span style="color:var(--warning-color);">This is a LAN address — it only works on the same Wi-Fi.</span> For access from anywhere, run <code>citadel tunnel</code> (public, one command) or set up Tailscale (<code>tailscale serve</code>).',
-        localhost: '<span style="color:var(--warning-color);">Only reachable on this machine.</span> Run <code>citadel tunnel</code> or set up Tailscale for remote access.',
-      }[connect.source] || '';
+      const connectNote = connectSourceNote(connect.source);
 
       content.innerHTML = `
         <div class="card" style="margin-bottom:24px;">
@@ -3539,16 +3592,14 @@
 
         <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
           <div>
-            <h3 style="font-size:15px;font-weight:600;">Audit trail</h3>
-            <p style="color:var(--text-secondary);font-size:13px;margin-top:4px;">Security events moved to the Activity view.</p>
+            <h3 style="font-size:15px;font-weight:600;">Activity &amp; Audit</h3>
+            <p style="color:var(--text-secondary);font-size:13px;margin-top:4px;">The event stream and security audit trail live here.</p>
           </div>
-          <button class="btn btn-secondary btn-sm" id="system-open-audit">Open Audit</button>
+          <button class="btn btn-secondary btn-sm" id="system-open-activity">Open Activity &amp; Audit</button>
         </div>
       `;
 
-      document.getElementById('system-open-audit').onclick = () => {
-        state.activityTab = 'audit';
-        saveUiState({ activityTab: 'audit' });
+      document.getElementById('system-open-activity').onclick = () => {
         navigateTo('activity');
       };
 
@@ -3644,6 +3695,105 @@
     }
   }
 
+  // 7b. Settings View
+  async function renderSettingsView() {
+    const content = document.getElementById('main-content');
+    content.innerHTML = '<div style="color:var(--text-secondary);">Loading settings...</div>';
+
+    try {
+      const [settingsRes, connectRes] = await Promise.all([
+        api('/api/settings/connect'),
+        api('/api/system/connect'),
+      ]);
+      const s = settingsRes.connect || {};
+      const connect = connectRes.connect || {};
+
+      content.innerHTML = `
+        <div style="margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">Settings</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">
+            Configure how this panel is reached from other devices. This only changes the address
+            Citadel advertises — it never opens ports or exposes anything by itself.
+          </p>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <h3 class="widget-heading">Public URL</h3>
+          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;line-height:1.6;">
+            The address you use to reach this panel (your domain or server IP). It feeds the connection
+            QR code and is trusted as a WebSocket origin, so terminals work when opened through it.
+          </p>
+          ${s.envLocked ? `<p class="settings-warn">Fixed by the <code>CITADEL_PUBLIC_URL</code> environment variable (<code>${escapeHtml(s.envPublicUrl)}</code>). Unset it to edit here.</p>` : ''}
+          <div class="settings-row">
+            <input type="text" id="settings-public-url" class="form-input" placeholder="https://panel.example.com or http://203.0.113.10:3000" value="${escapeHtml(s.publicUrl || '')}" ${s.envLocked ? 'disabled' : ''} />
+            <button class="btn btn-primary btn-sm" id="settings-save-url" ${s.envLocked ? 'disabled' : ''}>Save</button>
+            <button class="btn btn-secondary btn-sm" id="settings-clear-url" ${(!s.publicUrl || s.envLocked) ? 'disabled' : ''}>Clear</button>
+          </div>
+          <div style="margin-top:18px;">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Effective address</div>
+            <a href="${escapeHtml(connect.url || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(connect.url || '')}</a>
+            <div style="margin-top:8px;font-size:12px;color:var(--text-secondary);line-height:1.5;">${connectSourceNote(connect.source)}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="widget-heading">Connection</h3>
+          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
+            Scan this code with a phone to open the panel on another device.
+          </p>
+          <div class="connect-grid">
+            <div class="connect-qr">${connect.qrSvg || ''}</div>
+            <div style="min-width:0;flex:1;">
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Address</div>
+              <a href="${escapeHtml(connect.url || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(connect.url || '')}</a>
+              <div style="margin-top:10px;">
+                <button class="btn btn-secondary btn-sm" id="settings-copy-url">Copy link</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const input = document.getElementById('settings-public-url');
+      const saveBtn = document.getElementById('settings-save-url');
+      const clearBtn = document.getElementById('settings-clear-url');
+
+      const save = async (value) => {
+        saveBtn.disabled = true;
+        clearBtn.disabled = true;
+        try {
+          await api('/api/settings/connect', { method: 'PUT', body: { publicUrl: value } });
+          showToast('Public URL saved.', 'success');
+          renderSettingsView();
+        } catch (err) {
+          saveBtn.disabled = false;
+          clearBtn.disabled = false;
+          showToast(err.message, 'error');
+        }
+      };
+
+      saveBtn.onclick = () => save(input.value);
+      clearBtn.onclick = () => save('');
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          save(input.value);
+        }
+      };
+
+      document.getElementById('settings-copy-url').onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(connect.url || '');
+          showToast('Link copied.', 'success');
+        } catch {
+          showToast('Could not copy the link.', 'error');
+        }
+      };
+    } catch (err) {
+      content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
   // 8. Modules & Plugins View
   async function renderModulesView() {
     const content = document.getElementById('main-content');
@@ -3701,14 +3851,6 @@
           }).join('')}
         </div>
       </div>
-
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <h3 class="widget-heading">Plugins</h3>
-          <span style="font-size:12px;color:var(--text-muted);">Loaded from <code>plugins/</code> (plugin.json)</span>
-        </div>
-        <div id="modules-plugin-list"><div style="color:var(--text-muted);font-size:13px;">Loading plugins…</div></div>
-      </div>
     `;
 
     document.querySelectorAll('.module-toggle-btn').forEach((btn) => {
@@ -3726,74 +3868,6 @@
           btn.disabled = false;
           showToast(err.message, 'error');
         }
-      };
-    });
-
-    loadPluginList();
-  }
-
-  async function loadPluginList() {
-    const container = document.getElementById('modules-plugin-list');
-    if (!container) return;
-    try {
-      const res = await api('/api/plugins');
-      state.plugins = res.plugins || [];
-    } catch (err) {
-      container.innerHTML = `<div style="color:var(--danger-color);font-size:13px;">Failed to load plugins: ${escapeHtml(err.message)}</div>`;
-      return;
-    }
-    const plugins = state.plugins;
-    container.innerHTML = `
-      <div class="table-container">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Name / ID</th>
-                <th>Version</th>
-                <th>Capabilities</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${plugins.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No plugins installed</td></tr>' : ''}
-              ${plugins.map((p) => `
-                <tr>
-                  <td data-label="Name / ID">
-                    <strong>${escapeHtml(p.name)}</strong>
-                    <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(p.description)} (${escapeHtml(p.id)})</div>
-                  </td>
-                  <td data-label="Version" style="font-family:var(--font-mono);">v${escapeHtml(p.version)}</td>
-                  <td data-label="Capabilities">
-                    ${(p.capabilities || []).map((c) => `<span class="badge badge-muted">${escapeHtml(c)}</span>`).join(' ')}
-                  </td>
-                  <td data-label="Status">
-                    <span class="badge ${p.status === 'active' ? 'badge-success' : (p.status === 'error' ? 'badge-danger' : 'badge-muted')}">
-                      ${escapeHtml(p.status)}
-                    </span>
-                  </td>
-                  <td data-label="Action">
-                    <button class="btn btn-secondary btn-sm toggle-plugin-btn" data-id="${p.id}" data-enabled="${p.enabled ? '1' : '0'}">
-                      ${p.enabled ? 'Disable' : 'Enable'}
-                    </button>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `;
-
-    container.querySelectorAll('.toggle-plugin-btn').forEach((btn) => {
-      btn.onclick = async () => {
-        const id = btn.getAttribute('data-id');
-        const isCurrentlyEnabled = btn.getAttribute('data-enabled') === '1';
-        await api(`/api/plugins/${id}/toggle`, {
-          method: 'POST',
-          body: { enabled: !isCurrentlyEnabled },
-        });
-        showToast(`Plugin ${!isCurrentlyEnabled ? 'enabled' : 'disabled'}.`, 'success');
-        loadPluginList();
       };
     });
   }

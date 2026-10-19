@@ -378,6 +378,15 @@ function getDatabase() {
   return dbInstance;
 }
 
+/**
+ * The open connection, or null when the database has not been initialised yet.
+ * Lets read-only callers (e.g. the connection URL service, which is also used
+ * by the CLI) read the live database without creating or migrating one.
+ */
+function peekDatabase() {
+  return dbInstance;
+}
+
 function closeDatabase() {
   if (dbInstance) {
     try {
@@ -392,6 +401,7 @@ function closeDatabase() {
 module.exports = {
   initDatabase,
   getDatabase,
+  peekDatabase,
   closeDatabase,
   runMigrations,
   columnExists,

@@ -6,14 +6,48 @@ const { PUBLIC_URL, PORT, HOST } = require('../config');
 const { getTunnelUrl } = require('./tunnelService');
 
 const CACHE_TTL_MS = 60 * 1000;
+const STORED_KEY = 'connect.public_url';
 let cache = null;
 let cacheAt = 0;
+let configuredCache;
+let configuredAt = 0;
 
 function normalizeUrl(value) {
   if (!value) return null;
   let url = String(value).trim();
   if (!/^https?:\/\//i.test(url)) url = `http://${url}`;
   return url.replace(/\/+$/, '');
+}
+
+/**
+ * Read the administrator-configured public URL from app_config, using the live
+ * connection only. Never opens/creates a database here: this module is also used
+ * by the `citadel` CLI, which may run before (or without) the service database.
+ */
+function readStoredPublicUrl() {
+  try {
+    const { peekDatabase } = require('../database/db');
+    const db = peekDatabase();
+    if (!db) return null;
+    const row = db.prepare('SELECT value FROM app_config WHERE key = ?').get(STORED_KEY);
+    return row ? row.value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The public URL an administrator set, if any. An operator-provided environment
+ * value takes precedence over the stored setting. Returns null when neither is
+ * set (auto-detection then decides).
+ */
+function getConfiguredPublicUrl() {
+  const now = Date.now();
+  if (configuredCache !== undefined && now - configuredAt < CACHE_TTL_MS) return configuredCache;
+  const fromEnv = normalizeUrl(PUBLIC_URL);
+  configuredCache = fromEnv || normalizeUrl(readStoredPublicUrl()) || null;
+  configuredAt = now;
+  return configuredCache;
 }
 
 function detectTailscale() {
@@ -65,7 +99,7 @@ function resolve() {
   if (cache && now - cacheAt < CACHE_TTL_MS) return cache;
 
   let result;
-  const configured = normalizeUrl(PUBLIC_URL);
+  const configured = getConfiguredPublicUrl();
   const tunnel = getTunnelUrl();
   if (configured) {
     result = { url: configured, source: 'configured' };
@@ -127,4 +161,11 @@ function getConnectInfo() {
   return { url, source, qrSvg: qrSvg(url) };
 }
 
-module.exports = { getConnectInfo, qrSvg, qrAnsi, normalizeUrl, _reset: () => { cache = null; cacheAt = 0; } };
+module.exports = {
+  getConnectInfo,
+  getConfiguredPublicUrl,
+  qrSvg,
+  qrAnsi,
+  normalizeUrl,
+  _reset: () => { cache = null; cacheAt = 0; configuredCache = undefined; configuredAt = 0; },
+};
