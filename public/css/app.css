@@ -1004,6 +1004,27 @@ html.is-mobile-ui #app-container {
     padding: 12px;
   }
 
+  /* File explorer: compact toolbar and touch-sized tiles. */
+  .files-toolbar {
+    padding: 6px 8px;
+    gap: 6px;
+  }
+  .files-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 10px;
+    padding: 10px;
+  }
+  .files-tile {
+    padding: 12px 6px;
+  }
+  .files-tile-icon svg {
+    width: 34px;
+    height: 34px;
+  }
+  .files-statusbar {
+    padding: 5px 10px;
+  }
+
   .ws-project-selector {
     width: 110px;
   }
@@ -1300,10 +1321,139 @@ html.is-mobile-ui .data-table tr:hover td {
 }
 
 /* --- File Explorer --- */
-.files-card {
-  padding: 8px 10px;
+/* The explorer fills the whole content area: a toolbar on top, a scrolling
+   body (tree or grid) in the middle and a status bar at the bottom. */
+.files-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
+.files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.files-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.files-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.files-crumb {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.files-crumb:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.files-crumb.is-current {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.files-crumb-sep {
+  color: var(--text-muted);
+}
+
+.files-toolbar-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.files-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.files-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.files-toggle-btn + .files-toggle-btn {
+  border-left: 1px solid var(--border-color);
+}
+.files-toggle-btn:hover {
+  color: var(--text-primary);
+}
+.files-toggle-btn.is-active {
+  background: var(--accent-bg);
+  color: var(--accent-hover);
+}
+.files-toggle-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.files-toolbar .btn {
+  flex-shrink: 0;
+}
+
+.files-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.files-statusbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  min-height: 30px;
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.files-statusbar::-webkit-scrollbar {
+  display: none;
+}
+.files-statusbar b {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.files-empty {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* --- List (tree) mode --- */
 /* Wunderbaum ships a light, Bootstrap-flavoured theme. Remap its custom
    properties to the panel palette so the tree blends into dark mode. */
 .files-tree {
@@ -1335,9 +1485,8 @@ html.is-mobile-ui .data-table tr:hover td {
   --wb-filter-dim-color: var(--text-muted);
   --wb-filter-submatch-color: var(--text-secondary);
 
-  font-size: 13px;
-  height: 68vh;
-  min-height: 240px;
+  font-size: 13.5px;
+  height: 100%;
 }
 
 .files-tree div.wunderbaum {
@@ -1346,6 +1495,78 @@ html.is-mobile-ui .data-table tr:hover td {
   border: none;
   border-radius: 0;
   overflow: auto;
+}
+
+/* --- Grid (folder) mode --- */
+.files-grid {
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  gap: 12px;
+  align-content: start;
+  outline: none;
+}
+.files-grid:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent-bg);
+}
+
+.files-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  min-width: 0;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+}
+.files-tile:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-color);
+}
+.files-tile:active {
+  transform: scale(0.97);
+}
+.files-tile:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+.files-tile.is-selected {
+  background: var(--accent-bg);
+  border-color: var(--accent-color);
+}
+.files-tile-icon {
+  display: inline-flex;
+  color: var(--text-secondary);
+}
+.files-tile.is-dir .files-tile-icon {
+  color: var(--accent-color);
+}
+.files-tile-icon svg {
+  width: 40px;
+  height: 40px;
+}
+.files-tile-name {
+  font-size: 12.5px;
+  line-height: 1.25;
+  max-width: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.files-tile-meta {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .files-tree .wb-row {
