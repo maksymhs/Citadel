@@ -41,6 +41,7 @@
     dashboardPaused: false,
     tmuxAvailable: false,
     filesPath: '/',
+    gitProviders: [], // provider + OAuth status from GET /api/git/oauth/providers
     dashboardWidgets: null, // ordered widget ids, persisted per browser
   };
 
@@ -819,7 +820,12 @@
     if (!window.confirm(`Install ${name} now? It runs in a System Terminal session.`)) return;
     btn.disabled = true;
     try {
-      await api('/api/system/integrations/install', { method: 'POST', body: { tool } });
+      const res = await api('/api/system/integrations/install', { method: 'POST', body: { tool } });
+      const sessionId = res.session?.sessionId;
+      if (sessionId) {
+        state.activeSysTerminalId = sessionId;
+        saveUiState({ activeSysTerminalId: sessionId });
+      }
       showToast(`${name} install started in the System Terminal.`, 'success');
       state.workspaceContext = 'system';
       saveUiState({ workspaceContext: 'system' });
@@ -1380,8 +1386,9 @@
 
     let providers = [];
     try {
-      const res = await api('/api/git/credentials');
+      const res = await api('/api/git/oauth/providers');
       providers = res.providers || [];
+      state.gitProviders = providers;
     } catch (err) {
       content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
       return;
@@ -1393,8 +1400,8 @@
       <div style="margin-bottom:24px;">
         <h2 style="font-size:18px;margin-bottom:6px;">Git Repositories</h2>
         <p style="color:var(--text-secondary);">
-          Connect a provider with a personal access token to browse and clone your private repositories.
-          Tokens are encrypted at rest on the server.
+          Connect a provider with one click using OAuth, or paste a personal access token.
+          Credentials are encrypted at rest on the server.
         </p>
       </div>
 
@@ -1438,6 +1445,9 @@
   }
 
   function renderProviderCard(p) {
+    const method = p.authMethod === 'oauth'
+      ? '<span class="badge badge-success">OAuth</span>'
+      : (p.configured ? '<span class="badge badge-muted">Token</span>' : '');
     return `
       <div style="border:1px solid var(--border-color);border-radius:8px;padding:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -1446,12 +1456,12 @@
         </div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;min-height:16px;">
           ${p.configured
-            ? `${p.username ? `Account: ${escapeHtml(p.username)}<br>` : ''}Updated: ${p.updated_at ? new Date(p.updated_at).toLocaleString() : '-'}`
+            ? `${p.username ? `Account: ${escapeHtml(p.username)}<br>` : ''}Updated: ${p.updated_at ? new Date(p.updated_at).toLocaleString() : '-'} ${method}`
             : `Host: ${escapeHtml(p.host)}`}
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn ${p.configured ? 'btn-secondary' : 'btn-primary'} btn-sm provider-connect-btn" data-provider="${p.id}">
-            ${p.configured ? 'Update Token' : 'Connect'}
+            ${p.configured ? 'Reconnect' : `Connect ${escapeHtml(p.label)}`}
           </button>
           ${p.configured ? `<button class="btn btn-secondary btn-sm provider-disconnect-btn" data-provider="${p.id}">Disconnect</button>` : ''}
         </div>
@@ -1459,8 +1469,53 @@
     `;
   }
 
-  function connectProvider(providerId) {
-    const label = providerId.charAt(0).toUpperCase() + providerId.slice(1);
+  function openProviderConnectModal(providerId) {
+    const provider = (state.gitProviders || []).find((p) => p.id === providerId) || { id: providerId, label: providerId };
+    const label = provider.label || providerId;
+    const oauth = provider.oauth || {};
+
+    if (oauth.configured) {
+      openDeviceFlowModal(providerId, label);
+      return;
+    }
+
+    openModal({
+      title: `Connect ${label}`,
+      confirmText: 'Save & continue',
+      bodyHtml: `
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">
+          Register an OAuth application for ${escapeHtml(label)} and paste its public client/application id. No secret is required.
+        </p>
+        <div class="form-group">
+          <label class="form-label">Client / Application ID</label>
+          <input type="text" class="form-input" id="m-oauth-client-id" placeholder="${escapeHtml(label)} application id" required>
+          <p style="font-size:12px;color:var(--text-muted);margin-top:6px;">
+            <a href="${escapeHtml(oauth.appUrl || '#')}" target="_blank" rel="noopener">Create an application</a>, then enter its id here.
+          </p>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" id="m-git-use-token" style="width:100%;">
+          Use a personal access token instead
+        </button>
+      `,
+      onConfirm: async () => {
+        const clientId = document.getElementById('m-oauth-client-id').value.trim();
+        if (!clientId) throw new Error('A client/application id is required.');
+        await api(`/api/git/oauth/${providerId}/client-id`, { method: 'POST', body: { clientId } });
+        // This dialog closes right after onConfirm resolves; open the flow next tick.
+        setTimeout(() => openDeviceFlowModal(providerId, label), 0);
+      },
+    });
+
+    const useTokenBtn = document.getElementById('m-git-use-token');
+    if (useTokenBtn) {
+      useTokenBtn.onclick = () => {
+        document.getElementById('modal-cancel-btn')?.click();
+        setTimeout(() => openTokenModal(providerId, label), 0);
+      };
+    }
+  }
+
+  function openTokenModal(providerId, label) {
     openModal({
       title: `Connect ${label}`,
       bodyHtml: `
@@ -1487,8 +1542,145 @@
     });
   }
 
+  function openDeviceFlowModal(providerId, label) {
+    const root = document.getElementById('modal-root');
+    const previouslyFocused = document.activeElement;
+    let sessionId = null;
+    let timer = null;
+    let stopped = false;
+
+    const cleanup = () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      if (sessionId) {
+        api(`/api/git/oauth/${providerId}/cancel`, { method: 'POST', body: { sessionId } }).catch(() => {});
+      }
+      root.innerHTML = '';
+      if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+    };
+
+    const onKeydown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        cleanup();
+      }
+    };
+
+    const renderShell = () => {
+      root.innerHTML = `
+        <div class="modal-overlay" id="active-modal-overlay">
+          <div class="modal-content" role="dialog" aria-modal="true">
+            <div class="modal-header">
+              <h3 class="modal-title">Connect ${escapeHtml(label)}</h3>
+              <button class="tab-close-btn" id="modal-close-btn" aria-label="Close dialog">&times;</button>
+            </div>
+            <div class="modal-body" id="oauth-flow-body">
+              <p style="color:var(--text-secondary);">Requesting a device code...</p>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="modal-cancel-btn">Cancel</button>
+            </div>
+          </div>
+        </div>
+      `;
+      document.addEventListener('keydown', onKeydown);
+      document.getElementById('modal-close-btn').onclick = cleanup;
+      document.getElementById('modal-cancel-btn').onclick = cleanup;
+    };
+
+    const showCode = (start) => {
+      const openUrl = start.verificationUriComplete || start.verificationUri;
+      document.getElementById('oauth-flow-body').innerHTML = `
+        <p style="color:var(--text-secondary);margin-bottom:10px;font-size:13px;">
+          Open the page below and enter this code to authorize Citadel:
+        </p>
+        <div style="text-align:center;margin-bottom:14px;">
+          <div id="oauth-user-code" style="font-size:28px;font-weight:700;letter-spacing:4px;font-family:monospace;">${escapeHtml(start.userCode)}</div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+          <a class="btn btn-primary btn-sm" href="${escapeHtml(openUrl)}" target="_blank" rel="noopener">Open ${escapeHtml(label)}</a>
+          <button type="button" class="btn btn-secondary btn-sm" id="oauth-copy-btn">Copy code</button>
+        </div>
+        <p id="oauth-flow-status" style="text-align:center;color:var(--text-muted);font-size:13px;margin-top:14px;">Waiting for approval...</p>
+        <button type="button" class="btn btn-secondary btn-sm" id="oauth-use-token" style="width:100%;margin-top:6px;">
+          Use a personal access token instead
+        </button>
+      `;
+      const useTokenBtn = document.getElementById('oauth-use-token');
+      if (useTokenBtn) {
+        useTokenBtn.onclick = () => {
+          cleanup();
+          openTokenModal(providerId, label);
+        };
+      }
+      const copyBtn = document.getElementById('oauth-copy-btn');
+      if (copyBtn) {
+        copyBtn.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(start.userCode);
+            copyBtn.textContent = 'Copied';
+          } catch {
+            copyBtn.textContent = 'Copy failed';
+          }
+        };
+      }
+      const link = document.querySelector('#oauth-flow-body a');
+      if (link) link.focus();
+    };
+
+    const poll = async (intervalSeconds) => {
+      if (stopped) return;
+      try {
+        const res = await api(`/api/git/oauth/${providerId}/poll`, { method: 'POST', body: { sessionId } });
+        if (res.status === 'connected') {
+          const statusEl = document.getElementById('oauth-flow-status');
+          if (statusEl) statusEl.textContent = 'Connected.';
+          cleanup();
+          showToast(`${label} connected.`, 'success');
+          renderReposView();
+          return;
+        }
+        if (res.status === 'pending') {
+          timer = setTimeout(() => poll(res.interval || intervalSeconds), (res.interval || intervalSeconds) * 1000);
+          return;
+        }
+        const statusEl = document.getElementById('oauth-flow-status');
+        if (statusEl) {
+          statusEl.textContent = res.status === 'denied'
+            ? 'Authorization was denied.'
+            : 'The code expired. Close this dialog and try again.';
+        }
+      } catch (err) {
+        if (stopped) return;
+        const statusEl = document.getElementById('oauth-flow-status');
+        if (statusEl) statusEl.textContent = err.message;
+      }
+    };
+
+    renderShell();
+    api(`/api/git/oauth/${providerId}/start`, { method: 'POST' })
+      .then((start) => {
+        if (stopped) {
+          api(`/api/git/oauth/${providerId}/cancel`, { method: 'POST', body: { sessionId: start.sessionId } }).catch(() => {});
+          return;
+        }
+        sessionId = start.sessionId;
+        showCode(start);
+        timer = setTimeout(() => poll(start.interval), Math.max(1, start.interval) * 1000);
+      })
+      .catch((err) => {
+        if (stopped) return;
+        document.getElementById('oauth-flow-body').innerHTML =
+          `<p style="color:var(--danger-color);">${escapeHtml(err.message)}</p>`;
+      });
+  }
+
+  function connectProvider(providerId) {
+    openProviderConnectModal(providerId);
+  }
+
   async function disconnectProvider(providerId) {
-    if (!window.confirm(`Disconnect ${providerId} and delete the stored token?`)) return;
+    if (!window.confirm(`Disconnect ${providerId} and delete the stored credential?`)) return;
     try {
       await api(`/api/git/credentials/${providerId}`, { method: 'DELETE' });
       showToast(`${providerId} disconnected.`, 'success');

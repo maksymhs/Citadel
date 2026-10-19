@@ -99,6 +99,27 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    name: '006_git_oauth_credentials',
+    up: (db) => {
+      // Provider tokens may now be obtained through an OAuth device flow.
+      // OAuth tokens (GitLab in particular) can expire and carry a refresh
+      // token, so record the expiry, the optional refresh token (encrypted like
+      // the access token) and which acquisition method produced the row.
+      if (!columnExists(db, 'git_credentials', 'refresh_token_encrypted')) {
+        db.exec('ALTER TABLE git_credentials ADD COLUMN refresh_token_encrypted TEXT');
+      }
+      if (!columnExists(db, 'git_credentials', 'expires_at')) {
+        db.exec('ALTER TABLE git_credentials ADD COLUMN expires_at TEXT');
+      }
+      if (!columnExists(db, 'git_credentials', 'scope')) {
+        db.exec('ALTER TABLE git_credentials ADD COLUMN scope TEXT');
+      }
+      if (!columnExists(db, 'git_credentials', 'auth_method')) {
+        db.exec('ALTER TABLE git_credentials ADD COLUMN auth_method TEXT');
+      }
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -243,6 +264,10 @@ function initDatabase(customPath = null) {
       provider TEXT PRIMARY KEY,
       username TEXT,
       token_encrypted TEXT NOT NULL,
+      refresh_token_encrypted TEXT,
+      expires_at TEXT,
+      scope TEXT,
+      auth_method TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
