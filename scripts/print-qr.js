@@ -26,41 +26,42 @@ function detectMode(env) {
   return /utf-?8/i.test(locale) ? 'unicode' : 'ascii';
 }
 
-const QUIET = 2;
-const mode = detectMode(process.env);
 const columns = Number(process.stdout.columns || process.env.COLUMNS);
 const rows = Number(process.stdout.rows || process.env.LINES);
+const isForcedMode = Boolean(process.env.CITADEL_QR_MODE);
+const preferredMode = detectMode(process.env);
 
-function build(data) {
+function build(data, targetMode, quiet = 2) {
   const qr = qrcode(0, 'L');
   qr.addData(data);
   qr.make();
   const count = qr.getModuleCount();
-  const size = count + QUIET * 2;
+  const size = count + quiet * 2;
   return {
+    data,
+    mode: targetMode,
+    quiet,
     size,
-    width: mode === 'ascii' ? size * 2 : size,
-    height: mode === 'ascii' ? size : Math.ceil(size / 2),
-    isDark: (row, col) => row >= QUIET && row < QUIET + count
-      && col >= QUIET && col < QUIET + count
-      && qr.isDark(row - QUIET, col - QUIET),
+    width: targetMode === 'ascii' ? size * 2 : size,
+    height: targetMode === 'ascii' ? size : Math.ceil(size / 2),
+    isDark: (row, col) => row >= quiet && row < quiet + count
+      && col >= quiet && col < quiet + count
+      && qr.isDark(row - quiet, col - quiet),
   };
 }
 
-// Leave one spare column: terminals with auto-wrap enabled wrap when the last
-// cell is written, which shifts every following QR row. Height only matters for
-// the console (no scrollback), where the top of a taller code scrolls away:
-// keep room for the leading blank line, one line of text and the prompt.
-const RESERVED_ROWS = 3;
+// Leave room for the prompt, header text, and margins so the QR code does
+// not scroll off the top of the screen on terminals with limited rows (e.g. 24).
+const RESERVED_ROWS = 2;
 function fits(code) {
   if (Number.isFinite(columns) && columns > 0 && code.width >= columns) return false;
-  if (mode === 'ascii' && Number.isFinite(rows) && rows > 0 && code.height + RESERVED_ROWS > rows) return false;
+  if (Number.isFinite(rows) && rows > 0 && code.height + RESERVED_ROWS > rows) return false;
   return true;
 }
 
 function renderUnicode(code) {
   // Force black-on-white so the code keeps its polarity on dark terminals.
-  let out = '\n\x1b[30;47m';
+  let out = '\x1b[30;47m';
   for (let row = 0; row < code.size; row += 2) {
     for (let col = 0; col < code.size; col++) {
       const top = code.isDark(row, col);
@@ -70,9 +71,11 @@ function renderUnicode(code) {
       else if (bottom) out += '▄';
       else out += ' ';
     }
-    out += '\x1b[0m\n\x1b[30;47m';
+    if (row + 2 < code.size) {
+      out += '\x1b[0m\n\x1b[30;47m';
+    }
   }
-  return `${out}\x1b[0m`;
+  return `${out}\x1b[0m\n`;
 }
 
 function renderAscii(code) {
@@ -92,16 +95,37 @@ function renderAscii(code) {
   return out;
 }
 
-let code = build(text);
-if (!fits(code) && fallback && fallback !== text) {
-  const alt = build(fallback);
-  if (fits(alt)) {
+function findBestFit(data) {
+  // Try preferred mode with quiet=2, then quiet=1.
+  for (const quiet of [2, 1]) {
+    const candidate = build(data, preferredMode, quiet);
+    if (fits(candidate)) return candidate;
+  }
+  // If ASCII was preferred but did not fit (common on 80x24 Linux consoles),
+  // try unicode before giving up, unless the user explicitly forced ASCII.
+  if (preferredMode === 'ascii' && !isForcedMode) {
+    for (const quiet of [2, 1]) {
+      const candidate = build(data, 'unicode', quiet);
+      if (fits(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+let code = findBestFit(text);
+if (!code && fallback && fallback !== text) {
+  const alt = findBestFit(fallback);
+  if (alt) {
     console.error('The full code does not fit this terminal; showing the panel URL instead.');
     code = alt;
   }
 }
-if (!fits(code)) {
+
+if (!code) {
+  // Build default representation for error reporting
+  code = build(text, preferredMode, 2);
   console.error(`QR needs ${code.width + 1}x${code.height + 1} cells, but this terminal is ${columns || '?'}x${rows || '?'}. Resize it (or connect over SSH) and try again.`);
   process.exit(2);
 }
-process.stdout.write(mode === 'ascii' ? renderAscii(code) : renderUnicode(code));
+
+process.stdout.write(code.mode === 'ascii' ? renderAscii(code) : renderUnicode(code));

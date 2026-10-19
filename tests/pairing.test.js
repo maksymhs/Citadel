@@ -77,6 +77,12 @@ describe('Peer pairing (invite + accept)', () => {
     assert.equal(compactPayload.url, invite.payload.url);
     assert.deepEqual(compactPayload.urls, [invite.payload.url]);
 
+    // Backward-compatibility: legacy hex-formatted v1 links also parse correctly
+    const hexLink = `${invite.payload.url}/#pair=v1.${invite.inviteId.replace(/-/g, '')}.${'c'.repeat(48)}`;
+    const hexPayload = hostService.parsePairingCode(hexLink);
+    assert.equal(hexPayload.inviteId, invite.inviteId);
+    assert.equal(hexPayload.secret, 'c'.repeat(48));
+
     // The link is dual-purpose: a normal camera follows the panel URL, while
     // the fragment carries everything another Citadel needs to pair.
     const identity = JSON.parse((await app.inject({

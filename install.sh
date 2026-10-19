@@ -638,6 +638,10 @@ EOF
   if [ "$TUNNEL" = true ] && [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/tunnel.sh" ]; then
     echo "      Setting up a global Cloudflare Quick Tunnel..."
     $SUDO bash "$APP_DIR/scripts/tunnel.sh" up || echo -e "${YELLOW}      Tunnel setup skipped (see errors above).${NC}"
+    # Re-generate connect-qr with the public tunnel URL so the QR code uses the public URL
+    if $SUDO test -f "$DATA_DIR/tunnel-url"; then
+      $SUDO -u "$RUN_USER" bash -c "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' PORT='$PANEL_PORT' node scripts/pair-qr.js" 2>/dev/null | $SUDO tee "$DATA_DIR/connect-qr" >/dev/null || true
+    fi
   fi
 
   # Always-on mode for laptop hosts (opt-in): closing the lid must not suspend
@@ -747,7 +751,10 @@ else
     done
     if $SUDO test -f "$DATA_DIR/connect-qr" 2>/dev/null; then
       INVITE_LINK="$($SUDO head -n1 "$DATA_DIR/connect-qr" 2>/dev/null || true)"
-      if [ -n "$INVITE_LINK" ]; then
+      if [ -n "$INVITE_LINK" ] && [ -n "$ACCESS_URL" ] && [[ "$INVITE_LINK" == "$ACCESS_URL"* ]]; then
+        QR_TEXT="$INVITE_LINK"
+        case "$INVITE_LINK" in *'#pair='*) PAIR_QR=true ;; esac
+      elif [ -z "$ACCESS_URL" ] && [ -n "$INVITE_LINK" ]; then
         QR_TEXT="$INVITE_LINK"
         case "$INVITE_LINK" in *'#pair='*) PAIR_QR=true ;; esac
       fi

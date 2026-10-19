@@ -95,6 +95,23 @@ function detectTailscale() {
   }
 }
 
+function isPrivateIp(ip) {
+  return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.)/.test(ip);
+}
+
+function detectPublicIp() {
+  try {
+    const publicIpFile = path.join(DATA_DIR, 'public-ip');
+    if (fs.existsSync(publicIpFile)) {
+      const ip = fs.readFileSync(publicIpFile, 'utf8').trim().split(/\s+/)[0];
+      if (ip && !isPrivateIp(ip)) return ip;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 function detectLanIp() {
   // Prefer the source address of the default route: the real network the phone
   // most likely shares (avoids docker/VPN interfaces).
@@ -115,7 +132,10 @@ function detectLanIp() {
       if (net.family === 'IPv4' && !net.internal) candidates.push(net.address);
     }
   }
-  const privateIp = candidates.find((ip) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip));
+  // Prefer a public IP if any interface has one, then private LAN IP
+  const publicIp = candidates.find((ip) => !isPrivateIp(ip));
+  if (publicIp) return publicIp;
+  const privateIp = candidates.find((ip) => isPrivateIp(ip));
   return privateIp || candidates[0] || null;
 }
 
@@ -136,12 +156,18 @@ function resolve() {
     result = { url: tunnel, source: 'tunnel' };
   } else {
     result = detectTailscale();
+    if (!result) {
+      const publicIp = detectPublicIp();
+      if (publicIp) {
+        result = { url: `http://${publicIp}:${PORT}`, source: 'public' };
+      }
+    }
     if (!result && !isLoopbackHost(HOST)) {
       if (HOST !== '0.0.0.0' && HOST !== '::') {
         result = { url: `http://${HOST}:${PORT}`, source: 'lan' };
       } else {
         const ip = detectLanIp();
-        result = ip ? { url: `http://${ip}:${PORT}`, source: 'lan' } : null;
+        result = ip ? { url: `http://${ip}:${PORT}`, source: isPrivateIp(ip) ? 'lan' : 'public' } : null;
       }
     }
     if (!result) {
@@ -244,6 +270,9 @@ function getCandidateUrls() {
 
   const tailscale = detectTailscale();
   if (tailscale) push(tailscale.url);
+
+  const publicIp = detectPublicIp();
+  if (publicIp) push(`http://${publicIp}:${PORT}`);
 
   if (!isLoopbackHost(HOST) && HOST !== '0.0.0.0' && HOST !== '::') {
     push(`http://${HOST}:${PORT}`);

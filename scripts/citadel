@@ -115,10 +115,11 @@ case "$cmd" in
     ;;
 
   qr)
-    pair_link="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" node scripts/pair-qr.js)"
+    p_url="$(panel_url)"
+    pair_link="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" PORT="$PORT" node scripts/pair-qr.js 2>/dev/null || true)"
     echo "Pairing QR (valid for 10 minutes):"
-    (cd "$APP_DIR" && node scripts/print-qr.js "$pair_link")
-    echo "Panel URL: $(panel_url)"
+    (cd "$APP_DIR" && node scripts/print-qr.js "${pair_link:-$p_url}" "$p_url")
+    echo "Panel URL: $p_url"
     ;;
 
   doctor|network|wifi|repair)

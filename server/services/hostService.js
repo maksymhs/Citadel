@@ -387,7 +387,7 @@ function cleanupInvites() {
  * embedded in the QR/link; the server keeps a hash so a leaked database does not
  * grant pairing.
  */
-function createInvite({ userId }) {
+function createInvite({ userId, url } = {}) {
   cleanupInvites();
   const db = getDatabase();
   const overflow = db.prepare(`
@@ -408,7 +408,7 @@ function createInvite({ userId }) {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(inviteId, hashToken(secret), userId || null, identity.instanceId, expiresAt, nowIso());
 
-  const primaryUrl = identity.urls[0] || identity.url;
+  const primaryUrl = url || identity.urls[0] || identity.url;
   const payload = {
     v: 1,
     instanceId: identity.instanceId,
@@ -420,7 +420,10 @@ function createInvite({ userId }) {
   };
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const link = `${primaryUrl.replace(/\/+$/, '')}/#pair=${encoded}`;
-  const compactLink = `${primaryUrl.replace(/\/+$/, '')}/#pair=v1.${inviteId.replace(/-/g, '')}.${secret}`;
+  const hexId = inviteId.replace(/-/g, '');
+  const b64Id = Buffer.from(hexId, 'hex').toString('base64url');
+  const b64Secret = Buffer.from(secret, 'hex').toString('base64url');
+  const compactLink = `${primaryUrl.replace(/\/+$/, '')}/#pair=v1.${b64Id}.${b64Secret}`;
 
   return {
     inviteId,
@@ -457,11 +460,30 @@ function parsePairingCode(code) {
     }
   }
 
-  const compact = encoded.match(/^v1\.([0-9a-f]{32})\.([0-9a-f]{48})$/i);
+  const compact = encoded.match(/^v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
   if (compact) {
     if (!linkUrl) throw new Error('The compact pairing code must include its link address.');
-    const inviteId = `${compact[1].slice(0, 8)}-${compact[1].slice(8, 12)}-${compact[1].slice(12, 16)}-${compact[1].slice(16, 20)}-${compact[1].slice(20)}`;
-    return { v: 1, inviteId, secret: compact[2], url: linkUrl, urls: [linkUrl] };
+    let idRaw = compact[1];
+    let secret = compact[2];
+    if (idRaw.length === 22) {
+      try {
+        idRaw = Buffer.from(idRaw, 'base64url').toString('hex');
+      } catch {
+        throw new Error('The pairing code is not valid.');
+      }
+    }
+    if (secret.length === 32) {
+      try {
+        secret = Buffer.from(secret, 'base64url').toString('hex');
+      } catch {
+        throw new Error('The pairing code is not valid.');
+      }
+    }
+    if (idRaw.length !== 32 || secret.length !== 48 || !/^[0-9a-f]{32}$/i.test(idRaw) || !/^[0-9a-f]{48}$/i.test(secret)) {
+      throw new Error('The compact pairing code is not valid.');
+    }
+    const inviteId = `${idRaw.slice(0, 8)}-${idRaw.slice(8, 12)}-${idRaw.slice(12, 16)}-${idRaw.slice(16, 20)}-${idRaw.slice(20)}`;
+    return { v: 1, inviteId, secret: secret.toLowerCase(), url: linkUrl, urls: [linkUrl] };
   }
 
   let payload;

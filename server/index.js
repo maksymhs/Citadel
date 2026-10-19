@@ -254,6 +254,31 @@ async function startServer() {
       try { fs.rmSync(path.join(DATA_DIR, 'connect-qr'), { force: true }); } catch { /* ignore */ }
     }
 
+    // Keep connect-qr synchronized when the Cloudflare tunnel starts or rotates its URL.
+    const tunnelUrlFile = path.join(DATA_DIR, 'tunnel-url');
+    let lastTunnelUrl = '';
+    try {
+      if (fs.existsSync(tunnelUrlFile)) {
+        lastTunnelUrl = fs.readFileSync(tunnelUrlFile, 'utf8').trim();
+      }
+    } catch { /* ignore */ }
+
+    const tunnelWatcher = setInterval(() => {
+      try {
+        if (!fs.existsSync(tunnelUrlFile)) return;
+        const current = fs.readFileSync(tunnelUrlFile, 'utf8').trim();
+        if (current && current !== lastTunnelUrl) {
+          lastTunnelUrl = current;
+          connectService._reset();
+          try {
+            const invite = hostService.createInvite({ userId: null });
+            fs.writeFileSync(path.join(DATA_DIR, 'connect-qr'), `${invite.compactLink}\n`, { mode: 0o600 });
+          } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
+    }, 2500);
+    tunnelWatcher.unref();
+
     console.log(`
 ==================================================================
   Citadel — Development Platform & AI Agents

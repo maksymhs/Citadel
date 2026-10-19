@@ -47,6 +47,29 @@ test('print-qr falls back to the shorter text when the full code does not fit', 
   assert.ok(rows.length > 0 && rows.length < 40, `expected the short code, got ${rows.length} rows`);
 });
 
+test('print-qr falls back to short URL when height exceeds 24 terminal rows', () => {
+  // A code that would take 27 rows in unicode with quiet=2
+  const long = `https://very-long-instance-name-for-cloud-testing.trycloudflare.com/#pair=v1.${'a'.repeat(32)}.${'b'.repeat(48)}`;
+  const fallback = 'https://very-long-instance-name-for-cloud-testing.trycloudflare.com';
+  const out = execFileSync(process.execPath, [PRINT_QR, long, fallback], {
+    encoding: 'utf8',
+    env: { ...process.env, COLUMNS: '80', LINES: '24' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const lines = out.split('\n').filter((l) => l.trim().length > 0);
+  assert.ok(lines.length <= 22, `expected height <= 22 to fit 24 rows, got ${lines.length}`);
+});
+
+test('print-qr switches to Unicode on Linux console when ASCII width exceeds 80 columns', () => {
+  const long = 'https://example.com/#pair=v1.lgGchkRcTQ62aLZcGZhzGA.8c2p57Hz_w-6BSNO3GfZAR-Ui2N8Gtqy';
+  const out = execFileSync(process.execPath, [PRINT_QR, long], {
+    encoding: 'utf8',
+    env: { ...process.env, TERM: 'linux', COLUMNS: '80', LINES: '35' },
+  });
+  // Since ASCII would need 86+ columns and terminal has 80, it switches to unicode rather than failing
+  assert.match(out, /[█▀▄]/);
+});
+
 test('print-qr refuses to wrap a QR on a narrow terminal', () => {
   assert.throws(() => execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'print-qr.js'), 'https://example.com'], {
     encoding: 'utf8',

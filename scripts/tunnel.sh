@@ -138,7 +138,16 @@ echo ""
 echo "Global URL: $PUBLIC_URL"
 echo "(This URL changes when the tunnel restarts.)"
 echo ""
+
+PAIR_LINK=""
+if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/pair-qr.js" ]; then
+  PAIR_LINK="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" PORT="$PORT" node scripts/pair-qr.js 2>/dev/null || true)"
+  if [ -n "$PAIR_LINK" ]; then
+    printf '%s\n' "$PAIR_LINK" > "$DATA_DIR/connect-qr" 2>/dev/null || true
+  fi
+fi
+
 if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
-  (cd "$APP_DIR" && node scripts/print-qr.js "$PUBLIC_URL") || true
+  (cd "$APP_DIR" && node scripts/print-qr.js "${PAIR_LINK:-$PUBLIC_URL}" "$PUBLIC_URL") || true
 fi
 echo "  $PUBLIC_URL"
