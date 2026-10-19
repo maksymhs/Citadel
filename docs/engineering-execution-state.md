@@ -1291,3 +1291,14 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Final: `npm test` → **353 tests, 351 pass** (only the pre-existing,
   environment-dependent tmux copy-mode test fails).
 - Version bumped to `0.29.0`; asset cache-buster token moved to `v0290`.
+
+## 73. Installer fix: NodeSource setup when running as root (v0.29.1)
+- **Bug.** The official command `curl .../install.sh | sudo bash` runs the
+  installer as root, where `$SUDO` is intentionally empty. Step 4 executed
+  `curl ... | $SUDO -E bash -`, which became `... | -E bash -` and failed with
+  `-E: command not found`; the broken pipe surfaced as
+  `curl: (23) Failed writing body`. Fresh machines without Node.js could not
+  install.
+- **Fix.** Only pass `-E` when `$SUDO` is non-empty; otherwise pipe straight to
+  `bash -`. Verified with `bash -n install.sh`.
+- Version bumped to `0.29.1`; asset cache-buster token moved to `v0291`.
