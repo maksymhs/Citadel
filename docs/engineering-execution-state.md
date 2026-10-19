@@ -1096,4 +1096,49 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Version bumped to `0.24.0`; asset cache-buster moved to `v0240`.
 - Release: `chore(release): v0.24.0`, annotated tag `v0.24.0`.
 
+## 64. Changes (this run)
+- **Unified credential vault (single store for agents).** New `secrets` table
+  (`server/database/db.js`) and `server/services/secretStore.js`: one encrypted
+  (AES-256-GCM via `security/secrets.js`) place for `env`, `git`, `file` and
+  `ssh` entries. Migration `006_secret_vault` creates the table and moves legacy
+  `git_credentials` rows into it as `GITHUB_TOKEN` / `GITLAB_TOKEN` (kind='git'),
+  reusing the exact ciphertext; the old table is left untouched so nothing is
+  lost.
+- `server/services/gitCredentialsService.js` is now a thin facade over
+  `secretStore`, so git, the provider APIs and agents all read from the vault.
+  `git-credential-citadel.js` keeps working unchanged through
+  `resolveAuthForUrl`.
+- New `GET/POST /api/secrets` and `DELETE /api/secrets/:name`
+  (`server/routes/secretRoutes.js`): listing returns metadata only (never a
+  value), mutations require an administrator and are audited without the value.
+- **Agent access.** `scripts/citadel-creds.js` (`citadel-creds` wrapper added to
+  `install.sh`) exposes `list`, `get <name>`, `env` (eval-able `export` lines),
+  `exec -- <cmd>` (env injected for just that process) and `materialize <name>
+  [path]` (writes a 0600 file). Terminals also receive every `env`/`git` entry
+  at spawn (`terminalManager._spawnPty`), best-effort so a vault error never
+  blocks a shell.
+- Settings gains a **Credentials** card (`public/js/app.js`): add/rotate/delete
+  entries with kind selector; values are write-only. Styles in
+  `public/css/app.css` (`.secret-list`, `.secret-row`).
+- Fix (test isolation): `tests/update-rollback.test.js` now pins
+  `DATABASE_PATH` to its throwaway world. Previously, running the suite inside
+  the service environment (which exports `DATABASE_PATH`) made the updater
+  snapshot/restore the **real** database, clobbering it with the fake
+  `SNAPSHOT-CONTENT` and failing the test. The operatively damaged
+  `/srv/citadel/data/citadel.db` was recovered from the live process WAL and
+  restored.
+
+## 65. Tests (this run)
+- Added `tests/secrets.test.js` (encryption-at-rest, metadata-only listing,
+  validation, env filtering, git facade, delete/404, the `citadel-creds` CLI
+  end to end, and the legacy `git_credentials` migration).
+- Updated `tests/git.test.js` to assert the token now lives in `secrets`.
+- Final: `npm test` → **328 tests, 326 pass, 1 fail, 1 skipped**. The remaining
+  failure (`terminal.test.js` "tmuxCopyMode enter/exit works on a tmux-backed
+  session") is environment-dependent and unrelated to these changes.
+
+## 66. Version
+- Version bumped to `0.25.0`; asset cache-buster moved to `v0250`.
+- Release: `chore(release): v0.25.0`, annotated tag `v0.25.0`.
+
 
