@@ -1333,3 +1333,33 @@ README/.env.example/architecture. No commits/pushes/deploys.
   suite reports **355 tests, 354 pass, 1 skipped** (the pre-existing
   environment-dependent tmux copy-mode skip). `npm version minor` bumped the
   package to `0.30.0`; asset cache-buster token moved to `v0300`.
+
+## 75. Credential vault sync between paired hosts (v0.31.0)
+- **Vault follows the pairing.** New `secretStore.exportSecrets()` returns a
+  decrypted snapshot (undecryptable rows are skipped, not fatal) and
+  `server/services/secretSyncService.js` merges two vaults bidirectionally.
+  Every kind travels — `env` variables, `git` tokens (e.g. `GITHUB_TOKEN`),
+  `file` and `ssh` entries — so a newly joined machine does not need its tokens
+  re-entered. Newest `updated_at` wins, equal values are skipped, deletions are
+  never propagated, and values are never rendered to the browser.
+- **Endpoints.** `POST /api/host/peers/secrets/sync` (peer token, `no-store`,
+  8 MB body cap, audit `peer_secrets_synced`) is the server-to-server merge;
+  `POST /api/hosts/:id/sync-secrets` (session + admin, audit
+  `host_secrets_synced`) lets the operator re-run it after rotating a token.
+- **When.** Invites created in **Settings → Connection** merge automatically
+  after redeem (`invitedBy` set). The startup/installer QR has no associated
+  admin (`userId: null`) and intentionally does **not** share secrets. Existing
+  pairings converge via the new **Sync credentials** action on the Machines card.
+- **Transport.** `hostService.requestHost` gained a `secureOnly` filter with
+  `isSecurePeerUrl`; secret transfers only use HTTPS or loopback. A pair reachable
+  only over plain-HTTP LAN still pairs but reports
+  `No HTTPS address is available for this host` instead of leaking the vault.
+- **QR and unpair fixes.** The terminal QR encodes the compact invite so the
+  ANSI block render fits narrow widths (`/api/connect/qr` reports `qrColumns` /
+  `qrFits`), and unpair now attempts a bounded (~3.5 s) remote revoke before
+  removing the host locally, so a hanging address no longer blocks removal.
+- **Tests.** New `tests/secret-sync.test.js` (conflict/invalid import handling,
+  peer-endpoint auth + merge, end-to-end `syncWithHost` against a mock peer);
+  `tests/connect.test.js` and `tests/pairing.test.js` cover the QR width and
+  offline-unpair paths. Full suite **360 tests, 359 pass, 1 skipped**. Version
+  bumped to `0.31.0`; asset cache-buster token moved to `v0310`.
