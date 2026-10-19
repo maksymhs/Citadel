@@ -3562,14 +3562,16 @@
                 ${ver.branch ? `· branch <code>${escapeHtml(ver.branch)}</code>` : ''}
               </p>
               <div id="update-status" style="margin-top:8px;font-size:13px;color:var(--text-muted);">
-                ${ver.updaterAvailable
+                ${ver.updateMode === 'helper'
                   ? 'The in-panel updater is enabled.'
-                  : 'In-panel updater not installed. Re-run the installer to enable one-click updates.'}
+                  : ver.updateMode === 'self'
+                    ? 'Built-in updater enabled — updates run as the service user, no root helper required.'
+                    : `Automatic updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
               </div>
             </div>
             <div style="display:flex;gap:8px;flex-shrink:0;">
               <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
-              ${ver.updaterAvailable ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
+              ${ver.canUpdate ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
             </div>
           </div>
         </div>
@@ -3710,7 +3712,8 @@
           await api('/api/system/update', { method: 'POST' });
           showToast('Update started. The service will restart shortly.', 'success');
           statusEl.style.color = 'var(--warning-color)';
-          statusEl.textContent = 'Update in progress. Reload this page in ~20 seconds.';
+          statusEl.textContent = 'Update in progress. This page will reload automatically...';
+          pollUpdateStatus(statusEl, applyBtn);
         } catch (err) {
           applyBtn.disabled = false;
           statusEl.style.color = 'var(--danger-color)';
@@ -3718,6 +3721,35 @@
         }
       };
     }
+  }
+
+  // Follow a running update across the service restart, then reload the panel.
+  async function pollUpdateStatus(statusEl, applyBtn) {
+    for (let i = 0; i < 60; i += 1) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const res = await api('/api/system/update/status');
+        const s = (res.update && res.update.status) || {};
+        if (s.state === 'success') {
+          statusEl.style.color = 'var(--success-color)';
+          statusEl.textContent = `Update complete${s.toCommit ? ` (${String(s.toCommit).slice(0, 7)})` : ''}. Reloading...`;
+          setTimeout(() => location.reload(), 2500);
+          return;
+        }
+        if (s.state === 'failed') {
+          statusEl.style.color = 'var(--danger-color)';
+          statusEl.textContent = `Update failed: ${s.error || 'unknown error'}.`;
+          if (applyBtn) applyBtn.disabled = false;
+          return;
+        }
+        statusEl.textContent = s.message || 'Update in progress...';
+      } catch {
+        statusEl.textContent = 'Service restarting...';
+      }
+    }
+    statusEl.style.color = 'var(--warning-color)';
+    statusEl.textContent = 'Update is taking longer than expected. Reload this page shortly.';
+    if (applyBtn) applyBtn.disabled = false;
   }
 
   // Credentials vault card (Settings): add/rotate/delete. Values are write-only.

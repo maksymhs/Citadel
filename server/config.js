@@ -84,6 +84,11 @@ const UPDATE_REPO = process.env.CITADEL_REPO || 'maksymhs/Citadel'; // "owner/na
 const UPDATE_BRANCH = process.env.CITADEL_REPO_BRANCH || 'main';
 const UPDATER_PATH = process.env.CITADEL_UPDATER_PATH || '/usr/local/sbin/citadel-update';
 const SERVICE_NAME = process.env.CITADEL_SERVICE || 'citadel';
+// Allow the panel to update itself as the service user (no root helper). Set
+// CITADEL_SELF_UPDATE=0 (as the test suite does) to disable it entirely.
+const SELF_UPDATE_ENABLED = !['0', 'false', 'off', 'no'].includes(
+  String(process.env.CITADEL_SELF_UPDATE || '1').toLowerCase(),
+);
 
 // Scoped credential for task-mesh worker nodes (sentinels). When set, the
 // worker endpoints (claim/result/heartbeat) accept the X-Citadel-Node-Token
@@ -204,6 +209,7 @@ module.exports = {
   UPDATE_REPO,
   UPDATE_BRANCH,
   UPDATER_PATH,
+  SELF_UPDATE_ENABLED,
   SERVICE_NAME,
   PEER_TOKEN,
   PEER_URLS,

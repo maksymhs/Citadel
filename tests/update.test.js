@@ -3,10 +3,11 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 
-// Point the updater at a path that never exists so the suite can NEVER trigger a
-// real self-update on a host that has the privileged helper installed. This must
-// be set before the config/updateService modules are required below.
+// Point the updater at a path that never exists and disable the built-in
+// updater so the suite can NEVER trigger a real self-update. This must be set
+// before the config/updateService modules are required below.
 process.env.CITADEL_UPDATER_PATH = '/nonexistent/citadel-update-test';
+process.env.CITADEL_SELF_UPDATE = '0';
 
 const { buildServer } = require('../server/index');
 const { closeDatabase, getDatabase, initDatabase } = require('../server/database/db');
@@ -127,16 +128,16 @@ describe('Version, updater and migrations', () => {
         payload: '',
       });
       assert.equal(res.statusCode, 400);
-      assert.match(JSON.parse(res.payload).error, /not installed/i);
+      assert.match(JSON.parse(res.payload).error, /unavailable|not installed/i);
     });
 
-    test('POST /api/system/update fails cleanly when the updater is absent', async () => {
+    test('POST /api/system/update fails cleanly when no updater is available', async () => {
       const original = process.env.CITADEL_UPDATER_PATH;
       process.env.CITADEL_UPDATER_PATH = '/nonexistent/citadel-update';
       delete require.cache[require.resolve('../server/services/updateService')];
       delete require.cache[require.resolve('../server/config')];
       const svc = require('../server/services/updateService');
-      await assert.rejects(() => svc.triggerUpdate(), /not installed/i);
+      await assert.rejects(() => svc.triggerUpdate(), /unavailable|not installed/i);
       if (original === undefined) delete process.env.CITADEL_UPDATER_PATH;
       else process.env.CITADEL_UPDATER_PATH = original;
     });

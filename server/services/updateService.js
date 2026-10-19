@@ -5,16 +5,23 @@
  */
 const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const path = require('node:path');
 const {
   APP_VERSION,
   ROOT_DIR,
+  DATA_DIR,
   UPDATE_REPO,
   UPDATE_BRANCH,
   UPDATER_PATH,
+  SELF_UPDATE_ENABLED,
   SERVICE_NAME,
   PEER_TOKEN,
   PEER_URLS,
 } = require('../config');
+
+const UPDATE_LOG_PATH = path.join(DATA_DIR, 'update.log');
+const UPDATE_STATUS_PATH = path.join(DATA_DIR, 'update-status.json');
+const UPDATE_LOCK_PATH = path.join(DATA_DIR, 'update.lock');
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 let cache = { at: 0, data: null };
@@ -64,17 +71,49 @@ function checkUpdaterHelper() {
   return { ok: true, reason: null };
 }
 
+/**
+ * Pure capability check: is this a writable git checkout with git/npm on PATH?
+ * Grants no extra privilege — the panel already exposes a shell as the same
+ * service user. Use `selfUpdateUsable()` to decide whether to actually run it.
+ */
+function checkSelfUpdate() {
+  const inside = spawnSync('git', ['-C', ROOT_DIR, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
+  if (inside.status !== 0) return { ok: false, reason: 'not a git checkout' };
+  try {
+    fs.accessSync(ROOT_DIR, fs.constants.W_OK);
+  } catch {
+    return { ok: false, reason: 'application directory is not writable by the service user' };
+  }
+  const npm = spawnSync('npm', ['--version'], { encoding: 'utf8' });
+  if (npm.status !== 0) return { ok: false, reason: 'npm is not available to the service user' };
+  return { ok: true, reason: null };
+}
+
+function selfUpdateUsable() {
+  if (!SELF_UPDATE_ENABLED) return { ok: false, reason: 'disabled by configuration' };
+  return checkSelfUpdate();
+}
+
 function getVersionInfo() {
-  const check = checkUpdaterHelper();
+  const helper = checkUpdaterHelper();
+  const self = selfUpdateUsable();
+  const mode = helper.ok ? 'helper' : (self.ok ? 'self' : 'manual');
   return {
     version: APP_VERSION,
     commit: getCurrentCommit(),
     repo: UPDATE_REPO,
     branch: UPDATE_BRANCH,
     service: SERVICE_NAME,
-    updaterAvailable: check.ok,
-    updaterProblem: check.ok ? null : check.reason,
-    updaterPath: check.ok ? UPDATER_PATH : null,
+    updaterAvailable: helper.ok,
+    updaterProblem: helper.ok ? null : helper.reason,
+    updaterPath: helper.ok ? UPDATER_PATH : null,
+    selfUpdateAvailable: self.ok,
+    selfUpdateProblem: self.ok ? null : self.reason,
+    updateMode: mode,
+    canUpdate: helper.ok || self.ok,
+    updateProblem: (helper.ok || self.ok)
+      ? null
+      : `privileged helper: ${helper.reason}; built-in updater: ${self.reason}`,
     peers: PEER_URLS,
     peerSync: Boolean(PEER_TOKEN && PEER_URLS.length > 0),
   };
@@ -231,27 +270,77 @@ async function notifyPeers() {
 }
 
 /**
- * Launch the root-owned updater helper in the background. The helper restarts
- * the service, so the current process will be replaced. When `fanout` is true
- * (default) and peers are configured, also ask each peer to update.
+ * Launch the built-in updater as a detached child of the service user. It
+ * rewrites the checkout in place and then restarts the service, so the current
+ * process will be replaced.
+ */
+function triggerSelfUpdate() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const fd = fs.openSync(UPDATE_LOG_PATH, 'a');
+  const child = spawn(process.execPath, [path.join(ROOT_DIR, 'scripts', 'self-update.js')], {
+    cwd: ROOT_DIR,
+    detached: true,
+    stdio: ['ignore', fd, fd],
+    env: {
+      ...process.env,
+      CITADEL_APP_DIR: ROOT_DIR,
+      CITADEL_REPO: UPDATE_REPO,
+      CITADEL_REPO_BRANCH: UPDATE_BRANCH,
+      CITADEL_SERVICE: SERVICE_NAME,
+      CITADEL_SERVER_PID: String(process.pid),
+      CITADEL_UPDATE_LOG: UPDATE_LOG_PATH,
+      CITADEL_UPDATE_STATUS: UPDATE_STATUS_PATH,
+      CITADEL_UPDATE_LOCK: UPDATE_LOCK_PATH,
+    },
+  });
+  child.unref();
+  fs.closeSync(fd);
+  return { started: true, pid: child.pid };
+}
+
+/**
+ * Latest self-update progress, for the panel to report after a restart.
+ */
+function getUpdateStatus() {
+  let status = null;
+  try {
+    status = JSON.parse(fs.readFileSync(UPDATE_STATUS_PATH, 'utf8'));
+  } catch {
+    status = null;
+  }
+  return { status, logPath: UPDATE_LOG_PATH };
+}
+
+/**
+ * Start an update. Prefers the root-owned helper when present; otherwise falls
+ * back to the built-in updater that runs as the service user. When `fanout` is
+ * true (default) and peers are configured, also ask each peer to update.
  */
 async function triggerUpdate({ fanout = true } = {}) {
-  const check = checkUpdaterHelper();
-  if (!check.ok) {
-    if (check.reason === 'not installed') {
-      throw new Error('Updater is not installed on this host. Re-run the installer to enable updates.');
+  const helper = checkUpdaterHelper();
+  let mode;
+
+  if (helper.ok) {
+    const precheck = spawnSync('sudo', ['-n', UPDATER_PATH, '--check'], { encoding: 'utf8' });
+    if (precheck.status !== 0) {
+      const detail = (precheck.stderr || precheck.stdout || '').trim();
+      throw new Error(`Updater precheck failed: ${detail || 'not permitted (check sudoers)'}`);
     }
-    throw new Error(`Refusing to run the updater: helper is ${check.reason}. Re-run install.sh.`);
+    const child = spawn('sudo', ['-n', UPDATER_PATH], { detached: true, stdio: 'ignore' });
+    child.unref();
+    mode = 'helper';
+  } else if (helper.reason === 'not installed') {
+    // No privileged helper: use the built-in unprivileged updater.
+    const self = selfUpdateUsable();
+    if (!self.ok) {
+      throw new Error(`Automatic updates are unavailable: ${self.reason}. Update manually with "git pull && npm install" and restart the service.`);
+    }
+    triggerSelfUpdate();
+    mode = 'self';
+  } else {
+    // A helper is configured but failed the safety check — never execute it.
+    throw new Error(`Refusing to run the updater: helper is ${helper.reason}. Re-run install.sh.`);
   }
-
-  const precheck = spawnSync('sudo', ['-n', UPDATER_PATH, '--check'], { encoding: 'utf8' });
-  if (precheck.status !== 0) {
-    const detail = (precheck.stderr || precheck.stdout || '').trim();
-    throw new Error(`Updater precheck failed: ${detail || 'not permitted (check sudoers)'}`);
-  }
-
-  const child = spawn('sudo', ['-n', UPDATER_PATH], { detached: true, stdio: 'ignore' });
-  child.unref();
 
   let peers = [];
   if (fanout) {
@@ -261,7 +350,7 @@ async function triggerUpdate({ fanout = true } = {}) {
       peers = [{ ok: false, error: err.message }];
     }
   }
-  return { started: true, peers };
+  return { started: true, mode, peers };
 }
 
 module.exports = {
@@ -269,6 +358,9 @@ module.exports = {
   compareVersions,
   getVersionInfo,
   checkUpdaterHelper,
+  checkSelfUpdate,
+  selfUpdateUsable,
+  getUpdateStatus,
   checkForUpdates,
   triggerUpdate,
 };

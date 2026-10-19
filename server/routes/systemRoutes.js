@@ -117,8 +117,9 @@ async function systemRoutes(fastify) {
     return { updates: await updateService.checkForUpdates({ force }) };
   });
 
-  // Trigger the privileged updater helper (requires the helper from the installer)
-  fastify.post('/api/system/update', async (request, reply) => {
+  // Trigger an update: prefers the privileged helper, falls back to the
+  // built-in unprivileged updater. Administrators only.
+  fastify.post('/api/system/update', { preHandler: requireAdmin }, async (request, reply) => {
     try {
       const res = await updateService.triggerUpdate();
       auditService.logAction({
@@ -132,6 +133,11 @@ async function systemRoutes(fastify) {
     } catch (err) {
       return reply.status(400).send({ error: err.message });
     }
+  });
+
+  // Progress of the most recent (built-in) update. Administrators only.
+  fastify.get('/api/system/update/status', { preHandler: requireAdmin }, async () => {
+    return { update: updateService.getUpdateStatus() };
   });
 
   // Audit logs query

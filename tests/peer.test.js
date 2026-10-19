@@ -60,6 +60,6 @@ describe('Peer update endpoint', () => {
     });
     // No session cookie was sent: the token alone authorizes the request.
     assert.equal(res.statusCode, 400);
-    assert.match(JSON.parse(res.payload).error, /not installed/i);
+    assert.match(JSON.parse(res.payload).error, /not installed|unavailable/i);
   });
 });
