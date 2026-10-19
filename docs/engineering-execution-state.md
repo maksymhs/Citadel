@@ -1141,4 +1141,49 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Version bumped to `0.25.0`; asset cache-buster moved to `v0250`.
 - Release: `chore(release): v0.25.0`, annotated tag `v0.25.0`.
 
+## 67. Changes (this run)
+- **Built-in updater (one-click from the panel, no root helper).** New
+  `scripts/self-update.js`: a detached worker that runs as the service user,
+  updates the checkout in place (`git fetch` + `git reset --hard
+  origin/<branch>`), reinstalls production dependencies (`npm install
+  --omit=dev`) and then restarts the service. Restart prefers `systemctl
+  restart`; when that is not permitted it signals the running server process
+  and lets `Restart=always` relaunch it. The worker survives the change of the
+  service's main process (detached session) and reports progress through
+  `DATA_DIR/update-status.json` + `update.log`. It holds a lock (anti-
+  concurrency), rolls back to the previous commit if `npm install` fails, and
+  refuses to touch a **dirty** checkout so uncommitted work is never lost.
+- `server/services/updateService.js`: `checkSelfUpdate()` (writable git checkout
+  + git/npm on PATH) and `selfUpdateUsable()` (honours `CITADEL_SELF_UPDATE`).
+  `triggerUpdate()` now prefers the root-owned helper, falls back to the
+  built-in updater, and reports `mode` (`helper`|`self`). `getUpdateStatus()`
+  exposes the last run. `getVersionInfo()` adds `updateMode`, `canUpdate`,
+  `selfUpdateAvailable` and `updateProblem`. No new privilege is granted: the
+  panel already exposes a shell as the same service user.
+- Routes: `POST /api/system/update` is now **admin-only**; new admin-only
+  `GET /api/system/update/status`. The peer (`/api/system/peer-update`) path is
+  unchanged.
+- UI: Settings → Updates shows the **Update now** button whenever `canUpdate`
+  (helper *or* built-in), reports which mode is active, and polls
+  `/api/system/update/status` across the restart before auto-reloading.
+- Config: `CITADEL_SELF_UPDATE=0` disables the built-in updater. The test suite
+  sets it so tests can never rewrite the checkout.
+
+## 68. Tests (this run)
+- Added `tests/selfUpdate.test.js` (capability detection, `updateMode`/
+  `canUpdate` reporting, admin-only status route, stable status shape).
+- Updated `tests/update.test.js` (disables the built-in updater, accepts the new
+  "unavailable" error) and `tests/peer.test.js` (same).
+- Final: `npm test` → **333 tests, 331 pass, 1 fail, 1 skipped**. The remaining
+  failure (`terminal.test.js` "tmuxCopyMode enter/exit works on a tmux-backed
+  session") is environment-dependent and unrelated to these changes.
+- Guardrail learned the hard way: before the `CITADEL_SELF_UPDATE=0` gate, a
+  test hitting `/api/fleet/update-all` launched a **real** self-update that ran
+  `git reset --hard origin/main`, discarding the uncommitted work-in-progress.
+  The gate (test script env + worker-side check) makes this impossible now.
+
+## 69. Version
+- Version bumped to `0.26.0`; asset cache-buster moved to `v0260`.
+- Release: `chore(release): v0.26.0`, annotated tag `v0.26.0`.
+
 
