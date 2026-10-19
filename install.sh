@@ -265,7 +265,14 @@ if [ "$NODE_INSTALLED" = false ]; then
     echo -e "${YELLOW}[WARNING] Installing Node.js LTS (>= 18.x) is required.${NC}"
   elif [ "$OS" = "Linux" ] && command -v apt-get >/dev/null 2>&1 && [ "$HAS_SUDO" = true ]; then
     echo "      Installing Node.js 22 LTS via NodeSource..."
-    curl -fsSL https://deb.nodesource.com/setup_22.x | $SUDO -E bash -
+    # `$SUDO` is empty when the installer already runs as root; passing `-E`
+    # unconditionally would execute `-E` as a command (and curl would die with
+    # "Failed writing body").
+    if [ -n "$SUDO" ]; then
+      curl -fsSL https://deb.nodesource.com/setup_22.x | $SUDO -E bash -
+    else
+      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    fi
     $SUDO apt-get install -y -qq nodejs
   else
     echo -e "${RED}[ERROR] Node.js is not installed. Please install Node.js >= 18 LTS manually.${NC}"
