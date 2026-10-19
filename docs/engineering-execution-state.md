@@ -1302,3 +1302,34 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - **Fix.** Only pass `-E` when `$SUDO` is non-empty; otherwise pipe straight to
   `bash -`. Verified with `bash -n install.sh`.
 - Version bumped to `0.29.1`; asset cache-buster token moved to `v0291`.
+
+## 74. Dual-purpose pairing QR, camera fallback and 24/7 laptop mode (v0.30.0)
+- **One code, two jobs.** The installer/startup QR and **Settings → Connection**
+  now encode a single-use pairing invitation (`POST /api/pair/invite`). A normal
+  phone camera opens the panel; scanning the same code from another Citadel's
+  **Pair a machine** screen pairs both hosts. The modal no longer exposes a
+  second "Show my QR" tab.
+- **Camera fallback.** Live camera scanning still requires HTTPS/localhost, so
+  the pairing modal now also offers **Take a photo of the QR** (native camera
+  capture) and pasted links over plain HTTP. `jsQR` is vendored under
+  `public/vendor/jsQR.js` and used to decode captured frames, including Safari
+  where `BarcodeDetector` is absent.
+- **Terminal QR.** Startup writes the current invite to
+  `${DATA_DIR}/connect-qr` (mode 0600) for the installer banner; the CLI renders
+  it with half-block glyphs (`█▀▄`) and ANSI colours instead of full background
+  blocks, keeping the current payload within 73 columns.
+- **Laptop 24/7 mode.** Closing a laptop lid normally suspends the host and
+  takes Citadel, terminals and agents offline. New `scripts/power.sh` writes
+  `/etc/systemd/logind.conf.d/90-citadel-24-7.conf` with
+  `HandleLidSwitch=ignore` (battery, AC and docked) and `IdleAction=ignore`,
+  masks `sleep/suspend/hibernate/hybrid-sleep` targets, and reloads logind with
+  `SIGHUP` so SSH sessions survive. A state file records which targets were
+  already masked, so `off` restores only Citadel's changes.
+- **Surfaces.** `citadel power status|on|off` exposes the state; the installer
+  opt-in flag is `--24-7` (alias `--keep-awake`); the uninstaller restores the
+  previous sleep policy when the Citadel drop-in exists. README documents the
+  workflow.
+- **Tests.** `tests/cli.test.js` covers the new help/status surface; the full
+  suite reports **355 tests, 354 pass, 1 skipped** (the pre-existing
+  environment-dependent tmux copy-mode skip). `npm version minor` bumped the
+  package to `0.30.0`; asset cache-buster token moved to `v0300`.
