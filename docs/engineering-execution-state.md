@@ -1006,3 +1006,43 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Version bumped to `0.22.0`; asset cache-buster moved to `v0220`.
 - Release: `chore(release): v0.22.0`, annotated tag `v0.22.0`.
 
+## 58. Changes (this run)
+- Git providers can now be connected through an OAuth 2.0 **device
+  authorization grant** (GitHub `login/device/code`, GitLab
+  `oauth/authorize_device`) in addition to pasting a personal access token.
+  Only a public `client_id` is required — no client secret and no redirect
+  URI — so the flow works behind the ephemeral Cloudflare tunnel URL.
+- New `server/services/gitOAuthService.js`: device-code request/polling,
+  best-effort user lookup, `refreshAccessToken`, session map, and client-id
+  resolution from `CITADEL_GITHUB_CLIENT_ID` / `CITADEL_GITLAB_CLIENT_ID`
+  (or `app_config` `git.oauth.<provider>.client_id`).
+- `server/routes/gitRoutes.js`: `GET /api/git/oauth/providers` and
+  `POST /api/git/oauth/:provider/{client-id,start,poll,cancel}`, audited.
+- `server/services/gitCredentialsService.js`: `saveCredential` now stores
+  `refresh_token_encrypted`, `expires_at`, `scope` and `auth_method`;
+  `refreshCredentialIfNeeded` + `listExpiringCredentials`; `listRepos`
+  refreshes a near-expiry token first.
+- `server/database/db.js`: migration `006_git_oauth_credentials` adds the
+  new `git_credentials` columns (fresh schema updated too).
+- `server/index.js`: background token refresher (15 min, unref'd) so
+  `git push` inside terminals never sees an expired OAuth token even when
+  the panel is idle.
+- Frontend (`public/js/app.js`): the "Connect" dialog now runs the device
+  flow (shows the user code, verify link, copy button, live polling) with a
+  "use a personal access token" fallback and an inline client-id setup step
+  when OAuth is not yet configured.
+- Fix: installing an AI agent from the dashboard now focuses the newly
+  created System Terminal (`activeSysTerminalId`) instead of a previously
+  active session.
+
+## 59. Tests (this run)
+- Added `tests/git-oauth.test.js` (auth, provider config, empty client id,
+  unconfigured start refusal, full device flow to connected, `slow_down`,
+  expiry, refresh of an expiring OAuth credential).
+- Final: `npm test` → **328 tests, 328 pass, 0 fail**.
+
+## 60. Version
+- Version bumped to `0.23.0`; asset cache-buster moved to `v0230`.
+- Release: `chore(release): v0.23.0`, annotated tag `v0.23.0`.
+
+
