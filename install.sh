@@ -19,15 +19,16 @@ echo "=================================================================="
 echo -e "${NC}"
 
 CHECK_ONLY=false
-# Secure by default: a bare `curl | sudo bash` installs a local-only panel with no
-# privileged terminal and no root updater. Every privileged or publicly-reachable
-# capability must be requested explicitly:
+# A bare `curl | sudo bash` installs a panel that is publicly reachable through a
+# Cloudflare Quick Tunnel (a random https://*.trycloudflare.com URL, no account or
+# domain) so the QR code works from any network on first boot. The privileged
+# capabilities still must be requested explicitly:
 #   --admin-terminal[=user]  privileged System Terminal (root-capable)
 #   --enable-updater         root-owned in-panel updater
-#   --lan / --host=ADDR      bind on the network (QR from phone)
-#   --tunnel                 Cloudflare Quick Tunnel (public URL)
-# The legacy opt-out flags (--no-admin-terminal, --no-updater, --local,
-# --no-tunnel) keep working.
+#   --lan / --host=ADDR      also bind on the local network (QR from phone)
+#   --no-tunnel              keep the panel off the public internet
+# The legacy flags (--no-admin-terminal, --no-updater, --local, --no-tunnel) keep
+# working; --local implies --no-tunnel.
 DEFAULT_ADMIN_USER="${SUDO_USER:-}"
 if [ -z "$DEFAULT_ADMIN_USER" ]; then
   DEFAULT_ADMIN_USER="$(id -un)"
@@ -40,7 +41,7 @@ LAN_EXPOSED=false
 HOST_ADDR=""
 PANEL_PORT=3000
 UPDATE_MODE=false
-TUNNEL=false
+TUNNEL=true
 for arg in "$@"; do
   case "$arg" in
     --check-only|--dry-run)
@@ -67,6 +68,7 @@ for arg in "$@"; do
     --local|--localhost-only)
       LOCAL_ONLY=true
       LAN_ACCESS=false
+      TUNNEL=false
       ;;
     --lan|--no-local)
       LAN_ACCESS=true
@@ -350,6 +352,16 @@ else
     else
       echo "HOST=$BIND_ADDR" | $SUDO tee -a "$APP_DIR/.env" >/dev/null
     fi
+    # The systemd unit pins HOST=127.0.0.1 and .env cannot override an existing
+    # environment variable, so the bind address is set with a unit drop-in.
+    if [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$HAS_SUDO" = true ]; then
+      BIND_DROPIN_DIR="/etc/systemd/system/citadel.service.d"
+      $SUDO mkdir -p "$BIND_DROPIN_DIR"
+      $SUDO tee "$BIND_DROPIN_DIR/bind.conf" >/dev/null <<EOF
+[Service]
+Environment=HOST=$BIND_ADDR
+EOF
+    fi
     LAN_IP_ADDR="$(detect_lan_ip)"
     if [ -n "$LAN_IP_ADDR" ]; then
       LAN_EXPOSED=true
@@ -371,6 +383,12 @@ else
       echo "      Opened firewall port $PANEL_PORT/tcp (ufw)."
     fi
     echo "      Local network access enabled (http://${LAN_IP_ADDR:-<lan-ip>}:$PANEL_PORT)."
+  else
+    # LAN not requested: drop any stale bind override so the panel stays local.
+    if [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$HAS_SUDO" = true ] \
+       && [ -f /etc/systemd/system/citadel.service.d/bind.conf ]; then
+      $SUDO rm -f /etc/systemd/system/citadel.service.d/bind.conf
+    fi
   fi
 
   # Permissions

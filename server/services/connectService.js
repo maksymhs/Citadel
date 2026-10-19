@@ -1,12 +1,15 @@
 const os = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const qrcode = require('qrcode-generator');
 
-const { PUBLIC_URL, PORT, HOST } = require('../config');
+const { PUBLIC_URL, PORT, HOST, DATA_DIR } = require('../config');
 const { getTunnelUrl } = require('./tunnelService');
 
 const CACHE_TTL_MS = 60 * 1000;
 const STORED_KEY = 'connect.public_url';
+const STORED_FILE = path.join(DATA_DIR, 'public-url');
 let cache = null;
 let cacheAt = 0;
 let configuredCache;
@@ -20,19 +23,45 @@ function normalizeUrl(value) {
 }
 
 /**
- * Read the administrator-configured public URL from app_config, using the live
- * connection only. Never opens/creates a database here: this module is also used
- * by the `citadel` CLI, which may run before (or without) the service database.
+ * The administrator-configured public URL, if any. Read from the live database
+ * when the server is running, falling back to a small mirror file so the CLI and
+ * installer (which may run without the database) see the same value.
  */
 function readStoredPublicUrl() {
   try {
     const { peekDatabase } = require('../database/db');
     const db = peekDatabase();
-    if (!db) return null;
-    const row = db.prepare('SELECT value FROM app_config WHERE key = ?').get(STORED_KEY);
-    return row ? row.value : null;
+    if (db) {
+      const row = db.prepare('SELECT value FROM app_config WHERE key = ?').get(STORED_KEY);
+      if (row && row.value) return row.value;
+    }
   } catch {
-    return null;
+    // Ignore and try the mirror file.
+  }
+  try {
+    if (fs.existsSync(STORED_FILE)) {
+      const value = fs.readFileSync(STORED_FILE, 'utf8').split('\n')[0].trim();
+      if (value) return value;
+    }
+  } catch {
+    // Ignore.
+  }
+  return null;
+}
+
+/**
+ * Mirror the stored public URL to a file next to the database so the `citadel`
+ * CLI and the installer banner resolve the same address. Best-effort.
+ */
+function writeStoredPublicUrl(value) {
+  try {
+    if (value) {
+      fs.writeFileSync(STORED_FILE, `${value}\n`, { mode: 0o644 });
+    } else if (fs.existsSync(STORED_FILE)) {
+      fs.unlinkSync(STORED_FILE);
+    }
+  } catch {
+    // Non-fatal: the database copy remains the source of truth for the server.
   }
 }
 
@@ -164,6 +193,7 @@ function getConnectInfo() {
 module.exports = {
   getConnectInfo,
   getConfiguredPublicUrl,
+  writeStoredPublicUrl,
   qrSvg,
   qrAnsi,
   normalizeUrl,

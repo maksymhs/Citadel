@@ -32,6 +32,8 @@ describe('Connection settings (public URL)', () => {
     const { closeDatabase } = require('../server/database/db');
     closeDatabase();
     cleanDb(testDb);
+    const { DATA_DIR } = require('../server/config');
+    fs.rmSync(path.join(DATA_DIR, 'public-url'), { force: true });
   });
 
   test('requires a session', async () => {
@@ -80,6 +82,27 @@ describe('Connection settings (public URL)', () => {
     const audit = await app.inject({ method: 'GET', url: '/api/audit?limit=20', headers: { cookie } });
     const actions = JSON.parse(audit.payload).logs.map((l) => l.action);
     assert.ok(actions.includes('connect_url_set'));
+  });
+
+  test('mirrors the stored URL to a file so the CLI and installer agree', async () => {
+    const { DATA_DIR } = require('../server/config');
+    const mirror = path.join(DATA_DIR, 'public-url');
+
+    await app.inject({
+      method: 'PUT',
+      url: '/api/settings/connect',
+      headers: { cookie },
+      payload: { publicUrl: 'https://panel.example.com' },
+    });
+    assert.equal(fs.readFileSync(mirror, 'utf8').trim(), 'https://panel.example.com');
+
+    await app.inject({
+      method: 'PUT',
+      url: '/api/settings/connect',
+      headers: { cookie },
+      payload: { publicUrl: '' },
+    });
+    assert.equal(fs.existsSync(mirror), false);
   });
 
   test('accepts a bare host and normalises it', async () => {

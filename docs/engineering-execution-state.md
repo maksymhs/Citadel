@@ -962,3 +962,47 @@ README/.env.example/architecture. No commits/pushes/deploys.
 ## 54. Version
 - Version bumped to `0.20.0`; asset cache-buster moved to `v0200`.
 - Release: `chore(release): v0.20.0`, annotated tag `v0.20.0`.
+
+# Continuation run — v0.22.0 Cloudflare-by-default and UI simplification (2026-10-19)
+- Entry: `main` at `b5a1731` (`chore(release): v0.21.0`), clean tree. Baseline
+  `npm test` → 319 tests, 319 pass, 0 fail.
+
+## 55. Changes (this run)
+- Removed the `agents` (AI Agents) module from the registry and the SPA: no
+  module view, no nav entry, no Workspace "Launch AI Agent" button/modal.
+  Install/launch of coding agents is now the dashboard "Platform integrations"
+  widget only (`/api/system/integrations/install`, ungated), which fixes the
+  "Install failed: Module disabled" error.
+- `server/services/agentInstallService.js`: `findBin` probes the panel/admin
+  user home prefixes (`.local/bin`, `.opencode/bin`, `.bun/bin`,
+  `.npm-global/bin`, `.cargo/bin`, `bin`) plus `/usr/local/bin`, `/usr/bin`,
+  `/bin`, then falls back to a login-shell `command -v`, so an installed agent
+  is reported as installed.
+- Platform integrations widget restyled minimally (name + status dot + label;
+  descriptions moved to tooltips); new `.integration-*`/`.status-dot` CSS.
+- Modules & Extensions moved out of the sidebar into Settings; `modules` view
+  id redirects to `settings`.
+- Dashboard "Personalizar" (widget customizer) removed entirely.
+- Dashboard "Clone Git" now opens the Git Repositories screen
+  (`openGitRepositories()`), no modal.
+- Cloudflare Quick Tunnel on by default in `install.sh` (`TUNNEL=true`;
+  `--no-tunnel` disables, `--local` implies `--no-tunnel`). `--lan`/`--host`
+  now write a systemd `bind.conf` drop-in (`Environment=HOST=…`) because the
+  unit pins `HOST=127.0.0.1` and `.env` cannot override it; the drop-in is
+  removed when LAN is not requested.
+- `scripts/citadel` passes `CITADEL_DATA_DIR` (default `/srv/citadel/data`) so
+  `url`/`qr` resolve the same tunnel/configured URL the panel shows.
+- `connectService` resolves `configured → tunnel → tailscale → LAN → localhost`
+  and mirrors the administrator URL to `DATA_DIR/public-url` for the CLI and
+  installer; `settingsRoutes` writes/clears that mirror on save.
+
+## 56. Tests (this run)
+- Updated `tests/modules.test.js` (drop `agents` from defaults; assert the
+  module is gone).
+- Added mirror assertion to `tests/settings-connect.test.js`.
+- Final: `npm test` → **320 tests, 320 pass, 0 fail**.
+
+## 57. Version
+- Version bumped to `0.22.0`; asset cache-buster moved to `v0220`.
+- Release: `chore(release): v0.22.0`, annotated tag `v0.22.0`.
+

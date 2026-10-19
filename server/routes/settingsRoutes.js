@@ -76,6 +76,7 @@ async function settingsRoutes(fastify) {
       db.prepare('DELETE FROM app_config WHERE key = ?').run(STORED_KEY);
     }
 
+    connectService.writeStoredPublicUrl(result.value);
     connectService._reset();
     auditService.logAction({
       userId: request.user.id,

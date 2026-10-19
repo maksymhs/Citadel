@@ -26,7 +26,7 @@ describe('Module default seeding', () => {
     for (const id of ['dashboard', 'projects', 'workspace', 'activity', 'audit']) {
       assert.equal(enabled(id), true, `${id} should be enabled`);
     }
-    for (const id of ['files', 'docker', 'proxy', 'fleet', 'agents', 'metrics']) {
+    for (const id of ['files', 'docker', 'proxy', 'fleet', 'metrics']) {
       assert.equal(enabled(id), false, `${id} should be disabled by default`);
     }
     assert.ok(db.prepare('SELECT value FROM app_config WHERE key = ?').get(registry.SEED_MARKER));
@@ -97,6 +97,7 @@ describe('Module registry HTTP + endpoint gating', () => {
     assert.equal(byId.files.enabled, false);
     assert.ok(Array.isArray(byId.files.views));
     assert.ok('serviceAvailable' in byId.files && 'ready' in byId.files);
+    assert.equal(byId.agents, undefined, 'the AI Agents module was removed (installs live in the dashboard)');
   });
 
   test('a disabled module endpoint is protected with 403', async () => {

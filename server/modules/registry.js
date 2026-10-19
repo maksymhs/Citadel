@@ -135,17 +135,6 @@ const MODULES = [
     capabilities: ['audit:read'],
   },
   {
-    id: 'agents',
-    name: 'AI Agents',
-    description: 'Detect, install and launch CLI agents inside project workspaces.',
-    core: false,
-    defaultEnabled: false,
-    requires: { modules: ['workspace'], services: [] },
-    views: [{ id: 'agents', title: 'AI Agents' }],
-    widgets: [],
-    capabilities: ['agents:launch'],
-  },
-  {
     id: 'files',
     name: 'Files',
     description: 'Browse and edit files on the host.',

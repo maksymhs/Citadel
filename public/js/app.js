@@ -18,7 +18,6 @@
     activeRepoId: null,
     workspaceContext: null, // 'system' or a project id
     activityTab: 'activity',
-    agents: [],
     terminals: new Map(), // sessionId -> { session, term, fitAddon, ws, containerEl }
     activeTerminalId: null,
     sysTerminals: new Map(), // host (non-project) terminal sessions
@@ -49,12 +48,12 @@
   // project and active terminal instead of always resetting to the dashboard.
   const UI_STATE_KEY = 'citadel.uiState';
 
-  // The four primary views. Optional module views are added to the sidebar only
+  // The three primary views. Optional module views are added to the sidebar only
   // when their module is enabled; System and Settings are fixed host-tools
-  // entries. Activity & Audit lives inside System, not in the main navigation.
-  const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace', 'modules'];
+  // entries. Activity & Audit and Modules & Extensions live inside System and
+  // Settings respectively, not in the main navigation.
+  const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace'];
   const OPTIONAL_NAV = [
-    { module: 'agents', view: 'agents', label: 'AI Agents', icon: 'bolt-icon' },
     { module: 'files', view: 'files', label: 'Files', icon: 'folder-icon' },
     { module: 'proxy', view: 'proxy', label: 'Proxy & Domains', icon: 'globe-icon' },
     { module: 'docker', view: 'docker', label: 'Docker', icon: 'docker-icon' },
@@ -67,7 +66,7 @@
   // Legacy view ids → current ids, so a persisted view still resolves.
   const LEGACY_VIEW_MAP = {
     repos: 'projects', terminal: 'workspace', logs: 'activity',
-    plugins: 'modules', deployments: 'proxy',
+    plugins: 'settings', modules: 'settings', deployments: 'proxy',
   };
 
   // Default dashboard widget order. Widgets whose module is disabled/unavailable
@@ -449,7 +448,6 @@
 
     // Load initial data (only fetch optional-module data when it is enabled).
     loadProjects();
-    if (moduleEnabled('agents')) loadAgents();
     loadVersionTag();
 
     // Force the mobile (off-canvas) layout for any touch/narrow device, even
@@ -475,13 +473,11 @@
     const nav = document.getElementById('sidebar-nav');
     if (!nav) return;
     const optional = OPTIONAL_NAV.filter((n) => moduleEnabled(n.module));
-    const enabledOptionalCount = state.modules.filter((m) => !m.core && m.enabled).length;
 
     let html = '<div class="nav-section-title">Platform</div>';
     html += navItemHtml('dashboard', 'Dashboard', 'dashboard');
     html += navItemHtml('projects', 'Projects', 'projects', '<span class="nav-badge" id="nav-projects-count">' + (state.projects.length || 0) + '</span>');
     html += navItemHtml('workspace', 'Workspace', 'workspace');
-    html += navItemHtml('modules', 'Modules', 'modules', enabledOptionalCount ? `<span class="nav-badge">${enabledOptionalCount}</span>` : '');
 
     if (optional.length) {
       html += '<div class="nav-section-title">Modules</div>';
@@ -561,15 +557,9 @@
     return view;
   }
 
-  function navigateTo(view) {
-    view = resolveView(view);
-    state.currentView = view;
-    saveUiState({ currentView: view });
-    if (state.dashboardTimer) {
-      clearInterval(state.dashboardTimer);
-      state.dashboardTimer = null;
-    }
-    state.dashboardPaused = false;
+  // Highlight the sidebar entry for the current view (used by navigateTo and by
+  // screens opened directly, such as the Git Repositories screen).
+  function setActiveNav(view) {
     document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
       if (item.getAttribute('data-view') === view) {
         item.classList.add('active');
@@ -579,6 +569,18 @@
         item.removeAttribute('aria-current');
       }
     });
+  }
+
+  function navigateTo(view) {
+    view = resolveView(view);
+    state.currentView = view;
+    saveUiState({ currentView: view });
+    if (state.dashboardTimer) {
+      clearInterval(state.dashboardTimer);
+      state.dashboardTimer = null;
+    }
+    state.dashboardPaused = false;
+    setActiveNav(view);
 
     const titleEl = document.getElementById('top-bar-title');
     const actionsEl = document.getElementById('top-bar-actions');
@@ -598,9 +600,6 @@
     } else if (view === 'activity') {
       titleEl.textContent = 'Activity & Audit';
       renderActivityView();
-    } else if (view === 'modules') {
-      titleEl.textContent = 'Modules & Extensions';
-      renderModulesView();
     } else if (view === 'system') {
       titleEl.textContent = 'System';
       renderSystemView();
@@ -610,9 +609,6 @@
     } else if (view === 'processes') {
       titleEl.textContent = 'Top processes';
       renderProcessesView();
-    } else if (view === 'agents') {
-      titleEl.textContent = 'AI Agents';
-      renderAgentsView();
     } else if (view === 'files') {
       titleEl.textContent = 'File Explorer';
       renderFilesView();
@@ -644,17 +640,7 @@
     }
   }
 
-  async function loadAgents() {
-    try {
-      const res = await api('/api/agents');
-      state.agents = res.agents || [];
-    } catch (err) {
-      console.warn('Error loading agents:', err.message);
-    }
-  }
-
   // --- Views Implementation ---
-
   function formatMegabytes(bytes) {
     return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
   }
@@ -731,14 +717,6 @@
     return order;
   }
 
-  // Full list for the customizer: visible widgets first, then the rest so a
-  // previously removed widget can be added back.
-  function dashboardEditorOrder() {
-    const visible = dashboardWidgetOrder();
-    const rest = Object.keys(DASHBOARD_WIDGETS).filter((id) => !visible.includes(id));
-    return [...visible, ...rest];
-  }
-
   function widgetAvailable(id) {
     const def = DASHBOARD_WIDGETS[id];
     return def && moduleEnabled(def.module);
@@ -765,17 +743,15 @@
           <div class="card-subtitle">${escapeHtml(node.platform)} ${escapeHtml(node.release)} (${node.arch})</div>`);
       case 'integrations':
         return card(`<h3 class="widget-heading">Platform integrations</h3>
-          <div style="display:flex;flex-direction:column;gap:12px;">
-            ${integrationRow('tmux (PTY persistence)', integ.tmux.description, integ.tmux.available, 'Available', 'No tmux')}
-            ${integrationRow('Git CLI', integ.git.description, integ.git.available, 'Active', 'Missing')}
-            ${integrationRow('Caddy proxy (HTTPS)', integ.caddy.helpMessage, integ.caddy.available, 'Connected', 'Optional / Inactive')}
-            ${integrationRow('Docker engine', integ.docker.available ? 'Socket connected' : 'Disabled / Optional', integ.docker.available, 'Active', 'Optional')}
+          <div class="integration-list">
+            ${integrationRow('tmux', integ.tmux.available, integ.tmux.available ? 'Available' : 'Not installed', integ.tmux.description)}
+            ${integrationRow('Git CLI', integ.git.available, integ.git.available ? 'Active' : 'Not installed', integ.git.description)}
+            ${integrationRow('Caddy proxy', integ.caddy.available, integ.caddy.available ? 'Active' : 'Optional', integ.caddy.helpMessage)}
+            ${integrationRow('Docker engine', integ.docker.available, integ.docker.available ? 'Active' : 'Optional')}
           </div>
-          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border-color);">
-            <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">AI coding agents</div>
-            <div style="display:flex;flex-direction:column;gap:12px;">
-              ${(integ.agents || []).map(agentRow).join('')}
-            </div>
+          <div class="integration-section-title">AI coding agents</div>
+          <div class="integration-list">
+            ${(integ.agents || []).map(agentRow).join('')}
           </div>`);
       case 'quick-access':
         return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
@@ -821,29 +797,20 @@
     }
   }
 
-  function integrationRow(name, description, ok, okLabel, badLabel) {
-    return `<div style="display:flex;align-items:center;justify-content:space-between;">
-      <div>
-        <strong>${escapeHtml(name)}</strong>
-        <div style="font-size:12px;color:var(--text-secondary);">${escapeHtml(description)}</div>
-      </div>
-      <span class="badge ${ok ? 'badge-success' : 'badge-muted'}">${ok ? okLabel : badLabel}</span>
+  function integrationRow(name, ok, label, title) {
+    return `<div class="integration-item"${title ? ` title="${escapeHtml(title)}"` : ''}>
+      <span class="integration-name"><span class="status-dot ${ok ? 'ok' : 'off'}"></span>${escapeHtml(name)}</span>
+      <span class="integration-status">${escapeHtml(label)}</span>
     </div>`;
   }
 
   function agentRow(agent) {
-    const badge = agent.available
-      ? `<span class="badge badge-success" title="${escapeHtml(agent.version || '')}">Installed</span>`
-      : '<span class="badge badge-muted">Not installed</span>';
-    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-      <div>
-        <strong>${escapeHtml(agent.name)}</strong>
-        ${agent.available && agent.version ? `<div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${escapeHtml(agent.version)}</div>` : ''}
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        ${badge}
-        ${agent.available ? '' : `<button class="btn btn-primary btn-sm install-agent-btn" data-tool="${agent.id}" data-name="${escapeHtml(agent.name)}">Install</button>`}
-      </div>
+    const right = agent.available
+      ? `<span class="integration-status"${agent.version ? ` title="${escapeHtml(agent.version)}"` : ''}>Installed</span>`
+      : `<button class="btn btn-secondary btn-sm install-agent-btn" data-tool="${agent.id}" data-name="${escapeHtml(agent.name)}">Install</button>`;
+    return `<div class="integration-item">
+      <span class="integration-name"><span class="status-dot ${agent.available ? 'ok' : 'off'}"></span>${escapeHtml(agent.name)}</span>
+      ${right}
     </div>`;
   }
 
@@ -862,87 +829,12 @@
       showToast(err.message, 'error');
     }
   }
-
-  function showDashboardCustomizer() {
-    let working = dashboardEditorOrder();
-    const visible = new Set(dashboardWidgetOrder());
-
-    const renderList = () => working.map((id, i) => {
-      const def = DASHBOARD_WIDGETS[id];
-      const available = moduleEnabled(def.module);
-      const checked = available && visible.has(id);
-      return `<div class="widget-row" data-widget="${id}">
-        <label class="widget-row-label">
-          <input type="checkbox" data-widget-toggle="${id}" ${checked ? 'checked' : ''} ${available ? '' : 'disabled'}>
-          <span>${escapeHtml(def.title)}${available ? '' : ` <em style="color:var(--text-muted);">(enable ${escapeHtml(def.module)} module)</em>`}</span>
-        </label>
-        <div class="widget-row-actions">
-          <button class="btn btn-secondary btn-sm" data-widget-up="${id}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">&uarr;</button>
-          <button class="btn btn-secondary btn-sm" data-widget-down="${id}" ${i === working.length - 1 ? 'disabled' : ''} aria-label="Move down">&darr;</button>
-        </div>
-      </div>`;
-    }).join('');
-
-    openModal({
-      title: 'Customize dashboard',
-      bodyHtml: `<p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">Choose which widgets appear and in what order. This preference is stored in your browser.</p>
-        <div id="widget-list">${renderList()}</div>
-        <div style="margin-top:14px;">
-          <button class="btn btn-secondary btn-sm" id="widget-reset">Reset to default</button>
-        </div>`,
-      confirmText: 'Save layout',
-      onConfirm: async () => {
-        state.dashboardWidgets = working.filter((id) => visible.has(id) && moduleEnabled(DASHBOARD_WIDGETS[id].module));
-        saveUiState({ dashboardWidgets: state.dashboardWidgets });
-        renderDashboardView();
-        showToast('Dashboard layout saved.', 'success');
-      },
-    });
-
-    const bindList = () => {
-      document.querySelectorAll('[data-widget-toggle]').forEach((box) => {
-        box.onchange = () => {
-          const id = box.getAttribute('data-widget-toggle');
-          if (box.checked) visible.add(id); else visible.delete(id);
-        };
-      });
-      document.querySelectorAll('[data-widget-up]').forEach((btn) => {
-        btn.onclick = () => {
-          const id = btn.getAttribute('data-widget-up');
-          const idx = working.indexOf(id);
-          if (idx > 0) { [working[idx - 1], working[idx]] = [working[idx], working[idx - 1]]; refresh(); }
-        };
-      });
-      document.querySelectorAll('[data-widget-down]').forEach((btn) => {
-        btn.onclick = () => {
-          const id = btn.getAttribute('data-widget-down');
-          const idx = working.indexOf(id);
-          if (idx < working.length - 1) { [working[idx + 1], working[idx]] = [working[idx], working[idx + 1]]; refresh(); }
-        };
-      });
-      const reset = document.getElementById('widget-reset');
-      if (reset) reset.onclick = () => {
-        working = [...DEFAULT_DASHBOARD_WIDGETS, ...Object.keys(DASHBOARD_WIDGETS).filter((id) => !DEFAULT_DASHBOARD_WIDGETS.includes(id))];
-        visible.clear();
-        DEFAULT_DASHBOARD_WIDGETS.forEach((id) => visible.add(id));
-        refresh();
-      };
-    };
-    const refresh = () => {
-      const list = document.getElementById('widget-list');
-      if (list) list.innerHTML = renderList();
-      bindList();
-    };
-    bindList();
-  }
-
   async function renderDashboardView() {
     const content = document.getElementById('main-content');
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading system metrics...</div>';
 
     const actions = document.getElementById('top-bar-actions');
-    actions.innerHTML = `<button class="btn btn-secondary btn-sm" id="dash-customize-btn">Personalizar</button>`;
-    document.getElementById('dash-customize-btn').onclick = showDashboardCustomizer;
+    actions.innerHTML = '';
 
     try {
       const [nodeRes, metricsRes, integRes] = await Promise.all([
@@ -960,7 +852,7 @@
       content.innerHTML = `<div class="dash-widgets">${widgets.map((id) => dashboardWidgetHtml(id, ctx)).join('')}</div>`;
 
       document.getElementById('dash-new-project-btn')?.addEventListener('click', showCreateProjectModal);
-      document.getElementById('dash-clone-btn')?.addEventListener('click', showCloneProjectModal);
+      document.getElementById('dash-clone-btn')?.addEventListener('click', openGitRepositories);
       document.getElementById('dash-fleet-check-all')?.addEventListener('click', () => refreshDashboardFleet(true));
       document.getElementById('dash-fleet-update-all')?.addEventListener('click', fleetUpdateAll);
       document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
@@ -1041,17 +933,32 @@
   }
 
   // 2. Projects View
-  async function renderProjectsView() {
+  function renderProjectsActions() {
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
       <button class="btn btn-secondary btn-sm" id="proj-creds-btn">Git</button>
       <button class="btn btn-secondary btn-sm" id="proj-import-btn">Import Folder</button>
       <button class="btn btn-primary btn-sm" id="proj-create-btn">+ New Project</button>
     `;
-
     document.getElementById('proj-create-btn').onclick = showCreateProjectModal;
     document.getElementById('proj-import-btn').onclick = showImportProjectModal;
     document.getElementById('proj-creds-btn').onclick = () => renderReposView();
+  }
+
+  // Open the Git Repositories screen from anywhere (e.g. the dashboard) without
+  // showing a modal: switch to the Projects section and render that screen.
+  function openGitRepositories() {
+    state.currentView = 'projects';
+    saveUiState({ currentView: 'projects' });
+    setActiveNav('projects');
+    const titleEl = document.getElementById('top-bar-title');
+    if (titleEl) titleEl.textContent = 'Projects & Repositories';
+    renderProjectsActions();
+    renderReposView();
+  }
+
+  async function renderProjectsView() {
+    renderProjectsActions();
 
     const content = document.getElementById('main-content');
     await loadProjects();
@@ -1061,7 +968,7 @@
         <div class="card" style="text-align:center;padding:60px 20px;">
           <h3 style="font-size:18px;margin-bottom:8px;">No projects registered</h3>
           <p style="color:var(--text-secondary);max-width:400px;margin:0 auto 20px auto;">
-            Register your first repository or working directory to open interactive terminals and launch AI agents.
+            Register your first repository or working directory to open interactive terminals.
           </p>
           <div style="display:flex;justify-content:center;gap:12px;">
             <button class="btn btn-primary" id="empty-create-btn">Create Project</button>
@@ -2226,11 +2133,6 @@
         <option value="system" ${context === 'system' ? 'selected' : ''}>System (host)</option>
         ${state.projects.map((p) => `<option value="${p.id}" ${p.id === context ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
       </select>
-      ${moduleEnabled('agents') && context !== 'system' ? `
-        <button class="btn btn-primary btn-sm" id="ws-launch-agent-btn">
-          <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-          <span class="launch-agent-label">Launch AI Agent</span>
-        </button>` : ''}
     `;
 
     document.getElementById('ws-context-selector').onchange = (e) => {
@@ -2239,9 +2141,6 @@
       saveUiState({ workspaceContext: state.workspaceContext, activeRepoId: null });
       renderWorkspaceView();
     };
-
-    const launchBtn = document.getElementById('ws-launch-agent-btn');
-    if (launchBtn) launchBtn.onclick = () => showLaunchAgentModal(context);
 
     if (context === 'system') {
       return renderSystemTerminals();
@@ -2588,146 +2487,6 @@
 
     const input = document.getElementById('terminal-paste-input');
     if (input) input.focus();
-  }
-
-  // 4. Agents View
-  async function renderAgentsView() {
-    const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Checking available agents...</div>';
-    await loadAgents();
-    await loadProjects();
-
-    content.innerHTML = `
-      <div style="margin-bottom:24px;">
-        <h2 style="font-size:18px;margin-bottom:6px;">AI Agents & CLI Tools</h2>
-        <p style="color:var(--text-secondary);">
-          Citadel detects and runs CLI tools under your authorized account without requiring commercial API subscriptions.
-        </p>
-      </div>
-
-      <div class="grid-cards">
-        ${state.agents.map((a) => `
-          <div class="card" style="display:flex;flex-direction:column;justify-content:space-between;">
-            <div>
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-                <h3 style="font-size:16px;font-weight:600;">${escapeHtml(a.name)}</h3>
-                <span class="badge ${a.installed ? 'badge-success' : 'badge-muted'}">
-                  ${a.installed ? 'Installed' : 'Not in PATH'}
-                </span>
-              </div>
-              <p style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">
-                ${escapeHtml(a.description)}
-              </p>
-              ${a.installed ? `
-                <div style="background:var(--bg-tertiary);padding:8px 12px;border-radius:6px;font-family:var(--font-mono);font-size:11px;margin-bottom:14px;">
-                  <div style="color:var(--text-muted);">Path: ${escapeHtml(a.path)}</div>
-                  ${a.version ? `<div style="color:var(--accent-color);margin-top:4px;">Version: ${escapeHtml(a.version)}</div>` : ''}
-                </div>
-              ` : `
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">
-                  Not installed. Click <strong>Install</strong> to run the official one-line installer in a terminal.
-                </div>
-              `}
-            </div>
-            <div>
-              ${a.installed ? `
-                <button class="btn btn-primary btn-sm launch-agent-btn" data-agent-id="${a.id}" style="width:100%;justify-content:center;">
-                  Launch in Project...
-                </button>
-              ` : (a.installCommand ? `
-                <button class="btn btn-primary btn-sm install-agent-btn" data-agent-id="${a.id}" style="width:100%;justify-content:center;">
-                  Install
-                </button>
-              ` : `
-                <button class="btn btn-secondary btn-sm" disabled style="width:100%;justify-content:center;">
-                  Manual install required
-                </button>
-              `)}
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `;
-
-    document.querySelectorAll('.launch-agent-btn').forEach((btn) => {
-      btn.onclick = () => {
-        const agentId = btn.getAttribute('data-agent-id');
-        showLaunchAgentModal(state.activeProjectId, agentId);
-      };
-    });
-
-    document.querySelectorAll('.install-agent-btn').forEach((btn) => {
-      btn.onclick = () => installAgent(btn.getAttribute('data-agent-id'));
-    });
-  }
-
-  // Kick off an agent's official installer in a new System Terminal and switch
-  // to it so the user can follow the output live.
-  async function installAgent(agentId) {
-    const agent = state.agents.find((a) => a.id === agentId) || {};
-    try {
-      const res = await api('/api/agents/install', {
-        method: 'POST',
-        body: { agentId },
-      });
-      showToast(`Installing ${res.agent.name}… watch the terminal.`, 'success');
-      state.activeSysTerminalId = res.session.sessionId;
-      saveUiState({ activeSysTerminalId: res.session.sessionId });
-      navigateTo('terminal');
-    } catch (err) {
-      showToast(`Install failed: ${err.message}`, 'error');
-    }
-  }
-
-  function showLaunchAgentModal(preselectedProjectId = null, preselectedAgentId = null) {
-    if (state.projects.length === 0) {
-      showToast('Create at least one project before launching an agent.', 'error');
-      return;
-    }
-
-    const installedAgents = state.agents.filter((a) => a.installed);
-    if (installedAgents.length === 0) {
-      showToast('No CLI agent installed on the system was found.', 'error');
-      return;
-    }
-
-    openModal({
-      title: 'Launch AI Agent in Project',
-      bodyHtml: `
-        <div class="form-group">
-          <label class="form-label">Select Project</label>
-          <select class="form-input" id="m-launch-proj">
-            ${state.projects.map((p) => `
-              <option value="${p.id}" ${p.id === preselectedProjectId ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.path)})</option>
-            `).join('')}
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Select CLI Agent</label>
-          <select class="form-input" id="m-launch-agent">
-            ${installedAgents.map((a) => `
-              <option value="${a.id}" ${a.id === preselectedAgentId ? 'selected' : ''}>${escapeHtml(a.name)} (${escapeHtml(a.version || a.binaryName)})</option>
-            `).join('')}
-          </select>
-        </div>
-      `,
-      confirmText: 'Launch Agent',
-      onConfirm: async () => {
-        const projectId = document.getElementById('m-launch-proj').value;
-        const agentId = document.getElementById('m-launch-agent').value;
-
-        showToast('Starting agent session...', 'info');
-        const res = await api('/api/agents/launch', {
-          method: 'POST',
-          body: { projectId, agentId },
-        });
-
-        state.activeProjectId = projectId;
-        navigateTo('workspace');
-        await activateTerminalSession(res.session.sessionId, res.session.name);
-        showToast('Agent launched in persistent terminal.', 'success');
-      },
-    });
   }
 
   // 4b. Fleet — manage and control remote Citadel instances
@@ -3705,6 +3464,7 @@
         api('/api/settings/connect'),
         api('/api/system/connect'),
       ]);
+      await loadModules();
       const s = settingsRes.connect || {};
       const connect = connectRes.connect || {};
 
@@ -3752,7 +3512,18 @@
             </div>
           </div>
         </div>
+
+        <div style="margin-top:28px;margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">Modules &amp; Extensions</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">
+            Enable only what you use. Disabled modules are hidden from navigation and their
+            endpoints are locked, but your data is never deleted.
+          </p>
+        </div>
+        ${modulesSectionHtml()}
       `;
+
+      bindModuleToggles(renderSettingsView);
 
       const input = document.getElementById('settings-public-url');
       const saveBtn = document.getElementById('settings-save-url');
@@ -3794,26 +3565,13 @@
     }
   }
 
-  // 8. Modules & Plugins View
-  async function renderModulesView() {
-    const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Loading modules...</div>';
-    await loadModules();
-
+  // Modules & Extensions management, rendered inside the Settings screen.
+  function modulesSectionHtml() {
     const core = state.modules.filter((m) => m.core);
     const optional = state.modules.filter((m) => !m.core);
-
-    content.innerHTML = `
-      <div style="margin-bottom:20px;">
-        <h2 style="font-size:18px;margin-bottom:6px;">Modules</h2>
-        <p style="color:var(--text-secondary);font-size:13px;">
-          Enable only what you use. Disabled modules are hidden from navigation and their
-          endpoints are locked, but your data is never deleted.
-        </p>
-      </div>
-
+    return `
       <div class="card" style="margin-bottom:20px;">
-        <h3 class="widget-heading">Core</h3>
+        <h3 class="widget-heading">Core modules</h3>
         <div class="module-grid">
           ${core.map((m) => `
             <div class="module-card">
@@ -3826,8 +3584,8 @@
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:20px;">
-        <h3 class="widget-heading">Optional</h3>
+      <div class="card">
+        <h3 class="widget-heading">Optional modules</h3>
         <div class="module-grid">
           ${optional.map((m) => {
             const blocked = !m.ready && !m.enabled;
@@ -3850,9 +3608,10 @@
               </div>`;
           }).join('')}
         </div>
-      </div>
-    `;
+      </div>`;
+  }
 
+  function bindModuleToggles(rerender) {
     document.querySelectorAll('.module-toggle-btn').forEach((btn) => {
       btn.onclick = async () => {
         const id = btn.getAttribute('data-module-id');
@@ -3863,7 +3622,7 @@
           showToast(`Module "${id}" ${target ? 'enabled' : 'disabled'}.`, 'success');
           await loadModules();
           renderSidebarNav();
-          renderModulesView();
+          rerender();
         } catch (err) {
           btn.disabled = false;
           showToast(err.message, 'error');

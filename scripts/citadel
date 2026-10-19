@@ -11,6 +11,9 @@ APP_DIR="${CITADEL_APP_DIR:-/srv/citadel/app}"
 SERVICE="${CITADEL_SERVICE:-citadel}"
 UPDATER="${CITADEL_UPDATER_PATH:-/usr/local/sbin/citadel-update}"
 PORT="${PORT:-3000}"
+# The panel stores the Cloudflare tunnel URL and the configured public URL under
+# DATA_DIR; pass it so `citadel url|qr` resolve the same address the panel shows.
+DATA_DIR="${CITADEL_DATA_DIR:-${DATA_DIR:-/srv/citadel/data}}"
 
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then
@@ -45,13 +48,14 @@ Diagnostics options: doctor/network/wifi support --json; repair supports
 --action=<id> and --yes (remote network changes also require --confirm-remote).
 Run "citadel doctor --help" for details.
 
-Environment overrides: CITADEL_APP_DIR, CITADEL_SERVICE, CITADEL_UPDATER_PATH, PORT
+Environment overrides: CITADEL_APP_DIR, CITADEL_SERVICE, CITADEL_UPDATER_PATH,
+CITADEL_DATA_DIR, PORT
 EOF
 }
 
 panel_url() {
   if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/server/services/connectService.js" ]; then
-    (cd "$APP_DIR" && node -e "try{process.stdout.write(require('./server/services/connectService').getConnectInfo().url)}catch(e){process.stdout.write('http://127.0.0.1:'+process.env.PORT)}" 2>/dev/null) \
+    (cd "$APP_DIR" && DATA_DIR="$DATA_DIR" PORT="$PORT" node -e "try{process.stdout.write(require('./server/services/connectService').getConnectInfo().url)}catch(e){process.stdout.write('http://127.0.0.1:'+process.env.PORT)}" 2>/dev/null) \
       || echo "http://127.0.0.1:$PORT"
   else
     echo "http://127.0.0.1:$PORT"
