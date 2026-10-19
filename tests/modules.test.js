@@ -23,10 +23,10 @@ describe('Module default seeding', () => {
     const registry = require('../server/modules/registry');
 
     const enabled = (id) => db.prepare('SELECT value FROM app_config WHERE key = ?').get(`module.${id}.enabled`).value === '1';
-    for (const id of ['dashboard', 'projects', 'workspace', 'activity', 'audit']) {
+    for (const id of ['dashboard', 'projects', 'workspace', 'activity', 'audit', 'files', 'metrics']) {
       assert.equal(enabled(id), true, `${id} should be enabled`);
     }
-    for (const id of ['files', 'docker', 'proxy', 'fleet', 'metrics']) {
+    for (const id of ['docker', 'proxy', 'fleet']) {
       assert.equal(enabled(id), false, `${id} should be disabled by default`);
     }
     assert.ok(db.prepare('SELECT value FROM app_config WHERE key = ?').get(registry.SEED_MARKER));
@@ -94,28 +94,29 @@ describe('Module registry HTTP + endpoint gating', () => {
     const byId = Object.fromEntries(modules.map((m) => [m.id, m]));
     assert.equal(byId.dashboard.core, true);
     assert.equal(byId.dashboard.enabled, true);
-    assert.equal(byId.files.enabled, false);
+    assert.equal(byId.files.core, true);
+    assert.equal(byId.files.enabled, true);
     assert.ok(Array.isArray(byId.files.views));
     assert.ok('serviceAvailable' in byId.files && 'ready' in byId.files);
     assert.equal(byId.agents, undefined, 'the AI Agents module was removed (installs live in the dashboard)');
   });
 
   test('a disabled module endpoint is protected with 403', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/files/capabilities', headers: { cookie } });
+    const res = await app.inject({ method: 'GET', url: '/api/fleet/hosts', headers: { cookie } });
     assert.equal(res.statusCode, 403);
-    assert.equal(JSON.parse(res.payload).module, 'files');
+    assert.equal(JSON.parse(res.payload).module, 'fleet');
   });
 
   test('enabling a module unlocks its endpoint and records an audit entry', async () => {
     const enable = await app.inject({
       method: 'POST',
-      url: '/api/modules/files/state',
+      url: '/api/modules/fleet/state',
       headers: { cookie },
       payload: { enabled: true },
     });
     assert.equal(enable.statusCode, 200);
 
-    const res = await app.inject({ method: 'GET', url: '/api/files/capabilities', headers: { cookie } });
+    const res = await app.inject({ method: 'GET', url: '/api/fleet/hosts', headers: { cookie } });
     assert.equal(res.statusCode, 200);
 
     const audit = await app.inject({ method: 'GET', url: '/api/audit?limit=20', headers: { cookie } });

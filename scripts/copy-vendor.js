@@ -25,6 +25,14 @@ const copies = [
     src: path.resolve(__dirname, '../node_modules/@xterm/addon-web-links/lib/addon-web-links.js'),
     dest: path.join(targetDir, 'addon-web-links.js'),
   },
+  {
+    src: path.resolve(__dirname, '../node_modules/wunderbaum/dist/wunderbaum.umd.js'),
+    dest: path.join(targetDir, 'wunderbaum.umd.js'),
+  },
+  {
+    src: path.resolve(__dirname, '../node_modules/wunderbaum/dist/wunderbaum.css'),
+    dest: path.join(targetDir, 'wunderbaum.css'),
+  },
 ];
 
 for (const item of copies) {

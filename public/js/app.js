@@ -25,7 +25,6 @@
     allSessions: [], // every terminal session, drives the sidebar workspace tree
     workspaceNavOpen: true, // sidebar "Workspace" group expanded
     workspaceNavContexts: [], // workspace contexts whose terminals are expanded
-    pendingNewTerminalContext: null, // spawn an extra terminal after navigating
     systemInfo: null,
     metrics: null,
     integrations: null,
@@ -52,19 +51,20 @@
   // project and active terminal instead of always resetting to the dashboard.
   const UI_STATE_KEY = 'citadel.uiState';
 
-  // The three primary views. Optional module views are added to the sidebar only
-  // when their module is enabled; Settings is the fixed host-tools entry. System
-  // is gone: host diagnostics and updates live in Settings and Activity is a
-  // dashboard widget.
+  // The three primary views plus always-on core tool views. Optional module
+  // views only appear in the sidebar when their module is enabled. System is
+  // gone: host diagnostics/updates and Activity & Audit live in Settings.
   const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace'];
+  const CORE_NAV = [
+    { view: 'files', label: 'Files', icon: 'files' },
+  ];
   const OPTIONAL_NAV = [
-    { module: 'files', view: 'files', label: 'Files', icon: 'folder-icon' },
     { module: 'proxy', view: 'proxy', label: 'Proxy & Domains', icon: 'globe-icon' },
     { module: 'docker', view: 'docker', label: 'Docker', icon: 'docker-icon' },
     { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
   ];
   const KNOWN_VIEWS = [
-    ...PRIMARY_VIEWS, 'settings', 'activity', 'processes',
+    ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity', 'processes',
     ...OPTIONAL_NAV.map((n) => n.view),
   ];
   // Legacy view ids → current ids, so a persisted view still resolves.
@@ -78,7 +78,7 @@
   // are dropped at render time so the layout always stays valid.
   const DEFAULT_DASHBOARD_WIDGETS = [
     'memory', 'cpu', 'projects', 'host', 'fleet',
-    'integrations', 'quick-access', 'activity',
+    'integrations', 'quick-access',
   ];
   const WIDGET_REQUIRES = { fleet: 'fleet', metrics: 'metrics' };
 
@@ -100,7 +100,7 @@
 
   // --- Module helpers -------------------------------------------------------
   // Core modules are always on; optional ones follow the registry state.
-  const CORE_MODULE_IDS = ['dashboard', 'projects', 'workspace', 'activity', 'audit'];
+  const CORE_MODULE_IDS = ['dashboard', 'projects', 'workspace', 'activity', 'audit', 'files', 'metrics'];
 
   function moduleEnabled(id) {
     if (CORE_MODULE_IDS.includes(id)) return true;
@@ -188,6 +188,52 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  // Lightweight popup menu anchored to an element. `items` is a list of
+  // { label, onSelect, danger?, sep? } entries. Closes on outside click/Escape.
+  let contextMenuEl = null;
+  function closeContextMenu() {
+    if (contextMenuEl) {
+      contextMenuEl.remove();
+      contextMenuEl = null;
+    }
+    document.removeEventListener('mousedown', onContextMenuOutside, true);
+    document.removeEventListener('keydown', onContextMenuKey, true);
+  }
+  function onContextMenuOutside(e) {
+    if (contextMenuEl && !contextMenuEl.contains(e.target)) closeContextMenu();
+  }
+  function onContextMenuKey(e) {
+    if (e.key === 'Escape') closeContextMenu();
+  }
+  function openContextMenu(anchorEl, items) {
+    closeContextMenu();
+    const menu = document.createElement('div');
+    menu.className = 'ctx-menu';
+    menu.innerHTML = items.map((it, i) => (it.sep
+      ? '<div class="ctx-sep"></div>'
+      : `<button type="button" class="ctx-item${it.danger ? ' ctx-danger' : ''}" data-ctx-idx="${i}">${escapeHtml(it.label)}</button>`)).join('');
+    document.body.appendChild(menu);
+    contextMenuEl = menu;
+
+    const rect = anchorEl.getBoundingClientRect();
+    const top = Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 8);
+    const left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8);
+    menu.style.top = `${Math.max(8, top)}px`;
+    menu.style.left = `${Math.max(8, left)}px`;
+
+    menu.onclick = (e) => {
+      const btn = e.target.closest('[data-ctx-idx]');
+      if (!btn) return;
+      const it = items[Number(btn.getAttribute('data-ctx-idx'))];
+      closeContextMenu();
+      if (it && it.onSelect) it.onSelect();
+    };
+    setTimeout(() => {
+      document.addEventListener('mousedown', onContextMenuOutside, true);
+      document.addEventListener('keydown', onContextMenuKey, true);
+    }, 0);
   }
 
   // Generic modal helper
@@ -475,9 +521,9 @@
   // Build the sidebar from the primary views plus any enabled optional module
   // views. Core modules always show; disabled modules are hidden entirely
   // (never rendered-but-hidden) so the navigation never advertises dead links.
-  // "Workspace" is a tree: System + every project, and (when expanded) the live
-  // terminal sessions of each context. Clicking the parent opens the overview
-  // selector; clicking a context or a terminal opens that section directly.
+  // "Workspace" is a two-level tree: the parent opens the overview selector and
+  // each entry opens (or creates) that context's single terminal. The per-entry
+  // menu closes it.
   function renderSidebarNav() {
     const nav = document.getElementById('sidebar-nav');
     if (!nav) return;
@@ -487,6 +533,7 @@
     html += navItemHtml('dashboard', 'Dashboard', 'dashboard');
     html += navItemHtml('projects', 'Projects', 'projects', '<span class="nav-badge" id="nav-projects-count">' + (state.projects.length || 0) + '</span>');
     html += workspaceNavHtml();
+    for (const item of CORE_NAV) html += navItemHtml(item.view, item.label, item.icon);
 
     if (optional.length) {
       html += '<div class="nav-section-title">Modules</div>';
@@ -524,32 +571,29 @@
     return html;
   }
 
+  // Two-level workspace tree: the "Workspace" parent (overview) and one entry
+  // per context (the host plus every project). Each context owns a single
+  // persistent terminal, opened by clicking the entry and closed from its menu.
   function workspaceNodeHtml(context, label, subtitle) {
-    const sessions = sessionsForContext(context);
+    const session = sessionForContext(context);
     const isActiveCtx = state.currentView === 'workspace' && state.workspaceContext === context;
-    const expanded = isActiveCtx || (state.workspaceNavContexts || []).includes(context);
     const activeClass = isActiveCtx ? ' active' : '';
-    let html = `<a class="nav-item nav-subitem${activeClass}" data-workspace-context="${context}" title="${escapeHtml(subtitle || label)}">
-      <span class="nav-dot"></span><span class="nav-label">${escapeHtml(label)}</span>${navChevron(`ctx:${context}`, expanded)}</a>`;
-    if (expanded) {
-      const activeId = context === 'system' ? state.activeSysTerminalId : state.activeTerminalId;
-      html += '<div class="nav-sub nav-sub-deep">';
-      for (const s of sessions) {
-        const leafActive = isActiveCtx && s.id === activeId ? ' active' : '';
-        html += `<a class="nav-leaf${leafActive}" data-terminal-context="${context}" data-terminal-id="${s.id}">
-          <span class="nav-leaf-name">${escapeHtml(s.name || 'Terminal')}</span>
-          <button class="nav-leaf-close" data-close-terminal-context="${context}" data-close-terminal-id="${s.id}" title="Close terminal" aria-label="Close terminal">&times;</button></a>`;
-      }
-      html += `<a class="nav-leaf nav-leaf-new" data-new-terminal-context="${context}">+ New terminal</a>`;
-      html += '</div>';
-    }
-    return html;
+    const running = Boolean(session);
+    return `<a class="nav-item nav-subitem${activeClass}" data-workspace-context="${context}" title="${escapeHtml(subtitle || label)}">
+      <span class="nav-dot${running ? ' nav-dot-on' : ''}"></span><span class="nav-label">${escapeHtml(label)}</span>
+      ${running ? `<button class="nav-item-menu" data-ws-menu-context="${context}" title="Terminal menu" aria-label="Terminal menu">&#8942;</button>` : ''}</a>`;
   }
 
   // Live terminal sessions belonging to a workspace context ('system' = host).
   function sessionsForContext(context) {
     const all = state.allSessions || [];
     return all.filter((s) => (context === 'system' ? !s.project_id : s.project_id === context));
+  }
+
+  // A context owns a single terminal: its currently-running session, or none.
+  function sessionForContext(context) {
+    const list = sessionsForContext(context);
+    return list.find((s) => s.isAlive) || list[0] || null;
   }
 
   // One delegated listener on the (stable) nav container so re-rendering the
@@ -570,29 +614,15 @@
         toggleWorkspaceNav(toggle.getAttribute('data-nav-toggle'));
         return;
       }
-      const closeLeaf = e.target.closest('[data-close-terminal-id]');
-      if (closeLeaf) {
+      const menu = e.target.closest('[data-ws-menu-context]');
+      if (menu) {
         e.preventDefault();
         e.stopPropagation();
-        const ctx = closeLeaf.getAttribute('data-close-terminal-context');
-        const id = closeLeaf.getAttribute('data-close-terminal-id');
-        if (ctx === 'system') closeSysTerminal(id);
-        else closeTerminalSession(id);
-        return;
-      }
-      const leaf = e.target.closest('[data-terminal-id]');
-      if (leaf) {
-        e.preventDefault();
-        activate(() => openWorkspaceTerminal(
-          leaf.getAttribute('data-terminal-context'),
-          leaf.getAttribute('data-terminal-id'),
-        ));
-        return;
-      }
-      const newLeaf = e.target.closest('[data-new-terminal-context]');
-      if (newLeaf) {
-        e.preventDefault();
-        activate(() => newTerminalIn(newLeaf.getAttribute('data-new-terminal-context')));
+        const context = menu.getAttribute('data-ws-menu-context');
+        openContextMenu(menu, [
+          { label: 'Open terminal', onSelect: () => openWorkspace(context) },
+          { label: 'Close terminal', danger: true, onSelect: () => closeWorkspaceTerminal(context) },
+        ]);
         return;
       }
       const ctx = e.target.closest('[data-workspace-context]');
@@ -806,7 +836,6 @@
     host: { title: 'VPS host', size: 3, module: 'dashboard' },
     integrations: { title: 'Platform integrations', size: 6, module: 'dashboard' },
     'quick-access': { title: 'Quick project access', size: 6, module: 'projects' },
-    activity: { title: 'Activity & Audit', size: 6, module: 'activity' },
     fleet: { title: 'Fleet — remote hosts', size: 12, module: 'fleet' },
   };
 
@@ -887,13 +916,6 @@
                 </div>
                 <button class="btn btn-secondary btn-sm open-workspace-btn" data-project-id="${p.id}">Open</button>
               </div>`).join('')}
-          </div>`);
-      case 'activity':
-        return card(`<h3 class="widget-heading">Activity &amp; Audit</h3>
-          <p style="color:var(--text-muted);font-size:13px;margin-top:6px;">The event stream and security audit trail live here.</p>
-          <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
-            <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="activity">Open Activity</button>
-            <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="audit">Open Audit</button>
           </div>`);
       case 'fleet':
         return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
@@ -983,13 +1005,7 @@
       document.getElementById('dash-clone-btn')?.addEventListener('click', openGitRepositories);
       document.getElementById('dash-fleet-check-all')?.addEventListener('click', () => refreshDashboardFleet(true));
       document.getElementById('dash-fleet-update-all')?.addEventListener('click', fleetUpdateAll);
-      document.querySelectorAll('.open-activity-btn').forEach((btn) => {
-        btn.onclick = () => {
-          state.activityTab = btn.getAttribute('data-activity-tab') === 'audit' ? 'audit' : 'activity';
-          saveUiState({ activityTab: state.activityTab });
-          navigateTo('activity');
-        };
-      });
+      bindActivityButtons();
       document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
         btn.onclick = () => {
           state.workspaceContext = btn.getAttribute('data-project-id');
@@ -1910,110 +1926,108 @@
   setupVisualViewport();
 
   // --- File Explorer View ---
+  // Minimalist, lazy-loaded file tree (Wunderbaum). Folders expand on demand;
+  // files open in the editor. Node actions live in a right-click context menu.
+  let filesTree = null;
+
+  function filesNodeData(item) {
+    const isDir = item.type === 'dir' || item.type === 'symlink-dir';
+    return {
+      key: item.path,
+      title: item.name,
+      folder: isDir,
+      lazy: isDir,
+      icon: false,
+      data: { path: item.path, type: isDir ? 'dir' : 'file' },
+    };
+  }
+
+  function filesNodeFromRow(rowEl) {
+    if (!rowEl) return null;
+    return mar10.Wunderbaum.getNode(rowEl);
+  }
+
+  function filesMenuItems(node) {
+    const { path: nodePath, type } = node.data;
+    const items = [];
+    if (type === 'dir') {
+      items.push({ label: 'New file', onSelect: () => promptNewEntry('file', nodePath) });
+      items.push({ label: 'New folder', onSelect: () => promptNewEntry('dir', nodePath) });
+    } else {
+      items.push({ label: 'Edit', onSelect: () => openFileEditor(nodePath) });
+      items.push({
+        label: 'Download',
+        onSelect: () => { window.location.href = `/api/files/download?path=${encodeURIComponent(nodePath)}`; },
+      });
+    }
+    items.push({ sep: true });
+    items.push({ label: 'Delete', danger: true, onSelect: () => removeEntry(nodePath) });
+    return items;
+  }
+
   async function renderFilesView() {
     const content = document.getElementById('main-content');
     const actions = document.getElementById('top-bar-actions');
-    const current = state.filesPath || '/';
 
     actions.innerHTML = `
       <button class="btn btn-secondary btn-sm" id="files-new-file">+ File</button>
       <button class="btn btn-secondary btn-sm" id="files-new-folder">+ Folder</button>
       <button class="btn btn-secondary btn-sm" id="files-refresh">Refresh</button>
     `;
-    document.getElementById('files-new-file').onclick = () => promptNewEntry('file');
-    document.getElementById('files-new-folder').onclick = () => promptNewEntry('dir');
+    document.getElementById('files-new-file').onclick = () => promptNewEntry('file', state.filesPath);
+    document.getElementById('files-new-folder').onclick = () => promptNewEntry('dir', state.filesPath);
     document.getElementById('files-refresh').onclick = () => renderFilesView();
 
-    content.innerHTML = '<div class="card" style="color:var(--text-muted);">Loading...</div>';
+    if (filesTree) {
+      filesTree.destroy();
+      filesTree = null;
+    }
 
-    let listing;
+    content.innerHTML = '<div class="card files-card"><div id="files-tree" class="files-tree"></div></div>';
+
+    let rootListing;
     try {
-      listing = (await api(`/api/files?path=${encodeURIComponent(current)}`)).listing;
+      rootListing = (await api('/api/files?path=%2F')).listing;
     } catch (err) {
       content.innerHTML = `<div class="card" style="color:var(--danger-color);">${escapeHtml(err.message)}</div>`;
       return;
     }
 
-    state.filesPath = listing.path;
-    const rows = listing.items.map((item) => fileRow(item)).join('');
-    content.innerHTML = `
-      <div class="card" style="padding:0;overflow:hidden;">
-        <div class="file-toolbar">
-          <button class="btn btn-secondary btn-sm" id="files-up" ${listing.parent === listing.path ? 'disabled' : ''}>↑ Up</button>
-          <nav class="file-breadcrumb">${buildBreadcrumb(listing.path)}</nav>
-        </div>
-        <div class="table-container" style="border:0;border-radius:0;margin:0;">
-          <table class="data-table files-table">
-            <thead>
-              <tr><th>Name</th><th style="width:90px;">Size</th><th style="width:150px;">Modified</th><th style="width:180px;">Actions</th></tr>
-            </thead>
-            <tbody>${rows || '<tr><td colspan="4" style="color:var(--text-muted);text-align:center;padding:20px;">Empty directory</td></tr>'}</tbody>
-          </table>
-        </div>
-      </div>
-    `;
-
-    const upBtn = document.getElementById('files-up');
-    if (upBtn) upBtn.onclick = () => { state.filesPath = listing.parent; renderFilesView(); };
-
-    content.querySelectorAll('.file-crumb').forEach((el) => {
-      el.onclick = () => { state.filesPath = el.getAttribute('data-path'); renderFilesView(); };
+    const treeEl = document.getElementById('files-tree');
+    filesTree = new mar10.Wunderbaum({
+      id: 'files-tree',
+      element: treeEl,
+      icon: false,
+      autoCollapse: false,
+      source: rootListing.items.map(filesNodeData),
+      lazyLoad: async (e) => {
+        try {
+          const listing = (await api(`/api/files?path=${encodeURIComponent(e.node.data.path)}`)).listing;
+          e.node.addChildren(listing.items.map(filesNodeData));
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      },
+      activate: (e) => {
+        const { path: nodePath, type } = e.node.data;
+        if (type === 'dir') {
+          state.filesPath = nodePath;
+          e.node.setExpanded(!e.node.isExpanded());
+        } else {
+          openFileEditor(nodePath);
+        }
+      },
     });
-    content.querySelectorAll('[data-open]').forEach((el) => {
-      el.onclick = () => openEntry(el.getAttribute('data-open'), el.getAttribute('data-type'));
-    });
-    content.querySelectorAll('[data-download]').forEach((el) => {
-      el.onclick = () => { window.location.href = `/api/files/download?path=${encodeURIComponent(el.getAttribute('data-download'))}`; };
-    });
-    content.querySelectorAll('[data-del]').forEach((el) => {
-      el.onclick = () => removeEntry(el.getAttribute('data-del'));
-    });
-  }
 
-  function fileRow(item) {
-    const isDir = item.type === 'dir' || item.type === 'symlink-dir';
-    const icon = isDir ? '📁' : (item.type.includes('symlink') ? '🔗' : '📄');
-    const size = isDir ? '—' : formatBytes(item.size);
-    const mtime = item.mtime ? new Date(item.mtime).toLocaleString() : '—';
-    const type = isDir ? 'dir' : 'file';
-    return `
-      <tr>
-        <td data-label="Name">
-          <span class="file-name" data-open="${escapeHtml(item.path)}" data-type="${type}">
-            ${icon} ${escapeHtml(item.name)}${item.target ? ` <span style="color:var(--text-muted);">→ ${escapeHtml(item.target)}</span>` : ''}
-          </span>
-        </td>
-        <td data-label="Size" style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);">${size}</td>
-        <td data-label="Modified" style="font-size:12px;color:var(--text-secondary);">${mtime}</td>
-        <td data-label="Actions">
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-primary btn-sm" data-open="${escapeHtml(item.path)}" data-type="${type}">${isDir ? 'Open' : 'Edit'}</button>
-            ${isDir ? '' : `<button class="btn btn-secondary btn-sm" data-download="${escapeHtml(item.path)}">Download</button>`}
-            <button class="btn btn-danger btn-sm" data-del="${escapeHtml(item.path)}">Delete</button>
-          </div>
-        </td>
-      </tr>
-    `;
-  }
-
-  function buildBreadcrumb(targetPath) {
-    const parts = targetPath.split('/').filter(Boolean);
-    const nodes = ['<span class="file-crumb" data-path="/">root</span>'];
-    let acc = '';
-    for (const part of parts) {
-      acc += `/${part}`;
-      nodes.push(`<span class="file-crumb" data-path="${escapeHtml(acc)}">${escapeHtml(part)}</span>`);
-    }
-    return nodes.join('<span class="file-crumb-sep">/</span>');
-  }
-
-  function openEntry(targetPath, type) {
-    if (type === 'dir') {
-      state.filesPath = targetPath;
-      renderFilesView();
-    } else {
-      openFileEditor(targetPath);
-    }
+    treeEl.addEventListener('contextmenu', (ev) => {
+      const row = ev.target.closest('.wb-row');
+      if (!row) return;
+      const node = filesNodeFromRow(row);
+      if (!node) return;
+      ev.preventDefault();
+      state.filesPath = node.data.path;
+      openContextMenu(row, filesMenuItems(node));
+    });
   }
 
   async function openFileEditor(filePath) {
@@ -2044,8 +2058,8 @@
     });
   }
 
-  function promptNewEntry(kind) {
-    const base = state.filesPath || '/';
+  function promptNewEntry(kind, basePath) {
+    const base = basePath || state.filesPath || '/';
     openModal({
       title: kind === 'dir' ? 'New Folder' : 'New File',
       confirmText: 'Create',
@@ -2105,15 +2119,11 @@
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
             <span class="copy-mode-label">History</span>
           </button>
-          <button class="btn btn-secondary btn-sm" id="sys-tab-new-terminal-btn">
-            +<span class="new-term-label"> New Terminal</span>
-          </button>
         </div>
         <div class="terminal-view-wrapper" id="sys-terminal-viewport"></div>
       </div>
     `;
 
-    document.getElementById('sys-tab-new-terminal-btn').onclick = () => spawnSysTerminal();
     document.getElementById('sys-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.sysTerminals.get(state.activeSysTerminalId), 'sys-copy-mode-btn');
     };
@@ -2140,7 +2150,6 @@
       }
 
       if (alive.length === 0) {
-        state.pendingNewTerminalContext = null;
         await spawnSysTerminal();
         return;
       }
@@ -2159,12 +2168,6 @@
       await activateSysTerminal(activeId, activeName);
     } catch (err) {
       showToast(err.message, 'error');
-    }
-
-    // "+ New terminal" requested from the sidebar while opening this context.
-    if (state.pendingNewTerminalContext === 'system') {
-      state.pendingNewTerminalContext = null;
-      await spawnSysTerminal();
     }
   }
 
@@ -2255,27 +2258,27 @@
     navigateTo('workspace');
   }
 
-  // Activate a specific terminal session from the sidebar tree.
-  function openWorkspaceTerminal(context, sessionId) {
-    state.workspaceContext = context;
-    if (context === 'system') state.activeSysTerminalId = sessionId;
-    else state.activeTerminalId = sessionId;
-    if (!(state.workspaceNavContexts || []).includes(context)) {
-      state.workspaceNavContexts = [...(state.workspaceNavContexts || []), context];
+  // Close the single terminal owned by a workspace context (from the nav menu).
+  async function closeWorkspaceTerminal(context) {
+    const session = sessionForContext(context);
+    if (!session) return;
+    const map = context === 'system' ? state.sysTerminals : state.terminals;
+    const item = map.get(session.id);
+    if (item) {
+      disposeTerminalItem(item);
+      map.delete(session.id);
     }
-    saveUiState({
-      workspaceContext: context,
-      activeTerminalId: state.activeTerminalId,
-      activeSysTerminalId: state.activeSysTerminalId,
-      workspaceNavContexts: state.workspaceNavContexts,
-    });
-    navigateTo('workspace');
-  }
-
-  // "+ New terminal" from the sidebar: navigate to the context, then spawn.
-  function newTerminalIn(context) {
-    state.pendingNewTerminalContext = context;
-    openWorkspace(context);
+    await api(`/api/terminals/${session.id}`, { method: 'DELETE' }).catch(() => {});
+    await loadSessions();
+    // If that context is on screen, fall back to the overview so the view does
+    // not immediately re-create a shell.
+    if (state.currentView === 'workspace' && state.workspaceContext === context) {
+      state.workspaceContext = null;
+      saveUiState({ workspaceContext: null });
+      navigateTo('workspace');
+    } else {
+      renderSidebarNav();
+    }
   }
 
   async function renderWorkspaceView() {
@@ -2318,7 +2321,7 @@
       <div style="margin-bottom:24px;">
         <h2 style="font-size:18px;margin-bottom:6px;">Workspaces</h2>
         <p style="color:var(--text-secondary);font-size:13px;">
-          Open the host shell or a project's persistent terminals.
+          Open the host shell or a project's persistent terminal.
         </p>
       </div>
       <div class="ws-grid">
@@ -2376,18 +2379,12 @@
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
             <span class="copy-mode-label">History</span>
           </button>
-          <button class="btn btn-secondary btn-sm" id="tab-new-terminal-btn">
-            +<span class="new-term-label"> New Terminal</span>
-          </button>
         </div>
         <!-- Terminal Body -->
         <div class="terminal-view-wrapper" id="terminal-viewport"></div>
       </div>
     `;
 
-    document.getElementById('tab-new-terminal-btn').onclick = async () => {
-      await spawnNewTerminal(currentProject.id, null, null, state.activeRepoId);
-    };
     document.getElementById('ws-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
     };
@@ -2440,7 +2437,6 @@
       }
 
       if (alive.length === 0) {
-        state.pendingNewTerminalContext = null;
         await spawnNewTerminal(currentProject.id, null, null, state.activeRepoId);
         return;
       }
@@ -2459,12 +2455,6 @@
       await activateTerminalSession(activeId, activeName);
     } catch (err) {
       showToast(err.message, 'error');
-    }
-
-    // "+ New terminal" requested from the sidebar while opening this context.
-    if (state.pendingNewTerminalContext === currentProject.id) {
-      state.pendingNewTerminalContext = null;
-      await spawnNewTerminal(currentProject.id, null, null, state.activeRepoId);
     }
   }
 
@@ -3019,6 +3009,17 @@
 
   // 4c. Logs & Metrics — observability (event trace + resource samples)
   // Activity view: operational activity (events/logs) + the audit trail.
+  // Wire any "Open Activity" / "Open Audit" buttons to the Activity view.
+  function bindActivityButtons(root = document) {
+    root.querySelectorAll('.open-activity-btn').forEach((btn) => {
+      btn.onclick = () => {
+        state.activityTab = btn.getAttribute('data-activity-tab') === 'audit' ? 'audit' : 'activity';
+        saveUiState({ activityTab: state.activityTab });
+        navigateTo('activity');
+      };
+    });
+  }
+
   async function renderActivityView() {
     const content = document.getElementById('main-content');
     const actions = document.getElementById('top-bar-actions');
@@ -3486,6 +3487,53 @@
         </div>
 
         <div class="card" style="margin-bottom:24px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+            <div>
+              <h3 style="font-size:16px;font-weight:600;">Updates</h3>
+              <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
+                Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
+                ${ver.commit ? `<span style="color:var(--text-muted);">(${escapeHtml(ver.commit)})</span>` : ''}
+                ${ver.repo ? `· <code>${escapeHtml(ver.repo)}</code>` : ''}
+                ${ver.branch ? `· branch <code>${escapeHtml(ver.branch)}</code>` : ''}
+              </p>
+              <div id="update-status" style="margin-top:8px;font-size:13px;color:var(--text-muted);">
+                ${ver.updateMode === 'helper'
+                  ? 'The in-panel updater is enabled.'
+                  : ver.updateMode === 'self'
+                    ? 'Built-in updater enabled — updates run as the service user, no root helper required.'
+                    : `Automatic updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0;">
+              <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
+              ${ver.canUpdate ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">About this host</h3>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;font-size:13px;">
+            <div>
+              <span style="color:var(--text-muted);">Hostname:</span>
+              <strong style="display:block;margin-top:2px;">${escapeHtml(node.hostname || '')}</strong>
+            </div>
+            <div>
+              <span style="color:var(--text-muted);">Operating System:</span>
+              <strong style="display:block;margin-top:2px;">${escapeHtml(node.platform || '')} ${escapeHtml(node.release || '')}</strong>
+            </div>
+            <div>
+              <span style="color:var(--text-muted);">Node.js Runtime:</span>
+              <strong style="display:block;margin-top:2px;color:var(--accent-color);">${escapeHtml(node.nodeVersion || '')}</strong>
+            </div>
+            <div>
+              <span style="color:var(--text-muted);">Uptime:</span>
+              <strong style="display:block;margin-top:2px;">${node.uptimeSeconds ? `${Math.round(node.uptimeSeconds / 3600)} hours` : '—'}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
           <h3 class="widget-heading">Public URL</h3>
           <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;line-height:1.6;">
             The address you use to reach this panel (your domain or server IP). It feeds the connection
@@ -3536,72 +3584,33 @@
         </div>
 
         <div style="margin-top:28px;margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Modules &amp; Extensions</h2>
+          <h2 style="font-size:18px;margin-bottom:6px;">Activity &amp; Audit</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">
+            The live event stream and the security audit trail for this host.
+          </p>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="activity">Open Activity</button>
+            <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="audit">Open Audit</button>
+          </div>
+        </div>
+
+        <div style="margin-top:28px;margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">Optional modules</h2>
           <p style="color:var(--text-secondary);font-size:13px;">
             Enable only what you use. Disabled modules are hidden from navigation and their
             endpoints are locked, but your data is never deleted.
           </p>
         </div>
         ${modulesSectionHtml()}
-
-        <div style="margin-top:28px;margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">System</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">
-            Host diagnostics and software updates for this server.
-          </p>
-        </div>
-
-        <div class="card" style="margin-bottom:24px;">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
-            <div>
-              <h3 style="font-size:16px;font-weight:600;">Updates</h3>
-              <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
-                Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
-                ${ver.commit ? `<span style="color:var(--text-muted);">(${escapeHtml(ver.commit)})</span>` : ''}
-                ${ver.repo ? `· <code>${escapeHtml(ver.repo)}</code>` : ''}
-                ${ver.branch ? `· branch <code>${escapeHtml(ver.branch)}</code>` : ''}
-              </p>
-              <div id="update-status" style="margin-top:8px;font-size:13px;color:var(--text-muted);">
-                ${ver.updateMode === 'helper'
-                  ? 'The in-panel updater is enabled.'
-                  : ver.updateMode === 'self'
-                    ? 'Built-in updater enabled — updates run as the service user, no root helper required.'
-                    : `Automatic updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;flex-shrink:0;">
-              <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
-              ${ver.canUpdate ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">About this host</h3>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;font-size:13px;">
-            <div>
-              <span style="color:var(--text-muted);">Hostname:</span>
-              <strong style="display:block;margin-top:2px;">${escapeHtml(node.hostname || '')}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Operating System:</span>
-              <strong style="display:block;margin-top:2px;">${escapeHtml(node.platform || '')} ${escapeHtml(node.release || '')}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Node.js Runtime:</span>
-              <strong style="display:block;margin-top:2px;color:var(--accent-color);">${escapeHtml(node.nodeVersion || '')}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Uptime:</span>
-              <strong style="display:block;margin-top:2px;">${node.uptimeSeconds ? `${Math.round(node.uptimeSeconds / 3600)} hours` : '—'}</strong>
-            </div>
-          </div>
-        </div>
       `;
 
       bindModuleToggles(renderSettingsView);
       bindUpdatesCard();
       bindSecretsCard();
+      bindActivityButtons();
 
       const input = document.getElementById('settings-public-url');
       const saveBtn = document.getElementById('settings-save-url');
@@ -3834,25 +3843,9 @@
 
   // Modules & Extensions management, rendered inside the Settings screen.
   function modulesSectionHtml() {
-    const core = state.modules.filter((m) => m.core);
     const optional = state.modules.filter((m) => !m.core);
     return `
-      <div class="card" style="margin-bottom:20px;">
-        <h3 class="widget-heading">Core modules</h3>
-        <div class="module-grid">
-          ${core.map((m) => `
-            <div class="module-card">
-              <div class="module-card-head">
-                <strong>${escapeHtml(m.name)}</strong>
-                <span class="badge badge-success">Always on</span>
-              </div>
-              <p class="module-desc">${escapeHtml(m.description)}</p>
-            </div>`).join('')}
-        </div>
-      </div>
-
       <div class="card">
-        <h3 class="widget-heading">Optional modules</h3>
         <div class="module-grid">
           ${optional.map((m) => {
             const blocked = !m.ready && !m.enabled;

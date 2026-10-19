@@ -1187,3 +1187,36 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Release: `chore(release): v0.26.0`, annotated tag `v0.26.0`.
 
 
+
+## 70. UI simplification & promotion (v0.27.0)
+- **Activity & Audit moved to Settings.** The dashboard `activity` widget is
+  removed (from `DASHBOARD_WIDGETS`, the default order and the renderer). A new
+  Settings section/card exposes *Open Activity* / *Open Audit*; both the
+  Settings card and (formerly) the dashboard share `bindActivityButtons()`.
+- **Settings reordered.** *Updates* and *About this host* now sit at the very
+  top, followed by Public URL, Connection, Credentials, Activity & Audit and
+  then the optional-modules list.
+- **Core modules hidden in Settings.** The "Core modules" card is gone; the
+  section lists only *Optional modules*, so always-on capabilities (Dashboard,
+  Projects, Workspace, Activity, Audit, **Files**, **Advanced Metrics**) are no
+  longer surfaced as toggles.
+- **Files & Advanced Metrics promoted to core** (`core: true`,
+  `defaultEnabled: true`). Files is now a first-class sidebar entry via the new
+  `CORE_NAV` (it is no longer an optional module).
+- **Workspace flattened to two levels.** The tree is now the *Workspace* parent
+  plus one entry per context (System + each project). Each context owns a single
+  persistent terminal, opened by clicking its entry and closed from the entry's
+  ⋯ menu (`Open terminal` / `Close terminal`). Removed the "+ New Terminal"
+  buttons, `newTerminalIn()`, `openWorkspaceTerminal()` and the
+  `pendingNewTerminalContext` state.
+- **Files rebuilt with Wunderbaum 0.14.1** (MIT, no jQuery; vendored via
+  `scripts/copy-vendor.js` as `wunderbaum.umd.js` + `wunderbaum.css`). The old
+  table/breadcrumb is replaced by a lazy-loaded tree (`icon: false`, minimalist)
+  with a right-click context menu (New file / New folder / Edit / Download /
+  Delete). New `.files-card` / `.files-tree` styles; removed the stale
+  `.files-table` / `.file-toolbar` / breadcrumb CSS.
+- Tests: `tests/modules.test.js` updated for the new core set (`files`,
+  `metrics` enabled by default; gating test now uses `fleet`).
+- Final: `npm test` → **333 tests, 331 pass, 1 fail, 1 skipped** (the unrelated,
+  environment-dependent tmux copy-mode test).
+- Version bumped to `0.27.0`; asset cache-buster token moved to `v0270`.

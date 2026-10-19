@@ -241,6 +241,80 @@ html.is-mobile-ui #app-container {
   background-color: var(--accent-color);
 }
 
+.nav-subitem .nav-dot.nav-dot-on {
+  background-color: var(--success-color, #22c55e);
+}
+
+.nav-item-menu {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.nav-subitem:hover .nav-item-menu,
+.nav-subitem.active .nav-item-menu {
+  opacity: 1;
+}
+
+.nav-item-menu:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-tertiary);
+}
+
+/* Floating, anchored popup menu (nav context menus, file actions). */
+.ctx-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 168px;
+  padding: 4px;
+  background-color: var(--bg-secondary, #1b1b1f);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ctx-item:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.ctx-item.ctx-danger {
+  color: var(--danger-color);
+}
+
+.ctx-item.ctx-danger:hover {
+  background-color: var(--danger-bg);
+}
+
+.ctx-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background-color: var(--border-color);
+}
+
 .nav-sub-deep {
   margin-left: 18px;
   padding-left: 4px;
@@ -1226,48 +1300,26 @@ html.is-mobile-ui .data-table tr:hover td {
 }
 
 /* --- File Explorer --- */
-.file-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+.files-card {
   padding: 10px 14px;
-  border-bottom: 1px solid var(--border-color);
 }
 
-.file-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-wrap: wrap;
-  min-width: 0;
+.files-tree {
   font-size: 13px;
+  min-height: 240px;
 }
 
-.file-crumb {
-  cursor: pointer;
-  color: var(--accent-color);
-  padding: 2px 5px;
+.files-tree .wb-row {
   border-radius: 4px;
-  white-space: nowrap;
 }
 
-.file-crumb:hover {
+.files-tree .wb-title {
+  color: var(--text-primary);
+}
+
+.files-tree .wb-active,
+.files-tree .wb-row:hover {
   background: var(--accent-bg);
-}
-
-.file-crumb-sep {
-  color: var(--text-muted);
-}
-
-.file-name {
-  cursor: pointer;
-  color: var(--accent-color);
-  word-break: break-word;
-}
-
-.file-name:hover {
-  text-decoration: underline;
 }
 
 .file-editor-meta {
@@ -1298,57 +1350,11 @@ html.is-mobile-ui .data-table tr:hover td {
   margin: 0;
 }
 
-/* File Explorer cards on mobile: just the folder/file name as a tappable row. */
+/* File tree on mobile: larger tap targets. */
 @media (max-width: 768px), (hover: none) and (pointer: coarse) {
-  .files-table tr {
-    display: block;
-    padding: 0;
+  .files-tree .wb-row {
+    min-height: 34px;
   }
-
-  .files-table td {
-    padding: 12px 14px;
-    border-bottom: 0;
-    text-align: left;
-  }
-
-  .files-table td:not(:first-child) {
-    display: none;
-  }
-
-  .files-table td:first-child::before {
-    display: none;
-  }
-
-  .files-table .file-name {
-    display: block;
-    padding: 2px 0;
-    font-size: 15px;
-  }
-}
-
-html.is-mobile-ui .files-table tr {
-  display: block;
-  padding: 0;
-}
-
-html.is-mobile-ui .files-table td {
-  padding: 12px 14px;
-  border-bottom: 0;
-  text-align: left;
-}
-
-html.is-mobile-ui .files-table td:not(:first-child) {
-  display: none;
-}
-
-html.is-mobile-ui .files-table td:first-child::before {
-  display: none;
-}
-
-html.is-mobile-ui .files-table .file-name {
-  display: block;
-  padding: 2px 0;
-  font-size: 15px;
 }
 
 /* --- Connect from your phone (QR) --- */
