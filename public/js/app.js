@@ -16,12 +16,16 @@
     projects: [],
     activeProjectId: null,
     activeRepoId: null,
-    workspaceContext: null, // 'system' or a project id
+    workspaceContext: null, // 'system', a project id, or null for the overview
     activityTab: 'activity',
     terminals: new Map(), // sessionId -> { session, term, fitAddon, ws, containerEl }
     activeTerminalId: null,
     sysTerminals: new Map(), // host (non-project) terminal sessions
     activeSysTerminalId: null,
+    allSessions: [], // every terminal session, drives the sidebar workspace tree
+    workspaceNavOpen: true, // sidebar "Workspace" group expanded
+    workspaceNavContexts: [], // workspace contexts whose terminals are expanded
+    pendingNewTerminalContext: null, // spawn an extra terminal after navigating
     systemInfo: null,
     metrics: null,
     integrations: null,
@@ -41,7 +45,6 @@
     dashboardPaused: false,
     tmuxAvailable: false,
     filesPath: '/',
-    gitProviders: [], // provider + OAuth status from GET /api/git/oauth/providers
     dashboardWidgets: null, // ordered widget ids, persisted per browser
   };
 
@@ -50,9 +53,9 @@
   const UI_STATE_KEY = 'citadel.uiState';
 
   // The three primary views. Optional module views are added to the sidebar only
-  // when their module is enabled; System and Settings are fixed host-tools
-  // entries. Activity & Audit and Modules & Extensions live inside System and
-  // Settings respectively, not in the main navigation.
+  // when their module is enabled; Settings is the fixed host-tools entry. System
+  // is gone: host diagnostics and updates live in Settings and Activity is a
+  // dashboard widget.
   const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace'];
   const OPTIONAL_NAV = [
     { module: 'files', view: 'files', label: 'Files', icon: 'folder-icon' },
@@ -61,20 +64,21 @@
     { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
   ];
   const KNOWN_VIEWS = [
-    ...PRIMARY_VIEWS, 'system', 'settings', 'activity', 'processes',
+    ...PRIMARY_VIEWS, 'settings', 'activity', 'processes',
     ...OPTIONAL_NAV.map((n) => n.view),
   ];
   // Legacy view ids → current ids, so a persisted view still resolves.
   const LEGACY_VIEW_MAP = {
     repos: 'projects', terminal: 'workspace', logs: 'activity',
     plugins: 'settings', modules: 'settings', deployments: 'proxy',
+    system: 'settings',
   };
 
   // Default dashboard widget order. Widgets whose module is disabled/unavailable
   // are dropped at render time so the layout always stays valid.
   const DEFAULT_DASHBOARD_WIDGETS = [
     'memory', 'cpu', 'projects', 'host', 'fleet',
-    'integrations', 'quick-access',
+    'integrations', 'quick-access', 'activity',
   ];
   const WIDGET_REQUIRES = { fleet: 'fleet', metrics: 'metrics' };
 
@@ -449,6 +453,7 @@
 
     // Load initial data (only fetch optional-module data when it is enabled).
     loadProjects();
+    loadSessions();
     loadVersionTag();
 
     // Force the mobile (off-canvas) layout for any touch/narrow device, even
@@ -470,6 +475,9 @@
   // Build the sidebar from the primary views plus any enabled optional module
   // views. Core modules always show; disabled modules are hidden entirely
   // (never rendered-but-hidden) so the navigation never advertises dead links.
+  // "Workspace" is a tree: System + every project, and (when expanded) the live
+  // terminal sessions of each context. Clicking the parent opens the overview
+  // selector; clicking a context or a terminal opens that section directly.
   function renderSidebarNav() {
     const nav = document.getElementById('sidebar-nav');
     if (!nav) return;
@@ -478,7 +486,7 @@
     let html = '<div class="nav-section-title">Platform</div>';
     html += navItemHtml('dashboard', 'Dashboard', 'dashboard');
     html += navItemHtml('projects', 'Projects', 'projects', '<span class="nav-badge" id="nav-projects-count">' + (state.projects.length || 0) + '</span>');
-    html += navItemHtml('workspace', 'Workspace', 'workspace');
+    html += workspaceNavHtml();
 
     if (optional.length) {
       html += '<div class="nav-section-title">Modules</div>';
@@ -488,37 +496,134 @@
     }
 
     html += '<div class="nav-section-title">Host</div>';
-    html += navItemHtml('system', 'System', 'system');
     html += navItemHtml('settings', 'Settings', 'settings');
     nav.innerHTML = html;
-
-    document.querySelectorAll('.sidebar-nav .nav-item').forEach((el) => {
-      if (el.getAttribute('data-view') === state.currentView) el.classList.add('active');
-    });
   }
 
+  function navChevron(toggleKey, expanded) {
+    return `<span class="nav-chevron${expanded ? ' open' : ''}" data-nav-toggle="${toggleKey}"
+      role="button" tabindex="0" aria-label="${expanded ? 'Collapse' : 'Expand'}">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    </span>`;
+  }
+
+  function workspaceNavHtml() {
+    const open = state.workspaceNavOpen !== false;
+    const parentActive = state.currentView === 'workspace' ? ' active' : '';
+    let html = `<a class="nav-item nav-parent${parentActive}" data-view="workspace">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${NAV_ICONS.workspace}</svg>
+      <span>Workspace</span>${navChevron('workspace', open)}</a>`;
+    if (!open) return html;
+
+    html += '<div class="nav-sub">';
+    html += workspaceNodeHtml('system', 'System (host)', null);
+    for (const p of state.projects) {
+      html += workspaceNodeHtml(p.id, p.name, p.path);
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function workspaceNodeHtml(context, label, subtitle) {
+    const sessions = sessionsForContext(context);
+    const isActiveCtx = state.currentView === 'workspace' && state.workspaceContext === context;
+    const expanded = isActiveCtx || (state.workspaceNavContexts || []).includes(context);
+    const activeClass = isActiveCtx ? ' active' : '';
+    let html = `<a class="nav-item nav-subitem${activeClass}" data-workspace-context="${context}" title="${escapeHtml(subtitle || label)}">
+      <span class="nav-dot"></span><span class="nav-label">${escapeHtml(label)}</span>${navChevron(`ctx:${context}`, expanded)}</a>`;
+    if (expanded) {
+      const activeId = context === 'system' ? state.activeSysTerminalId : state.activeTerminalId;
+      html += '<div class="nav-sub nav-sub-deep">';
+      for (const s of sessions) {
+        const leafActive = isActiveCtx && s.id === activeId ? ' active' : '';
+        html += `<a class="nav-leaf${leafActive}" data-terminal-context="${context}" data-terminal-id="${s.id}">
+          <span class="nav-leaf-name">${escapeHtml(s.name || 'Terminal')}</span>
+          <button class="nav-leaf-close" data-close-terminal-context="${context}" data-close-terminal-id="${s.id}" title="Close terminal" aria-label="Close terminal">&times;</button></a>`;
+      }
+      html += `<a class="nav-leaf nav-leaf-new" data-new-terminal-context="${context}">+ New terminal</a>`;
+      html += '</div>';
+    }
+    return html;
+  }
+
+  // Live terminal sessions belonging to a workspace context ('system' = host).
+  function sessionsForContext(context) {
+    const all = state.allSessions || [];
+    return all.filter((s) => (context === 'system' ? !s.project_id : s.project_id === context));
+  }
+
+  // One delegated listener on the (stable) nav container so re-rendering the
+  // tree never loses handlers.
   function bindSidebarNav(closeSidebar) {
-    document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
-      // The nav items are anchors without href, so make them operable by
-      // keyboard/screen readers explicitly.
-      item.setAttribute('role', 'button');
-      item.setAttribute('tabindex', '0');
-      const activate = () => {
-        const view = item.getAttribute('data-view');
-        navigateTo(view);
-        if (closeSidebar) closeSidebar();
-      };
-      item.onclick = (e) => {
+    const nav = document.getElementById('sidebar-nav');
+    if (!nav) return;
+
+    const activate = (fn) => {
+      fn();
+      if (closeSidebar) closeSidebar();
+    };
+
+    nav.onclick = (e) => {
+      const toggle = e.target.closest('[data-nav-toggle]');
+      if (toggle) {
         e.preventDefault();
-        activate();
-      };
-      item.onkeydown = (e) => {
-        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-          e.preventDefault();
-          activate();
-        }
-      };
-    });
+        toggleWorkspaceNav(toggle.getAttribute('data-nav-toggle'));
+        return;
+      }
+      const closeLeaf = e.target.closest('[data-close-terminal-id]');
+      if (closeLeaf) {
+        e.preventDefault();
+        e.stopPropagation();
+        const ctx = closeLeaf.getAttribute('data-close-terminal-context');
+        const id = closeLeaf.getAttribute('data-close-terminal-id');
+        if (ctx === 'system') closeSysTerminal(id);
+        else closeTerminalSession(id);
+        return;
+      }
+      const leaf = e.target.closest('[data-terminal-id]');
+      if (leaf) {
+        e.preventDefault();
+        activate(() => openWorkspaceTerminal(
+          leaf.getAttribute('data-terminal-context'),
+          leaf.getAttribute('data-terminal-id'),
+        ));
+        return;
+      }
+      const newLeaf = e.target.closest('[data-new-terminal-context]');
+      if (newLeaf) {
+        e.preventDefault();
+        activate(() => newTerminalIn(newLeaf.getAttribute('data-new-terminal-context')));
+        return;
+      }
+      const ctx = e.target.closest('[data-workspace-context]');
+      if (ctx) {
+        e.preventDefault();
+        activate(() => openWorkspace(ctx.getAttribute('data-workspace-context')));
+        return;
+      }
+      const item = e.target.closest('[data-view]');
+      if (item) {
+        e.preventDefault();
+        const view = item.getAttribute('data-view');
+        // Clicking the Workspace parent opens the overview selector.
+        if (view === 'workspace') activate(openWorkspaceOverview);
+        else activate(() => navigateTo(view));
+      }
+    };
+  }
+
+  function toggleWorkspaceNav(key) {
+    if (key === 'workspace') {
+      state.workspaceNavOpen = state.workspaceNavOpen === false;
+      saveUiState({ workspaceNavOpen: state.workspaceNavOpen });
+    } else if (key.startsWith('ctx:')) {
+      const ctx = key.slice(4);
+      const set = new Set(state.workspaceNavContexts || []);
+      if (set.has(ctx)) set.delete(ctx); else set.add(ctx);
+      state.workspaceNavContexts = Array.from(set);
+      saveUiState({ workspaceNavContexts: state.workspaceNavContexts });
+    }
+    renderSidebarNav();
   }
 
   async function loadVersionTag() {
@@ -541,6 +646,8 @@
     state.activeTerminalId = ui.activeTerminalId || null;
     state.activeSysTerminalId = ui.activeSysTerminalId || null;
     state.workspaceContext = ui.workspaceContext || null;
+    state.workspaceNavOpen = ui.workspaceNavOpen !== false;
+    state.workspaceNavContexts = Array.isArray(ui.workspaceNavContexts) ? ui.workspaceNavContexts.slice() : [];
     state.activityTab = ui.activityTab === 'audit' ? 'audit' : 'activity';
     state.dashboardWidgets = Array.isArray(ui.dashboardWidgets) ? ui.dashboardWidgets.slice() : null;
     await loadModules();
@@ -561,7 +668,7 @@
   // Highlight the sidebar entry for the current view (used by navigateTo and by
   // screens opened directly, such as the Git Repositories screen).
   function setActiveNav(view) {
-    document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
+    document.querySelectorAll('.sidebar-nav [data-view]').forEach((item) => {
       if (item.getAttribute('data-view') === view) {
         item.classList.add('active');
         item.setAttribute('aria-current', 'page');
@@ -601,9 +708,6 @@
     } else if (view === 'activity') {
       titleEl.textContent = 'Activity & Audit';
       renderActivityView();
-    } else if (view === 'system') {
-      titleEl.textContent = 'System';
-      renderSystemView();
     } else if (view === 'settings') {
       titleEl.textContent = 'Settings';
       renderSettingsView();
@@ -636,6 +740,8 @@
       if (!state.activeProjectId && state.projects.length > 0) {
         state.activeProjectId = state.projects[0].id;
       }
+      // The sidebar workspace tree lists projects, so refresh it.
+      renderSidebarNav();
     } catch (err) {
       console.warn('Error loading projects:', err.message);
     }
@@ -700,6 +806,7 @@
     host: { title: 'VPS host', size: 3, module: 'dashboard' },
     integrations: { title: 'Platform integrations', size: 6, module: 'dashboard' },
     'quick-access': { title: 'Quick project access', size: 6, module: 'projects' },
+    activity: { title: 'Activity & Audit', size: 6, module: 'activity' },
     fleet: { title: 'Fleet — remote hosts', size: 12, module: 'fleet' },
   };
 
@@ -714,6 +821,14 @@
       if (!DASHBOARD_WIDGETS[id] || seen.has(id)) continue;
       seen.add(id);
       order.push(id);
+    }
+    // Built-in widgets added by an update should still surface for browsers
+    // holding an older saved order, so append any defaults not yet listed.
+    for (const id of DEFAULT_DASHBOARD_WIDGETS) {
+      if (DASHBOARD_WIDGETS[id] && !seen.has(id)) {
+        seen.add(id);
+        order.push(id);
+      }
     }
     return order;
   }
@@ -772,6 +887,13 @@
                 </div>
                 <button class="btn btn-secondary btn-sm open-workspace-btn" data-project-id="${p.id}">Open</button>
               </div>`).join('')}
+          </div>`);
+      case 'activity':
+        return card(`<h3 class="widget-heading">Activity &amp; Audit</h3>
+          <p style="color:var(--text-muted);font-size:13px;margin-top:6px;">The event stream and security audit trail live here.</p>
+          <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="activity">Open Activity</button>
+            <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="audit">Open Audit</button>
           </div>`);
       case 'fleet':
         return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
@@ -861,6 +983,13 @@
       document.getElementById('dash-clone-btn')?.addEventListener('click', openGitRepositories);
       document.getElementById('dash-fleet-check-all')?.addEventListener('click', () => refreshDashboardFleet(true));
       document.getElementById('dash-fleet-update-all')?.addEventListener('click', fleetUpdateAll);
+      document.querySelectorAll('.open-activity-btn').forEach((btn) => {
+        btn.onclick = () => {
+          state.activityTab = btn.getAttribute('data-activity-tab') === 'audit' ? 'audit' : 'activity';
+          saveUiState({ activityTab: state.activityTab });
+          navigateTo('activity');
+        };
+      });
       document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
         btn.onclick = () => {
           state.workspaceContext = btn.getAttribute('data-project-id');
@@ -1386,9 +1515,8 @@
 
     let providers = [];
     try {
-      const res = await api('/api/git/oauth/providers');
+      const res = await api('/api/git/credentials');
       providers = res.providers || [];
-      state.gitProviders = providers;
     } catch (err) {
       content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
       return;
@@ -1400,8 +1528,8 @@
       <div style="margin-bottom:24px;">
         <h2 style="font-size:18px;margin-bottom:6px;">Git Repositories</h2>
         <p style="color:var(--text-secondary);">
-          Connect a provider with one click using OAuth, or paste a personal access token.
-          Credentials are encrypted at rest on the server.
+          Connect a provider with a personal access token to browse and clone your private repositories.
+          Tokens are encrypted at rest on the server.
         </p>
       </div>
 
@@ -1445,9 +1573,6 @@
   }
 
   function renderProviderCard(p) {
-    const method = p.authMethod === 'oauth'
-      ? '<span class="badge badge-success">OAuth</span>'
-      : (p.configured ? '<span class="badge badge-muted">Token</span>' : '');
     return `
       <div style="border:1px solid var(--border-color);border-radius:8px;padding:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -1456,12 +1581,12 @@
         </div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;min-height:16px;">
           ${p.configured
-            ? `${p.username ? `Account: ${escapeHtml(p.username)}<br>` : ''}Updated: ${p.updated_at ? new Date(p.updated_at).toLocaleString() : '-'} ${method}`
+            ? `${p.username ? `Account: ${escapeHtml(p.username)}<br>` : ''}Updated: ${p.updated_at ? new Date(p.updated_at).toLocaleString() : '-'}`
             : `Host: ${escapeHtml(p.host)}`}
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div style="display:flex;gap:8px;">
           <button class="btn ${p.configured ? 'btn-secondary' : 'btn-primary'} btn-sm provider-connect-btn" data-provider="${p.id}">
-            ${p.configured ? 'Reconnect' : `Connect ${escapeHtml(p.label)}`}
+            ${p.configured ? 'Update Token' : 'Connect'}
           </button>
           ${p.configured ? `<button class="btn btn-secondary btn-sm provider-disconnect-btn" data-provider="${p.id}">Disconnect</button>` : ''}
         </div>
@@ -1469,53 +1594,8 @@
     `;
   }
 
-  function openProviderConnectModal(providerId) {
-    const provider = (state.gitProviders || []).find((p) => p.id === providerId) || { id: providerId, label: providerId };
-    const label = provider.label || providerId;
-    const oauth = provider.oauth || {};
-
-    if (oauth.configured) {
-      openDeviceFlowModal(providerId, label);
-      return;
-    }
-
-    openModal({
-      title: `Connect ${label}`,
-      confirmText: 'Save & continue',
-      bodyHtml: `
-        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">
-          Register an OAuth application for ${escapeHtml(label)} and paste its public client/application id. No secret is required.
-        </p>
-        <div class="form-group">
-          <label class="form-label">Client / Application ID</label>
-          <input type="text" class="form-input" id="m-oauth-client-id" placeholder="${escapeHtml(label)} application id" required>
-          <p style="font-size:12px;color:var(--text-muted);margin-top:6px;">
-            <a href="${escapeHtml(oauth.appUrl || '#')}" target="_blank" rel="noopener">Create an application</a>, then enter its id here.
-          </p>
-        </div>
-        <button type="button" class="btn btn-secondary btn-sm" id="m-git-use-token" style="width:100%;">
-          Use a personal access token instead
-        </button>
-      `,
-      onConfirm: async () => {
-        const clientId = document.getElementById('m-oauth-client-id').value.trim();
-        if (!clientId) throw new Error('A client/application id is required.');
-        await api(`/api/git/oauth/${providerId}/client-id`, { method: 'POST', body: { clientId } });
-        // This dialog closes right after onConfirm resolves; open the flow next tick.
-        setTimeout(() => openDeviceFlowModal(providerId, label), 0);
-      },
-    });
-
-    const useTokenBtn = document.getElementById('m-git-use-token');
-    if (useTokenBtn) {
-      useTokenBtn.onclick = () => {
-        document.getElementById('modal-cancel-btn')?.click();
-        setTimeout(() => openTokenModal(providerId, label), 0);
-      };
-    }
-  }
-
-  function openTokenModal(providerId, label) {
+  function connectProvider(providerId) {
+    const label = providerId.charAt(0).toUpperCase() + providerId.slice(1);
     openModal({
       title: `Connect ${label}`,
       bodyHtml: `
@@ -1542,145 +1622,8 @@
     });
   }
 
-  function openDeviceFlowModal(providerId, label) {
-    const root = document.getElementById('modal-root');
-    const previouslyFocused = document.activeElement;
-    let sessionId = null;
-    let timer = null;
-    let stopped = false;
-
-    const cleanup = () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
-      if (sessionId) {
-        api(`/api/git/oauth/${providerId}/cancel`, { method: 'POST', body: { sessionId } }).catch(() => {});
-      }
-      root.innerHTML = '';
-      if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
-    };
-
-    const onKeydown = (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        cleanup();
-      }
-    };
-
-    const renderShell = () => {
-      root.innerHTML = `
-        <div class="modal-overlay" id="active-modal-overlay">
-          <div class="modal-content" role="dialog" aria-modal="true">
-            <div class="modal-header">
-              <h3 class="modal-title">Connect ${escapeHtml(label)}</h3>
-              <button class="tab-close-btn" id="modal-close-btn" aria-label="Close dialog">&times;</button>
-            </div>
-            <div class="modal-body" id="oauth-flow-body">
-              <p style="color:var(--text-secondary);">Requesting a device code...</p>
-            </div>
-            <div class="modal-footer">
-              <button class="btn btn-secondary" id="modal-cancel-btn">Cancel</button>
-            </div>
-          </div>
-        </div>
-      `;
-      document.addEventListener('keydown', onKeydown);
-      document.getElementById('modal-close-btn').onclick = cleanup;
-      document.getElementById('modal-cancel-btn').onclick = cleanup;
-    };
-
-    const showCode = (start) => {
-      const openUrl = start.verificationUriComplete || start.verificationUri;
-      document.getElementById('oauth-flow-body').innerHTML = `
-        <p style="color:var(--text-secondary);margin-bottom:10px;font-size:13px;">
-          Open the page below and enter this code to authorize Citadel:
-        </p>
-        <div style="text-align:center;margin-bottom:14px;">
-          <div id="oauth-user-code" style="font-size:28px;font-weight:700;letter-spacing:4px;font-family:monospace;">${escapeHtml(start.userCode)}</div>
-        </div>
-        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
-          <a class="btn btn-primary btn-sm" href="${escapeHtml(openUrl)}" target="_blank" rel="noopener">Open ${escapeHtml(label)}</a>
-          <button type="button" class="btn btn-secondary btn-sm" id="oauth-copy-btn">Copy code</button>
-        </div>
-        <p id="oauth-flow-status" style="text-align:center;color:var(--text-muted);font-size:13px;margin-top:14px;">Waiting for approval...</p>
-        <button type="button" class="btn btn-secondary btn-sm" id="oauth-use-token" style="width:100%;margin-top:6px;">
-          Use a personal access token instead
-        </button>
-      `;
-      const useTokenBtn = document.getElementById('oauth-use-token');
-      if (useTokenBtn) {
-        useTokenBtn.onclick = () => {
-          cleanup();
-          openTokenModal(providerId, label);
-        };
-      }
-      const copyBtn = document.getElementById('oauth-copy-btn');
-      if (copyBtn) {
-        copyBtn.onclick = async () => {
-          try {
-            await navigator.clipboard.writeText(start.userCode);
-            copyBtn.textContent = 'Copied';
-          } catch {
-            copyBtn.textContent = 'Copy failed';
-          }
-        };
-      }
-      const link = document.querySelector('#oauth-flow-body a');
-      if (link) link.focus();
-    };
-
-    const poll = async (intervalSeconds) => {
-      if (stopped) return;
-      try {
-        const res = await api(`/api/git/oauth/${providerId}/poll`, { method: 'POST', body: { sessionId } });
-        if (res.status === 'connected') {
-          const statusEl = document.getElementById('oauth-flow-status');
-          if (statusEl) statusEl.textContent = 'Connected.';
-          cleanup();
-          showToast(`${label} connected.`, 'success');
-          renderReposView();
-          return;
-        }
-        if (res.status === 'pending') {
-          timer = setTimeout(() => poll(res.interval || intervalSeconds), (res.interval || intervalSeconds) * 1000);
-          return;
-        }
-        const statusEl = document.getElementById('oauth-flow-status');
-        if (statusEl) {
-          statusEl.textContent = res.status === 'denied'
-            ? 'Authorization was denied.'
-            : 'The code expired. Close this dialog and try again.';
-        }
-      } catch (err) {
-        if (stopped) return;
-        const statusEl = document.getElementById('oauth-flow-status');
-        if (statusEl) statusEl.textContent = err.message;
-      }
-    };
-
-    renderShell();
-    api(`/api/git/oauth/${providerId}/start`, { method: 'POST' })
-      .then((start) => {
-        if (stopped) {
-          api(`/api/git/oauth/${providerId}/cancel`, { method: 'POST', body: { sessionId: start.sessionId } }).catch(() => {});
-          return;
-        }
-        sessionId = start.sessionId;
-        showCode(start);
-        timer = setTimeout(() => poll(start.interval), Math.max(1, start.interval) * 1000);
-      })
-      .catch((err) => {
-        if (stopped) return;
-        document.getElementById('oauth-flow-body').innerHTML =
-          `<p style="color:var(--danger-color);">${escapeHtml(err.message)}</p>`;
-      });
-  }
-
-  function connectProvider(providerId) {
-    openProviderConnectModal(providerId);
-  }
-
   async function disconnectProvider(providerId) {
-    if (!window.confirm(`Disconnect ${providerId} and delete the stored credential?`)) return;
+    if (!window.confirm(`Disconnect ${providerId} and delete the stored token?`)) return;
     try {
       await api(`/api/git/credentials/${providerId}`, { method: 'DELETE' });
       showToast(`${providerId} disconnected.`, 'success');
@@ -2147,6 +2090,8 @@
   async function renderSystemTerminals() {
     const content = document.getElementById('main-content');
     content.style.padding = '0'; // Terminal takes full viewport
+    const titleEl = document.getElementById('top-bar-title');
+    if (titleEl) titleEl.textContent = 'Workspace — System (host)';
 
     content.innerHTML = `
       <div class="workspace-container">
@@ -2195,6 +2140,7 @@
       }
 
       if (alive.length === 0) {
+        state.pendingNewTerminalContext = null;
         await spawnSysTerminal();
         return;
       }
@@ -2214,6 +2160,12 @@
     } catch (err) {
       showToast(err.message, 'error');
     }
+
+    // "+ New terminal" requested from the sidebar while opening this context.
+    if (state.pendingNewTerminalContext === 'system') {
+      state.pendingNewTerminalContext = null;
+      await spawnSysTerminal();
+    }
   }
 
   async function spawnSysTerminal() {
@@ -2222,6 +2174,7 @@
         method: 'POST',
         body: { name: `Host ${state.sysTerminals.size + 1}` },
       });
+      await loadSessions();
       await activateSysTerminal(res.session.sessionId, res.session.name);
     } catch (err) {
       showToast(`Failed to create terminal: ${err.message}`, 'error');
@@ -2248,36 +2201,9 @@
     setTimeout(() => fitTerminalItem(item), 30);
   }
 
+  // Host terminals are listed in the sidebar tree alongside project ones.
   function renderSysTerminalTabs() {
-    const tabsContainer = document.getElementById('sys-terminal-tabs-container');
-    if (!tabsContainer) return;
-
-    const existingNewBtn = document.getElementById('sys-tab-new-terminal-btn');
-    const tabAnchor = document.getElementById('sys-paste-btn')
-      || document.getElementById('sys-copy-mode-btn') || existingNewBtn;
-    tabsContainer.querySelectorAll('.terminal-tab').forEach((el) => el.remove());
-
-    for (const [id, item] of state.sysTerminals.entries()) {
-      const tab = document.createElement('div');
-      tab.className = `terminal-tab ${id === state.activeSysTerminalId ? 'active' : ''}`;
-      tab.innerHTML = `
-        <span>${escapeHtml(item.name)}</span>
-        <button class="tab-close-btn" data-id="${id}">&times;</button>
-      `;
-
-      tab.onclick = (e) => {
-        if (!e.target.classList.contains('tab-close-btn')) {
-          activateSysTerminal(id, item.name);
-        }
-      };
-
-      tab.querySelector('.tab-close-btn').onclick = async (e) => {
-        e.stopPropagation();
-        await closeSysTerminal(id);
-      };
-
-      tabsContainer.insertBefore(tab, tabAnchor);
-    }
+    renderSidebarNav();
   }
 
   async function closeSysTerminal(sessionId) {
@@ -2285,8 +2211,9 @@
     if (item) {
       disposeTerminalItem(item);
       state.sysTerminals.delete(sessionId);
-      await api(`/api/terminals/${sessionId}`, { method: 'DELETE' }).catch(() => {});
     }
+    await api(`/api/terminals/${sessionId}`, { method: 'DELETE' }).catch(() => {});
+    await loadSessions();
 
     if (state.sysTerminals.size > 0) {
       const nextId = Array.from(state.sysTerminals.keys())[0];
@@ -2303,53 +2230,144 @@
     if (state.workspaceContext && state.projects.some((p) => p.id === state.workspaceContext)) {
       return state.workspaceContext;
     }
-    if (state.activeProjectId && state.projects.some((p) => p.id === state.activeProjectId)) {
-      return state.activeProjectId;
+    return null;
+  }
+
+  // Open the overview selector (parent "Workspace" click).
+  function openWorkspaceOverview() {
+    state.workspaceContext = null;
+    saveUiState({ workspaceContext: null });
+    navigateTo('workspace');
+  }
+
+  // Open a workspace section (System or a project) from the sidebar/overview.
+  function openWorkspace(context) {
+    state.workspaceContext = context;
+    state.activeRepoId = null;
+    if (!(state.workspaceNavContexts || []).includes(context)) {
+      state.workspaceNavContexts = [...(state.workspaceNavContexts || []), context];
     }
-    return 'system';
+    saveUiState({
+      workspaceContext: context,
+      activeRepoId: null,
+      workspaceNavContexts: state.workspaceNavContexts,
+    });
+    navigateTo('workspace');
+  }
+
+  // Activate a specific terminal session from the sidebar tree.
+  function openWorkspaceTerminal(context, sessionId) {
+    state.workspaceContext = context;
+    if (context === 'system') state.activeSysTerminalId = sessionId;
+    else state.activeTerminalId = sessionId;
+    if (!(state.workspaceNavContexts || []).includes(context)) {
+      state.workspaceNavContexts = [...(state.workspaceNavContexts || []), context];
+    }
+    saveUiState({
+      workspaceContext: context,
+      activeTerminalId: state.activeTerminalId,
+      activeSysTerminalId: state.activeSysTerminalId,
+      workspaceNavContexts: state.workspaceNavContexts,
+    });
+    navigateTo('workspace');
+  }
+
+  // "+ New terminal" from the sidebar: navigate to the context, then spawn.
+  function newTerminalIn(context) {
+    state.pendingNewTerminalContext = context;
+    openWorkspace(context);
   }
 
   async function renderWorkspaceView() {
     await loadProjects();
     const content = document.getElementById('main-content');
-    content.style.padding = '0'; // Terminal takes full viewport
 
     const context = resolveWorkspaceContext();
     state.workspaceContext = context;
-    if (context !== 'system') state.activeProjectId = context;
+    if (context && context !== 'system') state.activeProjectId = context;
     saveUiState({ workspaceContext: context, activeProjectId: state.activeProjectId });
+    // Sidebar may have rendered from loadProjects() before the context was set.
+    renderSidebarNav();
 
     const actions = document.getElementById('top-bar-actions');
-    actions.innerHTML = `
-      <select class="form-input ws-project-selector" id="ws-context-selector" title="Workspace context">
-        <option value="system" ${context === 'system' ? 'selected' : ''}>System (host)</option>
-        ${state.projects.map((p) => `<option value="${p.id}" ${p.id === context ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
-      </select>
-    `;
+    if (actions) actions.innerHTML = '';
 
-    document.getElementById('ws-context-selector').onchange = (e) => {
-      state.workspaceContext = e.target.value;
-      state.activeRepoId = null;
-      saveUiState({ workspaceContext: state.workspaceContext, activeRepoId: null });
-      renderWorkspaceView();
-    };
+    if (!context) {
+      return renderWorkspaceOverview();
+    }
 
+    content.style.padding = '0'; // Terminal takes full viewport
     if (context === 'system') {
       return renderSystemTerminals();
     }
 
-    const currentProject = state.projects.find((p) => p.id === context) || state.projects[0];
+    const currentProject = state.projects.find((p) => p.id === context);
+    if (!currentProject) return renderWorkspaceOverview();
     return renderProjectTerminals(currentProject);
   }
+
+  // Landing selector shown when the "Workspace" parent is opened.
+  function renderWorkspaceOverview() {
+    const content = document.getElementById('main-content');
+    content.style.padding = '24px';
+    const titleEl = document.getElementById('top-bar-title');
+    if (titleEl) titleEl.textContent = 'Workspaces';
+
+    const sysCount = sessionsForContext('system').length;
+    content.innerHTML = `
+      <div style="margin-bottom:24px;">
+        <h2 style="font-size:18px;margin-bottom:6px;">Workspaces</h2>
+        <p style="color:var(--text-secondary);font-size:13px;">
+          Open the host shell or a project's persistent terminals.
+        </p>
+      </div>
+      <div class="ws-grid">
+        ${workspaceCardHtml('system', 'System (host)', 'Host shell', sysCount)}
+        ${state.projects.map((p) => workspaceCardHtml(p.id, p.name, p.path, sessionsForContext(p.id).length)).join('')}
+      </div>
+    `;
+
+    document.querySelectorAll('.ws-open-btn').forEach((btn) => {
+      btn.onclick = () => openWorkspace(btn.getAttribute('data-context'));
+    });
+  }
+
+  function workspaceCardHtml(context, label, subtitle, count) {
+    return `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <strong>${escapeHtml(label)}</strong>
+          <span class="badge ${count > 0 ? 'badge-success' : 'badge-muted'}">${count} terminal${count === 1 ? '' : 's'}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:12px;min-height:16px;word-break:break-all;">${escapeHtml(subtitle || '')}</div>
+        <button class="btn btn-primary btn-sm ws-open-btn" data-context="${context}">Open</button>
+      </div>
+    `;
+  }
+
+  async function loadSessions() {
+    try {
+      const res = await api('/api/terminals');
+      state.allSessions = (res.sessions || []).filter((s) => s.isAlive);
+      state.tmuxAvailable = !!res.tmuxAvailable;
+    } catch {
+      // Keep the previous list; the sidebar simply stays as it was.
+    }
+    renderSidebarNav();
+  }
+
 
   async function renderProjectTerminals(currentProject) {
     const content = document.getElementById('main-content');
     content.style.padding = '0';
+    const titleEl = document.getElementById('top-bar-title');
+    if (titleEl) titleEl.textContent = `Workspace — ${currentProject.name}`;
 
     content.innerHTML = `
       <div class="workspace-container">
-        <!-- Tabs bar -->
+        <!-- Toolbar (terminal switching lives in the sidebar) -->
         <div class="terminal-tabs-bar" id="terminal-tabs-container">
+          <span class="badge badge-muted ws-context-badge">${escapeHtml(currentProject.name)}</span>
           <button class="btn btn-secondary btn-sm paste-btn" id="ws-paste-btn" style="margin-left:auto;" title="Paste from clipboard">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
             <span class="paste-label">Paste</span>
@@ -2422,6 +2440,7 @@
       }
 
       if (alive.length === 0) {
+        state.pendingNewTerminalContext = null;
         await spawnNewTerminal(currentProject.id, null, null, state.activeRepoId);
         return;
       }
@@ -2441,6 +2460,12 @@
     } catch (err) {
       showToast(err.message, 'error');
     }
+
+    // "+ New terminal" requested from the sidebar while opening this context.
+    if (state.pendingNewTerminalContext === currentProject.id) {
+      state.pendingNewTerminalContext = null;
+      await spawnNewTerminal(currentProject.id, null, null, state.activeRepoId);
+    }
   }
 
   async function spawnNewTerminal(projectId, customName = null, agentId = null, repoId = null) {
@@ -2451,6 +2476,7 @@
       };
       if (repoId) body.repoId = repoId;
       const res = await api('/api/terminals', { method: 'POST', body });
+      await loadSessions();
       await activateTerminalSession(res.session.sessionId, res.session.name);
     } catch (err) {
       showToast(`Failed to create terminal: ${err.message}`, 'error');
@@ -2477,39 +2503,10 @@
     setTimeout(() => fitTerminalItem(item), 30);
   }
 
+  // Terminals are listed in the sidebar tree, so switching/highlighting is
+  // handled there. Kept as a function so existing call sites stay valid.
   function renderTerminalTabs() {
-    const tabsContainer = document.getElementById('terminal-tabs-container');
-    if (!tabsContainer) return;
-
-    const existingNewBtn = document.getElementById('tab-new-terminal-btn');
-    const tabAnchor = document.getElementById('ws-paste-btn')
-      || document.getElementById('ws-copy-mode-btn') || existingNewBtn;
-
-    // Remove old tabs
-    tabsContainer.querySelectorAll('.terminal-tab').forEach((el) => el.remove());
-
-    for (const [id, item] of state.terminals.entries()) {
-      if (item.projectId !== state.activeProjectId) continue;
-      const tab = document.createElement('div');
-      tab.className = `terminal-tab ${id === state.activeTerminalId ? 'active' : ''}`;
-      tab.innerHTML = `
-        <span>${escapeHtml(item.name)}</span>
-        <button class="tab-close-btn" data-id="${id}">&times;</button>
-      `;
-
-      tab.onclick = (e) => {
-        if (!e.target.classList.contains('tab-close-btn')) {
-          activateTerminalSession(id, item.name);
-        }
-      };
-
-      tab.querySelector('.tab-close-btn').onclick = async (e) => {
-        e.stopPropagation();
-        await closeTerminalSession(id);
-      };
-
-      tabsContainer.insertBefore(tab, tabAnchor);
-    }
+    renderSidebarNav();
   }
 
   async function closeTerminalSession(sessionId) {
@@ -2517,10 +2514,11 @@
     if (item) {
       disposeTerminalItem(item);
       state.terminals.delete(sessionId);
-
-      // Tell backend to kill PTY / tmux
-      await api(`/api/terminals/${sessionId}`, { method: 'DELETE' }).catch(() => {});
     }
+
+    // Tell backend to kill PTY / tmux (even if this client never attached it).
+    await api(`/api/terminals/${sessionId}`, { method: 'DELETE' }).catch(() => {});
+    await loadSessions();
 
     const remaining = Array.from(state.terminals.entries())
       .filter(([, it]) => it.projectId === state.activeProjectId);
@@ -3447,7 +3445,6 @@
     }
   }
 
-  // 7. System View (host tools, updates and diagnostics)
   // Human-readable explanation of where the connect URL came from.
   function connectSourceNote(source) {
     return {
@@ -3459,206 +3456,23 @@
     }[source] || '';
   }
 
-  async function renderSystemView() {
-    const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Loading diagnostics...</div>';
-
-    try {
-      const [nodeRes, versionRes, connectRes] = await Promise.all([
-        api('/api/system/node'),
-        api('/api/system/version'),
-        api('/api/system/connect'),
-      ]);
-
-      const node = nodeRes.node;
-      const ver = versionRes.version || {};
-      const connect = connectRes.connect || {};
-
-      const connectNote = connectSourceNote(connect.source);
-
-      content.innerHTML = `
-        <div class="card" style="margin-bottom:24px;">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
-            <div>
-              <h3 style="font-size:16px;font-weight:600;">Updates</h3>
-              <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
-                Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
-                ${ver.commit ? `<span style="color:var(--text-muted);">(${escapeHtml(ver.commit)})</span>` : ''}
-                ${ver.repo ? `· <code>${escapeHtml(ver.repo)}</code>` : ''}
-                ${ver.branch ? `· branch <code>${escapeHtml(ver.branch)}</code>` : ''}
-              </p>
-              <div id="update-status" style="margin-top:8px;font-size:13px;color:var(--text-muted);">
-                ${ver.updaterAvailable
-                  ? 'The in-panel updater is enabled.'
-                  : 'In-panel updater not installed. Re-run the installer to enable one-click updates.'}
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;flex-shrink:0;">
-              <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
-              ${ver.updaterAvailable ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="margin-bottom:24px;">
-          <h3 style="font-size:16px;font-weight:600;">Connect from your phone</h3>
-          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
-            Scan this code with a phone to open the panel on another device.
-          </p>
-          <div class="connect-grid">
-            <div class="connect-qr">${connect.qrSvg || ''}</div>
-            <div style="min-width:0;flex:1;">
-              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Address</div>
-              <a href="${escapeHtml(connect.url || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(connect.url || '')}</a>
-              <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                <button class="btn btn-secondary btn-sm" id="copy-connect-url">Copy link</button>
-                ${connect.source === 'lan' || connect.source === 'localhost' ? '<button class="btn btn-secondary btn-sm" id="connect-help-btn">Remote access help</button>' : ''}
-              </div>
-              <div style="margin-top:10px;font-size:12px;color:var(--text-secondary);line-height:1.5;">${connectNote}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="margin-bottom:24px;">
-          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">Node Diagnostics</h3>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;font-size:13px;">
-            <div>
-              <span style="color:var(--text-muted);">Hostname:</span>
-              <strong style="display:block;margin-top:2px;">${escapeHtml(node.hostname)}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Operating System:</span>
-              <strong style="display:block;margin-top:2px;">${escapeHtml(node.platform)} ${escapeHtml(node.release)}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Node.js Runtime:</span>
-              <strong style="display:block;margin-top:2px;color:var(--accent-color);">${escapeHtml(node.nodeVersion)}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Uptime:</span>
-              <strong style="display:block;margin-top:2px;">${Math.round(node.uptimeSeconds / 3600)} hours</strong>
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-          <div>
-            <h3 style="font-size:15px;font-weight:600;">Activity &amp; Audit</h3>
-            <p style="color:var(--text-secondary);font-size:13px;margin-top:4px;">The event stream and security audit trail live here.</p>
-          </div>
-          <button class="btn btn-secondary btn-sm" id="system-open-activity">Open Activity &amp; Audit</button>
-        </div>
-      `;
-
-      document.getElementById('system-open-activity').onclick = () => {
-        navigateTo('activity');
-      };
-
-      const statusEl = document.getElementById('update-status');
-      const checkBtn = document.getElementById('check-updates-btn');
-      if (checkBtn) {
-        checkBtn.onclick = async () => {
-          checkBtn.disabled = true;
-          statusEl.style.color = 'var(--text-muted)';
-          statusEl.textContent = 'Checking GitHub for the latest release...';
-          try {
-            const res = await api('/api/system/updates?force=true');
-            const u = res.updates || {};
-            if (u.error) {
-              statusEl.style.color = 'var(--warning-color)';
-              statusEl.textContent = `Could not check for updates: ${u.error}`;
-            } else if (!u.latest) {
-              statusEl.style.color = 'var(--text-muted)';
-              statusEl.textContent = 'No published releases or tags found yet.';
-            } else if (u.updateAvailable) {
-              statusEl.style.color = 'var(--warning-color)';
-              const label = (u.latest && u.latest !== u.version)
-                ? `v${escapeHtml(u.latest)}`
-                : `commit ${escapeHtml(u.latestCommit || u.latest || '')}`;
-              statusEl.innerHTML = `Update available: <strong>${label}</strong>${u.releaseUrl ? ` — <a href="${escapeHtml(u.releaseUrl)}" target="_blank" rel="noopener" style="color:var(--accent-color);">view changes</a>` : ''}`;
-            } else {
-              statusEl.style.color = 'var(--success-color)';
-              statusEl.textContent = `You are running the latest version (v${u.version}).`;
-            }
-          } catch (err) {
-            statusEl.style.color = 'var(--danger-color)';
-            statusEl.textContent = `Error: ${err.message}`;
-          } finally {
-            checkBtn.disabled = false;
-          }
-        };
-      }
-
-      const applyBtn = document.getElementById('apply-update-btn');
-      if (applyBtn) {
-        applyBtn.onclick = async () => {
-          if (!confirm('Update Citadel now? The service will restart and brief downtime is expected.')) return;
-          applyBtn.disabled = true;
-          statusEl.style.color = 'var(--text-muted)';
-          statusEl.textContent = 'Starting update...';
-          try {
-            await api('/api/system/update', { method: 'POST' });
-            showToast('Update started. The service will restart shortly.', 'success');
-            statusEl.style.color = 'var(--warning-color)';
-            statusEl.textContent = 'Update in progress. Reload this page in ~20 seconds.';
-          } catch (err) {
-            applyBtn.disabled = false;
-            statusEl.style.color = 'var(--danger-color)';
-            statusEl.textContent = `Error: ${err.message}`;
-          }
-        };
-      }
-
-      const copyBtn = document.getElementById('copy-connect-url');
-      if (copyBtn) {
-        copyBtn.onclick = async () => {
-          try {
-            await navigator.clipboard.writeText(connect.url || '');
-            showToast('Link copied.', 'success');
-          } catch {
-            showToast('Could not copy the link.', 'error');
-          }
-        };
-      }
-
-      const connectHelpBtn = document.getElementById('connect-help-btn');
-      if (connectHelpBtn) {
-        connectHelpBtn.onclick = () => {
-          openModal({
-            title: 'Access from anywhere',
-            confirmText: 'Got it',
-            bodyHtml: `
-              <p style="font-size:13px;line-height:1.6;color:var(--text-secondary);">
-                This address only works on your local network. To reach the panel from any
-                network without a domain, use <strong>Tailscale</strong>:
-              </p>
-              <ol style="font-size:13px;line-height:1.7;color:var(--text-secondary);padding-left:18px;margin-top:10px;">
-                <li>Install Tailscale on this host and on your phone, signing in to the same account.</li>
-                <li>On the host run: <code>tailscale serve https / http://127.0.0.1:3000</code></li>
-                <li>Reload this page — the QR will point to your <code>*.ts.net</code> address and work anywhere.</li>
-              </ol>
-            `,
-          });
-        };
-      }
-    } catch (err) {
-      content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
-    }
-  }
-
-  // 7b. Settings View
+  // 7. Settings View (host tools: public URL, connection, modules, updates, diagnostics)
   async function renderSettingsView() {
     const content = document.getElementById('main-content');
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading settings...</div>';
 
     try {
-      const [settingsRes, connectRes] = await Promise.all([
+      const [settingsRes, connectRes, nodeRes, versionRes] = await Promise.all([
         api('/api/settings/connect'),
         api('/api/system/connect'),
+        api('/api/system/node'),
+        api('/api/system/version'),
       ]);
       await loadModules();
       const s = settingsRes.connect || {};
       const connect = connectRes.connect || {};
+      const node = nodeRes.node || {};
+      const ver = versionRes.version || {};
 
       content.innerHTML = `
         <div style="margin-bottom:20px;">
@@ -3700,6 +3514,7 @@
               <a href="${escapeHtml(connect.url || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(connect.url || '')}</a>
               <div style="margin-top:10px;">
                 <button class="btn btn-secondary btn-sm" id="settings-copy-url">Copy link</button>
+                <button class="btn btn-secondary btn-sm" id="connect-help-btn">Remote access help</button>
               </div>
             </div>
           </div>
@@ -3713,9 +3528,62 @@
           </p>
         </div>
         ${modulesSectionHtml()}
+
+        <div style="margin-top:28px;margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">System</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">
+            Host diagnostics and software updates for this server.
+          </p>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+            <div>
+              <h3 style="font-size:16px;font-weight:600;">Updates</h3>
+              <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
+                Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
+                ${ver.commit ? `<span style="color:var(--text-muted);">(${escapeHtml(ver.commit)})</span>` : ''}
+                ${ver.repo ? `· <code>${escapeHtml(ver.repo)}</code>` : ''}
+                ${ver.branch ? `· branch <code>${escapeHtml(ver.branch)}</code>` : ''}
+              </p>
+              <div id="update-status" style="margin-top:8px;font-size:13px;color:var(--text-muted);">
+                ${ver.updaterAvailable
+                  ? 'The in-panel updater is enabled.'
+                  : 'In-panel updater not installed. Re-run the installer to enable one-click updates.'}
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0;">
+              <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
+              ${ver.updaterAvailable ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">About this host</h3>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;font-size:13px;">
+            <div>
+              <span style="color:var(--text-muted);">Hostname:</span>
+              <strong style="display:block;margin-top:2px;">${escapeHtml(node.hostname || '')}</strong>
+            </div>
+            <div>
+              <span style="color:var(--text-muted);">Operating System:</span>
+              <strong style="display:block;margin-top:2px;">${escapeHtml(node.platform || '')} ${escapeHtml(node.release || '')}</strong>
+            </div>
+            <div>
+              <span style="color:var(--text-muted);">Node.js Runtime:</span>
+              <strong style="display:block;margin-top:2px;color:var(--accent-color);">${escapeHtml(node.nodeVersion || '')}</strong>
+            </div>
+            <div>
+              <span style="color:var(--text-muted);">Uptime:</span>
+              <strong style="display:block;margin-top:2px;">${node.uptimeSeconds ? `${Math.round(node.uptimeSeconds / 3600)} hours` : '—'}</strong>
+            </div>
+          </div>
+        </div>
       `;
 
       bindModuleToggles(renderSettingsView);
+      bindUpdatesCard();
 
       const input = document.getElementById('settings-public-url');
       const saveBtn = document.getElementById('settings-save-url');
@@ -3752,8 +3620,87 @@
           showToast('Could not copy the link.', 'error');
         }
       };
+
+      const connectHelpBtn = document.getElementById('connect-help-btn');
+      if (connectHelpBtn) {
+        connectHelpBtn.onclick = () => {
+          openModal({
+            title: 'Access from anywhere',
+            confirmText: 'Got it',
+            bodyHtml: `
+              <p style="font-size:13px;line-height:1.6;color:var(--text-secondary);">
+                This address only works on your local network. To reach the panel from any
+                network without a domain, use <strong>Tailscale</strong>:
+              </p>
+              <ol style="font-size:13px;line-height:1.7;color:var(--text-secondary);padding-left:18px;margin-top:10px;">
+                <li>Install Tailscale on this host and on your phone, signing in to the same account.</li>
+                <li>On the host run: <code>tailscale serve https / http://127.0.0.1:3000</code></li>
+                <li>Reload this page — the QR will point to your <code>*.ts.net</code> address and work anywhere.</li>
+              </ol>
+            `,
+          });
+        };
+      }
     } catch (err) {
       content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  // Update controls moved out of the former System view into Settings.
+  function bindUpdatesCard() {
+    const statusEl = document.getElementById('update-status');
+    const checkBtn = document.getElementById('check-updates-btn');
+    if (checkBtn) {
+      checkBtn.onclick = async () => {
+        checkBtn.disabled = true;
+        statusEl.style.color = 'var(--text-muted)';
+        statusEl.textContent = 'Checking GitHub for the latest release...';
+        try {
+          const res = await api('/api/system/updates?force=true');
+          const u = res.updates || {};
+          if (u.error) {
+            statusEl.style.color = 'var(--warning-color)';
+            statusEl.textContent = `Could not check for updates: ${u.error}`;
+          } else if (!u.latest) {
+            statusEl.style.color = 'var(--text-muted)';
+            statusEl.textContent = 'No published releases or tags found yet.';
+          } else if (u.updateAvailable) {
+            statusEl.style.color = 'var(--warning-color)';
+            const label = (u.latest && u.latest !== u.version)
+              ? `v${escapeHtml(u.latest)}`
+              : `commit ${escapeHtml(u.latestCommit || u.latest || '')}`;
+            statusEl.innerHTML = `Update available: <strong>${label}</strong>${u.releaseUrl ? ` — <a href="${escapeHtml(u.releaseUrl)}" target="_blank" rel="noopener" style="color:var(--accent-color);">view changes</a>` : ''}`;
+          } else {
+            statusEl.style.color = 'var(--success-color)';
+            statusEl.textContent = `You are running the latest version (v${u.version}).`;
+          }
+        } catch (err) {
+          statusEl.style.color = 'var(--danger-color)';
+          statusEl.textContent = `Error: ${err.message}`;
+        } finally {
+          checkBtn.disabled = false;
+        }
+      };
+    }
+
+    const applyBtn = document.getElementById('apply-update-btn');
+    if (applyBtn) {
+      applyBtn.onclick = async () => {
+        if (!confirm('Update Citadel now? The service will restart and brief downtime is expected.')) return;
+        applyBtn.disabled = true;
+        statusEl.style.color = 'var(--text-muted)';
+        statusEl.textContent = 'Starting update...';
+        try {
+          await api('/api/system/update', { method: 'POST' });
+          showToast('Update started. The service will restart shortly.', 'success');
+          statusEl.style.color = 'var(--warning-color)';
+          statusEl.textContent = 'Update in progress. Reload this page in ~20 seconds.';
+        } catch (err) {
+          applyBtn.disabled = false;
+          statusEl.style.color = 'var(--danger-color)';
+          statusEl.textContent = `Error: ${err.message}`;
+        }
+      };
     }
   }
 

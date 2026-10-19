@@ -20,7 +20,6 @@ const pluginLoader = require('./services/pluginLoader');
 const terminalManager = require('./services/terminalManager');
 const connectService = require('./services/connectService');
 const logService = require('./services/logService');
-const gitCredentialsService = require('./services/gitCredentialsService');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -162,7 +161,6 @@ async function buildServer(options = {}) {
 
 async function startServer() {
   const fastify = await buildServer();
-  let refreshTimer = null;
 
   // Mark sessions whose tmux/PTY did not survive the restart as closed so the
   // UI reattaches to live terminals instead of resurrecting dead ones.
@@ -186,7 +184,6 @@ async function startServer() {
       console.log(`\n[Citadel] Received ${signal}. Shutting down gracefully...`);
       try {
         logService.stopSampler();
-        if (refreshTimer) clearInterval(refreshTimer);
         await fastify.close();
         closeDatabase();
         console.log('[Citadel] Server and database closed cleanly.');
@@ -200,24 +197,6 @@ async function startServer() {
 
   try {
     await fastify.listen({ port: PORT, host: HOST });
-
-    // Keep OAuth provider tokens fresh in the background so `git push` inside
-    // terminals never sees an expired token even when the panel is idle.
-    if (refreshTimer) clearInterval(refreshTimer);
-    refreshTimer = setInterval(async () => {
-      try {
-        for (const provider of gitCredentialsService.listExpiringCredentials()) {
-          try {
-            await gitCredentialsService.refreshCredentialIfNeeded(provider, { force: true });
-          } catch {
-            // Best effort; the next tick or an interactive use will retry.
-          }
-        }
-      } catch {
-        // Never let the refresher take the process down.
-      }
-    }, 15 * 60 * 1000);
-    refreshTimer.unref();
 
     // Print the panel URL and a scannable QR code on every start so the panel
     // can be opened from a phone right after (re)starting the server.

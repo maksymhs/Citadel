@@ -29,7 +29,7 @@ function getProvider(provider) {
 function listCredentials() {
   const db = getDatabase();
   const rows = db
-    .prepare('SELECT provider, username, expires_at, scope, auth_method, created_at, updated_at FROM git_credentials ORDER BY provider')
+    .prepare('SELECT provider, username, created_at, updated_at FROM git_credentials ORDER BY provider')
     .all();
   return rows.map((r) => ({ ...r, label: PROVIDERS[r.provider]?.label || r.provider }));
 }
@@ -44,22 +44,12 @@ function listProviderStatus() {
       host: p.host,
       configured: Boolean(c),
       username: c?.username || null,
-      authMethod: c?.auth_method || null,
-      expires_at: c?.expires_at || null,
       updated_at: c?.updated_at || null,
     };
   });
 }
 
-function saveCredential({
-  provider,
-  token,
-  username = null,
-  refreshToken = null,
-  expiresAt = null,
-  scope = null,
-  authMethod = 'token',
-}) {
+function saveCredential({ provider, token, username = null }) {
   const p = getProvider(provider);
   if (!p) throw new Error(`Unsupported provider: ${provider}`);
   if (!token || typeof token !== 'string' || token.trim().length < 8) {
@@ -70,81 +60,23 @@ function saveCredential({
   const now = new Date().toISOString();
   const encrypted = encrypt(token.trim());
   const cleanUser = username ? String(username).trim() : null;
-  const cleanRefresh = refreshToken ? encrypt(String(refreshToken).trim()) : null;
-  const cleanExpires = expiresAt || null;
-  const cleanScope = scope ? String(scope).trim() : null;
-  const cleanMethod = authMethod === 'oauth' ? 'oauth' : 'token';
 
   const existing = db.prepare('SELECT provider FROM git_credentials WHERE provider = ?').get(p.id);
   if (existing) {
     db.prepare(
       `UPDATE git_credentials
-         SET username = ?, token_encrypted = ?, refresh_token_encrypted = ?,
-             expires_at = ?, scope = ?, auth_method = ?, updated_at = ?
+         SET username = ?, token_encrypted = ?, updated_at = ?
        WHERE provider = ?`
-    ).run(cleanUser, encrypted, cleanRefresh, cleanExpires, cleanScope, cleanMethod, now, p.id);
+    ).run(cleanUser, encrypted, now, p.id);
   } else {
     db.prepare(
       `INSERT INTO git_credentials
-         (provider, username, token_encrypted, refresh_token_encrypted, expires_at, scope, auth_method, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(p.id, cleanUser, encrypted, cleanRefresh, cleanExpires, cleanScope, cleanMethod, now, now);
+         (provider, username, token_encrypted, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(p.id, cleanUser, encrypted, now, now);
   }
 
-  return { provider: p.id, username: cleanUser, authMethod: cleanMethod, expires_at: cleanExpires, updated_at: now };
-}
-
-/**
- * Refresh an OAuth credential that is past (or within a minute of) its expiry,
- * if the provider issued a refresh token. Returns true when a new token was
- * stored. Failures bubble up so callers can decide whether to continue with the
- * existing token.
- */
-async function refreshCredentialIfNeeded(provider, { force = false } = {}) {
-  const db = getDatabase();
-  const row = db.prepare('SELECT * FROM git_credentials WHERE provider = ?').get(provider);
-  if (!row || !row.refresh_token_encrypted) return false;
-
-  const expiresAt = row.expires_at ? Date.parse(row.expires_at) : null;
-  if (!force && !expiresAt) return false;
-  if (!force && expiresAt && Date.now() < expiresAt - 60_000) return false;
-
-  let refreshToken = null;
-  try {
-    refreshToken = decrypt(row.refresh_token_encrypted);
-  } catch {
-    return false;
-  }
-  if (!refreshToken) return false;
-
-  const gitOAuthService = require('./gitOAuthService');
-  const tokens = await gitOAuthService.refreshAccessToken(provider, refreshToken);
-  saveCredential({
-    provider,
-    token: tokens.accessToken,
-    username: row.username,
-    refreshToken: tokens.refreshToken,
-    expiresAt: tokens.expiresIn ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString() : null,
-    scope: tokens.scope || row.scope,
-    authMethod: 'oauth',
-  });
-  return true;
-}
-
-/**
- * Providers holding an OAuth credential whose token expires soon (or already
- * has). Used by the background refresher so plain `git push` inside terminals
- * keeps working even when the panel is idle.
- */
-function listExpiringCredentials(windowMs = 30 * 60 * 1000) {
-  const db = getDatabase();
-  const rows = db
-    .prepare("SELECT provider, expires_at FROM git_credentials WHERE refresh_token_encrypted IS NOT NULL AND auth_method = 'oauth'")
-    .all();
-  const cutoff = Date.now() + windowMs;
-  return rows
-    .filter((r) => r.expires_at && Date.parse(r.expires_at) <= cutoff)
-    .map((r) => r.provider);
+  return { provider: p.id, username: cleanUser, updated_at: now };
 }
 
 function deleteCredential(provider) {
@@ -226,13 +158,6 @@ async function listRepos(provider) {
   const p = getProvider(provider);
   if (!p) throw new Error(`Unsupported provider: ${provider}`);
 
-  // Keep short-lived OAuth tokens usable without waiting for the background job.
-  try {
-    await refreshCredentialIfNeeded(p.id);
-  } catch {
-    // Refresh is best-effort; fall through and try with the current token.
-  }
-
   const cred = getDecryptedCredential(p.id);
   if (!cred) throw new Error(`No ${p.label} credentials configured.`);
 
@@ -270,8 +195,6 @@ module.exports = {
   saveCredential,
   deleteCredential,
   getDecryptedCredential,
-  refreshCredentialIfNeeded,
-  listExpiringCredentials,
   resolveAuthForUrl,
   listRepos,
 };

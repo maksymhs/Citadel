@@ -185,6 +185,131 @@ html.is-mobile-ui #app-container {
   color: var(--text-secondary);
 }
 
+/* Workspace tree: parent → context → terminal leaves. */
+.nav-chevron {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  border-radius: 4px;
+  transition: transform 0.15s ease;
+}
+
+.nav-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
+.nav-chevron.open {
+  transform: rotate(90deg);
+}
+
+.nav-chevron:hover {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.nav-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-subitem {
+  padding-left: 30px;
+  font-size: 12.5px;
+}
+
+.nav-subitem .nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.nav-subitem.active .nav-dot {
+  background-color: var(--accent-color);
+}
+
+.nav-sub-deep {
+  margin-left: 18px;
+  padding-left: 4px;
+  border-left: 1px solid var(--border-color);
+}
+
+.nav-leaf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 14px;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.nav-leaf:hover {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.nav-leaf.active {
+  background-color: var(--accent-bg);
+  color: var(--accent-color);
+  font-weight: 600;
+}
+
+.nav-leaf-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-leaf-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.nav-leaf:hover .nav-leaf-close {
+  opacity: 1;
+}
+
+.nav-leaf-close:hover {
+  color: var(--danger-color);
+  background-color: var(--danger-bg);
+}
+
+.nav-leaf-new {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ws-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
 .sidebar-footer {
   padding: 14px 16px;
   border-top: 1px solid var(--border-color);
