@@ -119,6 +119,14 @@ describe('Fleet HTTP routes (auth + forwarding)', () => {
       payload: { username: 'fleetadmin', password: 'SuperPassword123!' },
     });
     cookie = `session_id=${setup.cookies[0].value}`;
+    // Fleet is an optional module and disabled by default on new installs.
+    const enable = await app.inject({
+      method: 'POST',
+      url: '/api/modules/fleet/state',
+      headers: { cookie },
+      payload: { enabled: true },
+    });
+    assert.equal(enable.statusCode, 200);
   });
 
   after(async () => {

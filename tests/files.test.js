@@ -30,6 +30,14 @@ describe('Filesystem explorer', () => {
       payload: { username: 'fileadmin', password: 'SuperPassword123!' },
     });
     authCookie = setupRes.cookies.find((c) => c.name === 'session_id').value;
+    // The Files module is optional and disabled by default on new installs.
+    const enable = await app.inject({
+      method: 'POST',
+      url: '/api/modules/files/state',
+      cookies: { session_id: authCookie },
+      payload: { enabled: true },
+    });
+    assert.equal(enable.statusCode, 200);
   });
 
   after(async () => {

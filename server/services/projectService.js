@@ -17,7 +17,8 @@ class ProjectService {
     const projects = db.prepare(`
       SELECT p.*,
         (SELECT COUNT(*) FROM term_sessions s WHERE s.project_id = p.id AND s.status = 'active') AS active_sessions_count,
-        (SELECT COUNT(*) FROM deployments d WHERE d.project_id = p.id) AS deployments_count
+        (SELECT COUNT(*) FROM deployments d WHERE d.project_id = p.id) AS deployments_count,
+        (SELECT COUNT(*) FROM project_repos r WHERE r.project_id = p.id) AS repos_count
       FROM projects p
       ORDER BY p.updated_at DESC
     `).all();
@@ -77,6 +78,9 @@ class ProjectService {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(projectId, cleanName, cleanSlug, description || '', projectPath, now, now);
 
+    // Every project owns at least one repository (its working directory).
+    this._insertRepo({ projectId, name: cleanName, path: projectPath, isPrimary: true });
+
     return this.getProject(projectId);
   }
 
@@ -122,7 +126,133 @@ class ProjectService {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(projectId, cleanName, cleanSlug, description || '', canonicalPath, now, now);
 
+    this._insertRepo({ projectId, name: cleanName, path: canonicalPath, isPrimary: true });
+
     return this.getProject(projectId);
+  }
+
+  // --- Repositories ---------------------------------------------------------
+
+  _insertRepo({ projectId, name, path: repoPath, gitRemote = null, gitBranch = null, isPrimary = false }) {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    db.prepare(`
+      INSERT INTO project_repos
+        (id, project_id, name, path, git_remote, git_branch, is_primary, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, projectId, name, repoPath, gitRemote, gitBranch, isPrimary ? 1 : 0, now, now);
+    return id;
+  }
+
+  /**
+   * List the repositories owned by a project, with their on-disk status.
+   */
+  listRepos(projectId) {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT * FROM project_repos WHERE project_id = ?
+      ORDER BY is_primary DESC, name COLLATE NOCASE ASC
+    `).all(projectId);
+
+    return rows.map((r) => ({
+      ...r,
+      is_primary: Boolean(r.is_primary),
+      existsOnDisk: fs.existsSync(r.path),
+    }));
+  }
+
+  getRepo(projectId, repoId) {
+    const db = getDatabase();
+    const row = db.prepare('SELECT * FROM project_repos WHERE id = ? AND project_id = ?').get(repoId, projectId);
+    if (!row) return null;
+    return { ...row, is_primary: Boolean(row.is_primary), existsOnDisk: fs.existsSync(row.path) };
+  }
+
+  /**
+   * Associate an existing directory on disk as a repository of a project,
+   * without moving it. The directory must exist, be unique and (to avoid
+   * confusing state) must not already belong to another project.
+   */
+  addRepo({ projectId, targetPath, name = null, gitRemote = null, gitBranch = null }) {
+    const project = this.getProject(projectId);
+    if (!project) throw new Error('Project not found.');
+    if (!targetPath || typeof targetPath !== 'string') {
+      throw new Error('A repository directory path is required.');
+    }
+
+    const absolutePath = path.resolve(targetPath);
+    if (!fs.existsSync(absolutePath)) throw new Error(`Directory does not exist: ${absolutePath}`);
+    if (!fs.statSync(absolutePath).isDirectory()) throw new Error(`Not a directory: ${absolutePath}`);
+    const canonicalPath = fs.realpathSync(absolutePath);
+
+    const db = getDatabase();
+    const owned = db.prepare('SELECT project_id FROM project_repos WHERE path = ?').get(canonicalPath);
+    if (owned && owned.project_id !== projectId) {
+      throw new Error('This directory is already a repository of another project.');
+    }
+    if (owned) throw new Error('This directory is already part of this project.');
+
+    const cleanName = (name && String(name).trim()) || path.basename(canonicalPath);
+    const hasRepos = db.prepare('SELECT COUNT(*) AS c FROM project_repos WHERE project_id = ?').get(projectId).c > 0;
+    const id = this._insertRepo({
+      projectId, name: cleanName, path: canonicalPath, gitRemote, gitBranch, isPrimary: !hasRepos,
+    });
+    return this.getRepo(projectId, id);
+  }
+
+  /**
+   * Register a repository that was just cloned into a project directory.
+   */
+  registerClonedRepo({ projectId, targetPath, name, gitRemote = null, gitBranch = null }) {
+    return this.addRepo({ projectId, targetPath, name, gitRemote, gitBranch });
+  }
+
+  updateRepoGitMeta(projectId, repoId, { gitRemote, gitBranch }) {
+    const repo = this.getRepo(projectId, repoId);
+    if (!repo) throw new Error('Repository not found.');
+    const db = getDatabase();
+    const now = new Date().toISOString();
+    db.prepare(`
+      UPDATE project_repos SET git_remote = ?, git_branch = ?, updated_at = ? WHERE id = ?
+    `).run(
+      gitRemote !== undefined ? gitRemote : repo.git_remote,
+      gitBranch !== undefined ? gitBranch : repo.git_branch,
+      now,
+      repoId,
+    );
+    return this.getRepo(projectId, repoId);
+  }
+
+  /**
+   * Unlink a repository from a project. Files are preserved by default; when
+   * deletion is explicitly requested it is restricted to the managed projects
+   * tree.
+   */
+  removeRepo(projectId, repoId, { deleteFiles = false } = {}) {
+    const repo = this.getRepo(projectId, repoId);
+    if (!repo) throw new Error('Repository not found.');
+
+    const db = getDatabase();
+    db.prepare('DELETE FROM project_repos WHERE id = ?').run(repoId);
+
+    // Keep exactly one primary repository so listings stay predictable.
+    const remaining = db.prepare('SELECT id FROM project_repos WHERE project_id = ? ORDER BY is_primary DESC, name ASC').all(projectId);
+    if (remaining.length > 0) {
+      db.prepare('UPDATE project_repos SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE project_id = ?')
+        .run(remaining[0].id, projectId);
+    }
+
+    if (deleteFiles === true && repo.path !== (this.getProject(projectId) || {}).path) {
+      try {
+        const validated = validateSafePath(repo.path, PROJECTS_DIR);
+        if (fs.existsSync(validated)) fs.rmSync(validated, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(`[ProjectService] Refused to delete repo path ${repo.path}: ${err.message}`);
+      }
+    }
+
+    return { success: true, id: repoId, filesDeleted: deleteFiles };
   }
 
   /**

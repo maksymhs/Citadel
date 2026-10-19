@@ -2,11 +2,13 @@
  * AI CLI Agent HTTP Routes
  */
 const { requireAuth } = require('../security/auth');
+const { requireModule } = require('../modules/registry');
 const agentRegistry = require('../services/agentRegistry');
 const auditService = require('../services/auditService');
 
 async function agentRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
+  fastify.addHook('preHandler', requireModule('agents'));
 
   // List all available CLI agents with live installation status
   fastify.get('/api/agents', async () => {

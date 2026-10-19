@@ -23,7 +23,7 @@ async function terminalRoutes(fastify) {
 
   // Create new terminal session
   fastify.post('/api/terminals', async (request, reply) => {
-    const { projectId, name, cwd, cols, rows } = request.body || {};
+    const { projectId, repoId, name, cwd, cols, rows } = request.body || {};
 
     // Any ad-hoc cwd supplied by the client must stay inside the managed projects tree.
     // When projectId is given, the project's own (admin-approved) path is used instead.
@@ -39,6 +39,7 @@ async function terminalRoutes(fastify) {
     try {
       const session = terminalManager.createSession({
         projectId,
+        repoId: projectId ? repoId : null,
         name: name || 'Terminal',
         cwd: safeCwd,
         cols,
@@ -50,7 +51,7 @@ async function terminalRoutes(fastify) {
         action: 'terminal_session_created',
         targetType: 'terminal',
         targetId: session.sessionId,
-        details: { projectId, tmuxSession: session.tmuxSession },
+        details: { projectId, repoId: projectId ? repoId : null, tmuxSession: session.tmuxSession },
         ip: request.ip,
       });
 

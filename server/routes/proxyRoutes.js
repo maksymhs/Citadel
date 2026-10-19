@@ -2,11 +2,13 @@
  * Domain Publishing & Proxy Routes
  */
 const { requireAuth } = require('../security/auth');
+const { requireModule } = require('../modules/registry');
 const proxyProvider = require('../services/proxyProvider');
 const auditService = require('../services/auditService');
 
 async function proxyRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
+  fastify.addHook('preHandler', requireModule('proxy'));
 
   // Get proxy provider status and availability
   fastify.get('/api/proxy/status', async () => {

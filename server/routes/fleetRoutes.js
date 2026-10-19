@@ -6,6 +6,7 @@
  * leaves the server.
  */
 const { requireAuth } = require('../security/auth');
+const { requireModule } = require('../modules/registry');
 const fleetService = require('../services/fleetService');
 const auditService = require('../services/auditService');
 
@@ -35,6 +36,7 @@ async function forward(reply, hostId, apiPath, options, request, action, details
 
 async function fleetRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
+  fastify.addHook('preHandler', requireModule('fleet'));
 
   fastify.get('/api/fleet/hosts', async () => ({ hosts: fleetService.listHosts() }));
 

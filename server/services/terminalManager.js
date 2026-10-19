@@ -242,7 +242,7 @@ class TerminalManager {
   /**
    * Get or create a terminal session for a project
    */
-  createSession({ projectId = null, name = 'Terminal', cwd = null, agentId = null, cols = 80, rows = 24 }) {
+  createSession({ projectId = null, repoId = null, name = 'Terminal', cwd = null, agentId = null, cols = 80, rows = 24 }) {
     const db = getDatabase();
     let targetCwd = cwd || (projectId ? process.cwd() : os.homedir());
     let projectSlug = 'global';
@@ -252,6 +252,14 @@ class TerminalManager {
       if (project) {
         projectSlug = project.slug;
         targetCwd = project.path;
+      }
+      // A session may target one of the project's repositories so it starts in
+      // that repository's directory; it must belong to the requested project.
+      if (repoId) {
+        const repo = db.prepare('SELECT path FROM project_repos WHERE id = ? AND project_id = ?').get(repoId, projectId);
+        if (repo && fs.existsSync(repo.path)) {
+          targetCwd = repo.path;
+        }
       }
     }
 

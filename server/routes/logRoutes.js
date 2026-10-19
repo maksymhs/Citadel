@@ -3,6 +3,7 @@
  * samples. All routes require an authenticated session.
  */
 const { requireAuth } = require('../security/auth');
+const { requireModule, isEnabled } = require('../modules/registry');
 const logService = require('../services/logService');
 
 function stamp() {
@@ -16,7 +17,9 @@ async function logRoutes(fastify) {
     events: logService.listEvents(request.query || {}),
   }));
 
-  fastify.get('/api/logs/metrics', async (request) => ({
+  // Advanced resource metrics belong to the optional "metrics" module; the
+  // operational event trace above stays core (Activity).
+  fastify.get('/api/logs/metrics', { preHandler: requireModule('metrics') }, async (request) => ({
     metrics: logService.listMetrics(request.query || {}),
   }));
 
@@ -26,6 +29,13 @@ async function logRoutes(fastify) {
 
   fastify.get('/api/logs/export', async (request, reply) => {
     const { type = 'events', format = 'json' } = request.query || {};
+    if (type === 'metrics' && !isEnabled('metrics')) {
+      return reply.status(403).send({
+        error: 'Module disabled',
+        module: 'metrics',
+        message: 'The "Advanced Metrics" module is disabled. Enable it from Modules to export metrics.',
+      });
+    }
     const rows = type === 'metrics'
       ? logService.listMetrics({ ...request.query, limit: 5000 })
       : logService.listEvents({ ...request.query, limit: 2000 });

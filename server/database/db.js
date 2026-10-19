@@ -4,6 +4,7 @@
 const Database = require('better-sqlite3');
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const { DATABASE_PATH } = require('../config');
 
 let dbInstance = null;
@@ -59,6 +60,43 @@ const MIGRATIONS = [
       if (!columnExists(db, 'tasks', 'exec_started_at')) db.exec('ALTER TABLE tasks ADD COLUMN exec_started_at TEXT');
       if (!columnExists(db, 'tasks', 'exec_reported_at')) db.exec('ALTER TABLE tasks ADD COLUMN exec_reported_at TEXT');
       if (!columnExists(db, 'tasks', 'reconcile_state')) db.exec('ALTER TABLE tasks ADD COLUMN reconcile_state TEXT');
+    },
+  },
+  {
+    name: '005_project_repositories',
+    up: (db) => {
+      // A project may own several repositories. The table is additive: the
+      // legacy 1:1 fields on `projects` remain the authoritative metadata for
+      // back-compat, and each existing project is backfilled once as its
+      // primary repository so nothing is duplicated or invented.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_repos (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          path TEXT NOT NULL,
+          git_remote TEXT,
+          git_branch TEXT,
+          is_primary INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_project_repos_project_path ON project_repos(project_id, path);
+        CREATE INDEX IF NOT EXISTS idx_project_repos_project ON project_repos(project_id);
+      `);
+
+      const projects = db.prepare(`
+        SELECT id, name, path, git_remote, git_branch, created_at, updated_at FROM projects
+      `).all();
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO project_repos
+          (id, project_id, name, path, git_remote, git_branch, is_primary, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+      `);
+      for (const p of projects) {
+        insert.run(crypto.randomUUID(), p.id, p.name, p.path, p.git_remote || null, p.git_branch || null, p.created_at, p.updated_at);
+      }
     },
   },
 ];
@@ -153,6 +191,21 @@ function initDatabase(customPath = null) {
       created_at TEXT NOT NULL,
       last_active TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+
+    -- A project may contain one or several Git repositories. Row 0 is treated
+    -- as the primary repository, mirroring the legacy projects git fields.
+    CREATE TABLE IF NOT EXISTS project_repos (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      git_remote TEXT,
+      git_branch TEXT,
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS deployments (
@@ -276,10 +329,23 @@ function initDatabase(customPath = null) {
       active_terminals INTEGER,
       tasks_running INTEGER
     );
+  `);
 
+  // Migrations must run BEFORE the indexes below. Some indexes reference columns
+  // that only exist after an ALTER TABLE migration (e.g. tasks.reconcile_state).
+  // On an existing install the `tasks` table already exists, so CREATE TABLE IF
+  // NOT EXISTS is a no-op and the column is missing until the migration runs —
+  // building the index first previously aborted startup on upgraded databases.
+  runMigrations(db);
+
+  // Indexes are created last, once every column they reference is guaranteed to
+  // exist (fresh schema or migrated in-place).
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_project_repos_project_path ON project_repos(project_id, path);
+    CREATE INDEX IF NOT EXISTS idx_project_repos_project ON project_repos(project_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
     CREATE INDEX IF NOT EXISTS idx_tasks_lease ON tasks(lease_until);
     CREATE INDEX IF NOT EXISTS idx_tasks_reconcile ON tasks(status, reconcile_state);
@@ -290,7 +356,16 @@ function initDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_metrics_host ON metric_samples(host);
   `);
 
-  runMigrations(db);
+  // Seed module enablement exactly once. Existing installs (any user already
+  // present) keep every capability enabled; brand-new installs receive the
+  // minimal defaults. Lazy-required to avoid a load-time cycle with the
+  // registry, which itself reads the database.
+  try {
+    const registry = require('../modules/registry');
+    registry.seedDefaults(db);
+  } catch (err) {
+    console.warn(`[Database] Could not seed module defaults: ${err.message}`);
+  }
 
   dbInstance = db;
   return db;

@@ -11,8 +11,13 @@
     setupComplete: true,
     user: null,
     currentView: 'dashboard',
+    modules: [], // module descriptors from GET /api/modules
+    modulesById: {},
     projects: [],
     activeProjectId: null,
+    activeRepoId: null,
+    workspaceContext: null, // 'system' or a project id
+    activityTab: 'activity',
     agents: [],
     terminals: new Map(), // sessionId -> { session, term, fitAddon, ws, containerEl }
     activeTerminalId: null,
@@ -30,21 +35,47 @@
     logsMetrics: [],
     logsSummary: null,
     logsFilter: { level: '', category: '', limit: 200 },
+    auditLogs: [],
     docker: null,
     containers: [],
     dashboardTimer: null,
     dashboardPaused: false,
     tmuxAvailable: false,
     filesPath: '/',
+    dashboardWidgets: null, // ordered widget ids, persisted per browser
   };
 
   // Persist lightweight UI state so a page reload returns to the same view,
   // project and active terminal instead of always resetting to the dashboard.
   const UI_STATE_KEY = 'citadel.uiState';
-  const KNOWN_VIEWS = [
-    'dashboard', 'projects', 'repos', 'files', 'workspace', 'terminal',
-    'agents', 'deployments', 'docker', 'plugins', 'fleet', 'logs', 'system',
+
+  // The five primary views. Optional module views are added to the sidebar only
+  // when their module is enabled; System is a fixed host-tools entry.
+  const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace', 'activity', 'modules'];
+  const OPTIONAL_NAV = [
+    { module: 'agents', view: 'agents', label: 'AI Agents', icon: 'bolt-icon' },
+    { module: 'files', view: 'files', label: 'Files', icon: 'folder-icon' },
+    { module: 'proxy', view: 'proxy', label: 'Proxy & Domains', icon: 'globe-icon' },
+    { module: 'docker', view: 'docker', label: 'Docker', icon: 'docker-icon' },
+    { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
   ];
+  const KNOWN_VIEWS = [
+    ...PRIMARY_VIEWS, 'system',
+    ...OPTIONAL_NAV.map((n) => n.view),
+  ];
+  // Legacy view ids → current ids, so a persisted view still resolves.
+  const LEGACY_VIEW_MAP = {
+    repos: 'projects', terminal: 'workspace', logs: 'activity',
+    plugins: 'modules', deployments: 'proxy',
+  };
+
+  // Default dashboard widget order. Widgets whose module is disabled/unavailable
+  // are dropped at render time so the layout always stays valid.
+  const DEFAULT_DASHBOARD_WIDGETS = [
+    'memory', 'cpu', 'projects', 'host', 'fleet',
+    'integrations', 'quick-access', 'activity', 'processes',
+  ];
+  const WIDGET_REQUIRES = { fleet: 'fleet', activity: 'activity', metrics: 'metrics' };
 
   function loadUiState() {
     try {
@@ -60,6 +91,57 @@
     } catch {
       // Ignore storage errors (private mode / quota).
     }
+  }
+
+  // --- Module helpers -------------------------------------------------------
+  // Core modules are always on; optional ones follow the registry state.
+  const CORE_MODULE_IDS = ['dashboard', 'projects', 'workspace', 'activity', 'audit'];
+
+  function moduleEnabled(id) {
+    if (CORE_MODULE_IDS.includes(id)) return true;
+    const m = state.modulesById[id];
+    return m ? Boolean(m.enabled) : false;
+  }
+
+  function moduleState(id) {
+    return state.modulesById[id] || null;
+  }
+
+  async function loadModules() {
+    try {
+      const res = await api('/api/modules');
+      state.modules = res.modules || [];
+      state.modulesById = Object.fromEntries(state.modules.map((m) => [m.id, m]));
+    } catch (err) {
+      // Fail closed: no optional module is enabled if the registry is unreachable.
+      state.modules = [];
+      state.modulesById = {};
+      console.warn('Error loading modules:', err.message);
+    }
+  }
+
+  // Sidebar icons (reused across nav entries).
+  const NAV_ICONS = {
+    dashboard: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>',
+    projects: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>',
+    workspace: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>',
+    activity: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>',
+    modules: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>',
+    system: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>',
+    agents: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>',
+    files: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6"/>',
+    proxy: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
+    docker: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>',
+    fleet: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.003 0 003 15z"/>',
+  };
+
+  function navItemHtml(view, label, iconKey, badgeHtml = '') {
+    const icon = NAV_ICONS[iconKey] || NAV_ICONS.dashboard;
+    return `<a class="nav-item" data-view="${view}">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${icon}</svg>
+      <span>${escapeHtml(label)}</span>
+      ${badgeHtml}
+    </a>`;
   }
 
   // API helper with cookie credentials
@@ -314,64 +396,7 @@
             <span class="logo-text">Citadel</span>
             <span class="version-tag" id="app-version-tag"></span>
           </div>
-          <nav class="sidebar-nav">
-            <div class="nav-section-title">Development</div>
-            <a class="nav-item active" data-view="dashboard">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-              <span>Dashboard</span>
-            </a>
-            <a class="nav-item" data-view="projects">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-              <span>Projects</span>
-              <span class="nav-badge" id="nav-projects-count">0</span>
-            </a>
-            <a class="nav-item" data-view="repos">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-              <span>Repositories</span>
-            </a>
-            <a class="nav-item" data-view="files">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6"/></svg>
-              <span>Files</span>
-            </a>
-            <a class="nav-item" data-view="workspace">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-              <span>Workspace & PTY</span>
-            </a>
-            <a class="nav-item" data-view="terminal">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 9l3 3-3 3m5 0h5"/></svg>
-              <span>Terminal</span>
-            </a>
-            <a class="nav-item" data-view="agents">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-              <span>AI Agents</span>
-            </a>
-
-            <div class="nav-section-title">Infrastructure</div>
-            <a class="nav-item" data-view="deployments">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>
-              <span>Proxy & Domains</span>
-            </a>
-            <a class="nav-item" data-view="docker">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-              <span>Docker (Optional)</span>
-            </a>
-            <a class="nav-item" data-view="plugins">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>
-              <span>Plugins</span>
-            </a>
-            <a class="nav-item" data-view="fleet">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/></svg>
-              <span>Fleet</span>
-            </a>
-            <a class="nav-item" data-view="logs">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
-              <span>Logs & Metrics</span>
-            </a>
-            <a class="nav-item" data-view="system">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-              <span>System & Audit</span>
-            </a>
-          </nav>
+          <nav class="sidebar-nav" id="sidebar-nav"></nav>
           <div class="sidebar-footer">
             <div class="user-profile">
               <div class="user-avatar">${(state.user.username || 'A')[0].toUpperCase()}</div>
@@ -410,28 +435,8 @@
     };
     backdropEl.onclick = closeSidebar;
 
-    // Bind sidebar clicks
-    document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
-      // The nav items are anchors without href, so make them operable by
-      // keyboard/screen readers explicitly.
-      item.setAttribute('role', 'button');
-      item.setAttribute('tabindex', '0');
-      const activate = () => {
-        const view = item.getAttribute('data-view');
-        navigateTo(view);
-        closeSidebar();
-      };
-      item.onclick = (e) => {
-        e.preventDefault();
-        activate();
-      };
-      item.onkeydown = (e) => {
-        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-          e.preventDefault();
-          activate();
-        }
-      };
-    });
+    renderSidebarNav();
+    bindSidebarNav(closeSidebar);
 
     document.getElementById('logout-btn').onclick = async () => {
       await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
@@ -440,9 +445,9 @@
       renderLoginView();
     };
 
-    // Load initial data
+    // Load initial data (only fetch optional-module data when it is enabled).
     loadProjects();
-    loadAgents();
+    if (moduleEnabled('agents')) loadAgents();
     loadVersionTag();
 
     // Force the mobile (off-canvas) layout for any touch/narrow device, even
@@ -461,6 +466,62 @@
     window.addEventListener('orientationchange', applyDeviceMode);
   }
 
+  // Build the sidebar from the primary views plus any enabled optional module
+  // views. Core modules always show; disabled modules are hidden entirely
+  // (never rendered-but-hidden) so the navigation never advertises dead links.
+  function renderSidebarNav() {
+    const nav = document.getElementById('sidebar-nav');
+    if (!nav) return;
+    const optional = OPTIONAL_NAV.filter((n) => moduleEnabled(n.module));
+    const enabledOptionalCount = state.modules.filter((m) => !m.core && m.enabled).length;
+
+    let html = '<div class="nav-section-title">Platform</div>';
+    html += navItemHtml('dashboard', 'Dashboard', 'dashboard');
+    html += navItemHtml('projects', 'Projects', 'projects', '<span class="nav-badge" id="nav-projects-count">' + (state.projects.length || 0) + '</span>');
+    html += navItemHtml('workspace', 'Workspace', 'workspace');
+    html += navItemHtml('activity', 'Activity', 'activity');
+    html += navItemHtml('modules', 'Modules', 'modules', enabledOptionalCount ? `<span class="nav-badge">${enabledOptionalCount}</span>` : '');
+
+    if (optional.length) {
+      html += '<div class="nav-section-title">Modules</div>';
+      for (const item of optional) {
+        html += navItemHtml(item.view, item.label, item.icon);
+      }
+    }
+
+    html += '<div class="nav-section-title">Host</div>';
+    html += navItemHtml('system', 'System', 'system');
+    nav.innerHTML = html;
+
+    document.querySelectorAll('.sidebar-nav .nav-item').forEach((el) => {
+      if (el.getAttribute('data-view') === state.currentView) el.classList.add('active');
+    });
+  }
+
+  function bindSidebarNav(closeSidebar) {
+    document.querySelectorAll('.sidebar-nav .nav-item').forEach((item) => {
+      // The nav items are anchors without href, so make them operable by
+      // keyboard/screen readers explicitly.
+      item.setAttribute('role', 'button');
+      item.setAttribute('tabindex', '0');
+      const activate = () => {
+        const view = item.getAttribute('data-view');
+        navigateTo(view);
+        if (closeSidebar) closeSidebar();
+      };
+      item.onclick = (e) => {
+        e.preventDefault();
+        activate();
+      };
+      item.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          activate();
+        }
+      };
+    });
+  }
+
   async function loadVersionTag() {
     const tag = document.getElementById('app-version-tag');
     if (!tag) return;
@@ -475,17 +536,31 @@
     }
   }
 
-  function startApp() {
+  async function startApp() {
     const ui = loadUiState();
     state.activeProjectId = ui.activeProjectId || null;
     state.activeTerminalId = ui.activeTerminalId || null;
     state.activeSysTerminalId = ui.activeSysTerminalId || null;
+    state.workspaceContext = ui.workspaceContext || null;
+    state.activityTab = ui.activityTab === 'audit' ? 'audit' : 'activity';
+    state.dashboardWidgets = Array.isArray(ui.dashboardWidgets) ? ui.dashboardWidgets.slice() : null;
+    await loadModules();
     renderAppShell();
-    const view = KNOWN_VIEWS.includes(ui.currentView) ? ui.currentView : 'dashboard';
-    navigateTo(view);
+    navigateTo(resolveView(ui.currentView));
+  }
+
+  // Resolve a (possibly legacy/persisted) view id to a view that is currently
+  // reachable, falling back to the dashboard for disabled/unknown modules.
+  function resolveView(viewId) {
+    let view = LEGACY_VIEW_MAP[viewId] || viewId;
+    if (!KNOWN_VIEWS.includes(view)) view = 'dashboard';
+    const optional = OPTIONAL_NAV.find((n) => n.view === view);
+    if (optional && !moduleEnabled(optional.module)) view = 'dashboard';
+    return view;
   }
 
   function navigateTo(view) {
+    view = resolveView(view);
     state.currentView = view;
     saveUiState({ currentView: view });
     if (state.dashboardTimer) {
@@ -513,41 +588,35 @@
       titleEl.textContent = 'Dashboard';
       renderDashboardView();
     } else if (view === 'projects') {
-      titleEl.textContent = 'Project Management';
+      titleEl.textContent = 'Projects & Repositories';
       renderProjectsView();
-    } else if (view === 'repos') {
-      titleEl.textContent = 'Git Repositories';
-      renderReposView();
+    } else if (view === 'workspace') {
+      titleEl.textContent = 'Workspace';
+      renderWorkspaceView();
+    } else if (view === 'activity') {
+      titleEl.textContent = 'Activity & Audit';
+      renderActivityView();
+    } else if (view === 'modules') {
+      titleEl.textContent = 'Modules & Extensions';
+      renderModulesView();
+    } else if (view === 'system') {
+      titleEl.textContent = 'System';
+      renderSystemView();
+    } else if (view === 'agents') {
+      titleEl.textContent = 'AI Agents';
+      renderAgentsView();
     } else if (view === 'files') {
       titleEl.textContent = 'File Explorer';
       renderFilesView();
-    } else if (view === 'workspace') {
-      titleEl.textContent = 'Workspace & Persistent Terminals';
-      renderWorkspaceView();
-    } else if (view === 'terminal') {
-      titleEl.textContent = 'System Terminal';
-      renderTerminalView();
-    } else if (view === 'agents') {
-      titleEl.textContent = 'AI Agent Launcher';
-      renderAgentsView();
-    } else if (view === 'deployments') {
-      titleEl.textContent = 'Proxy & Domain Publishing';
+    } else if (view === 'proxy') {
+      titleEl.textContent = 'Proxy & Domains';
       renderDeploymentsView();
     } else if (view === 'docker') {
-      titleEl.textContent = 'Docker Monitor';
+      titleEl.textContent = 'Docker';
       renderDockerView();
-    } else if (view === 'plugins') {
-      titleEl.textContent = 'Extensions & Plugins';
-      renderPluginsView();
     } else if (view === 'fleet') {
       titleEl.textContent = 'Fleet — Remote Hosts';
       renderFleetView();
-    } else if (view === 'logs') {
-      titleEl.textContent = 'Logs & Metrics';
-      renderLogsView();
-    } else if (view === 'system') {
-      titleEl.textContent = 'System Diagnostics & Audit';
-      renderSystemView();
     }
   }
 
@@ -626,9 +695,252 @@
   }
 
   // 1. Dashboard View
+  // --- Dashboard widgets ----------------------------------------------------
+  // Each widget is independently ordered/toggled and persisted per browser.
+  // Widgets backed by an optional module disappear when that module is off.
+  const DASHBOARD_WIDGETS = {
+    memory: { title: 'Memory usage', size: 3, module: 'dashboard' },
+    cpu: { title: 'CPU load (1m)', size: 3, module: 'dashboard' },
+    projects: { title: 'Active projects', size: 3, module: 'projects' },
+    host: { title: 'VPS host', size: 3, module: 'dashboard' },
+    integrations: { title: 'Platform integrations', size: 6, module: 'dashboard' },
+    'quick-access': { title: 'Quick project access', size: 6, module: 'projects' },
+    activity: { title: 'Recent activity', size: 6, module: 'activity' },
+    fleet: { title: 'Fleet — remote hosts', size: 12, module: 'fleet' },
+    processes: { title: 'Top processes', size: 12, module: 'dashboard' },
+  };
+
+  // Visible widgets, in the user's saved order (or the defaults).
+  function dashboardWidgetOrder() {
+    const stored = Array.isArray(state.dashboardWidgets) && state.dashboardWidgets.length
+      ? state.dashboardWidgets
+      : DEFAULT_DASHBOARD_WIDGETS;
+    const seen = new Set();
+    const order = [];
+    for (const id of stored) {
+      if (!DASHBOARD_WIDGETS[id] || seen.has(id)) continue;
+      seen.add(id);
+      order.push(id);
+    }
+    return order;
+  }
+
+  // Full list for the customizer: visible widgets first, then the rest so a
+  // previously removed widget can be added back.
+  function dashboardEditorOrder() {
+    const visible = dashboardWidgetOrder();
+    const rest = Object.keys(DASHBOARD_WIDGETS).filter((id) => !visible.includes(id));
+    return [...visible, ...rest];
+  }
+
+  function widgetAvailable(id) {
+    const def = DASHBOARD_WIDGETS[id];
+    return def && moduleEnabled(def.module);
+  }
+
+  function dashboardWidgetHtml(id, ctx) {
+    const { node, metrics, integ } = ctx;
+    switch (id) {
+      case 'memory':
+        return card(`<div class="card-title">MEMORY USAGE</div>
+          <div class="card-value">${metrics.memoryUsedPercent}%</div>
+          <div class="card-subtitle">${Math.round(node.memory.usedBytes / 1024 / 1024)} MB of ${Math.round(node.memory.totalBytes / 1024 / 1024)} MB</div>`);
+      case 'cpu':
+        return card(`<div class="card-title">CPU LOAD (1m)</div>
+          <div class="card-value">${metrics.loadAvg.toFixed(2)}</div>
+          <div class="card-subtitle">${node.cpu.cores} cores (${escapeHtml(node.cpu.model.split('@')[0].trim())})</div>`);
+      case 'projects':
+        return card(`<div class="card-title">ACTIVE PROJECTS</div>
+          <div class="card-value">${state.projects.length}</div>
+          <div class="card-subtitle">${node.stats.activeSessions} persistent terminals</div>`);
+      case 'host':
+        return card(`<div class="card-title">VPS HOST</div>
+          <div class="card-value" style="font-size:18px;">${escapeHtml(node.hostname)}</div>
+          <div class="card-subtitle">${escapeHtml(node.platform)} ${escapeHtml(node.release)} (${node.arch})</div>`);
+      case 'integrations':
+        return card(`<h3 class="widget-heading">Platform integrations</h3>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            ${integrationRow('tmux (PTY persistence)', integ.tmux.description, integ.tmux.available, 'Available', 'No tmux')}
+            ${integrationRow('Git CLI', integ.git.description, integ.git.available, 'Active', 'Missing')}
+            ${integrationRow('Caddy proxy (HTTPS)', integ.caddy.helpMessage, integ.caddy.available, 'Connected', 'Optional / Inactive')}
+            ${integrationRow('Docker engine', integ.docker.available ? 'Socket connected' : 'Disabled / Optional', integ.docker.available, 'Active', 'Optional')}
+          </div>`);
+      case 'quick-access':
+        return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <h3 class="widget-heading">Quick project access</h3>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-primary btn-sm" id="dash-new-project-btn">+ New</button>
+              <button class="btn btn-secondary btn-sm" id="dash-clone-btn">Clone Git</button>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">
+            ${state.projects.length === 0 ? '<div style="color:var(--text-muted);font-size:13px;">No projects registered yet.</div>' : ''}
+            ${state.projects.slice(0, 5).map((p) => `
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-tertiary);border-radius:6px;">
+                <div>
+                  <strong style="color:var(--accent-color);">${escapeHtml(p.name)}</strong>
+                  <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${escapeHtml(p.path)}</div>
+                </div>
+                <button class="btn btn-secondary btn-sm open-workspace-btn" data-project-id="${p.id}">Open</button>
+              </div>`).join('')}
+          </div>`);
+      case 'activity':
+        return card(`<div style="display:flex;align-items:center;justify-content:space-between;">
+            <h3 class="widget-heading">Recent activity</h3>
+            <button class="btn btn-secondary btn-sm" id="dash-activity-link">View all</button>
+          </div>
+          <div id="dash-activity-body" style="margin-top:12px;color:var(--text-muted);font-size:13px;">Loading…</div>`);
+      case 'fleet':
+        return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
+            <div>
+              <h3 class="widget-heading">Fleet — remote hosts</h3>
+              <div id="dash-fleet-summary" style="font-size:12px;color:var(--text-muted);margin-top:2px;">Checking all devices…</div>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button class="btn btn-secondary btn-sm" id="dash-fleet-check-all">Check All</button>
+              <button class="btn btn-secondary btn-sm" id="dash-fleet-update-all">Update All</button>
+            </div>
+          </div>
+          <div id="dash-fleet-body"><div style="color:var(--text-muted);font-size:13px;">Loading…</div></div>`);
+      case 'processes':
+        return card(`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;">
+            <div>
+              <h3 class="widget-heading">Top processes</h3>
+              <div id="process-summary" style="font-size:12px;color:var(--text-muted);margin-top:2px;">Live CPU &amp; memory per process</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span class="badge badge-muted" id="process-updated">—</span>
+              <button class="btn btn-secondary btn-sm" id="process-pause-btn">Pause</button>
+            </div>
+          </div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead><tr>
+                <th style="width:90px;">PID</th><th>Process</th>
+                <th style="width:100px;">CPU</th><th style="width:120px;">Memory</th><th style="width:100px;">MEM %</th>
+              </tr></thead>
+              <tbody id="process-table-body">
+                <tr><td colspan="5" style="color:var(--text-muted);">Loading processes...</td></tr>
+              </tbody>
+            </table>
+          </div>`);
+      default:
+        return '';
+    }
+
+    function card(inner) {
+      return `<div class="card dash-widget" data-widget="${id}">${inner}</div>`;
+    }
+  }
+
+  function integrationRow(name, description, ok, okLabel, badLabel) {
+    return `<div style="display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <strong>${escapeHtml(name)}</strong>
+        <div style="font-size:12px;color:var(--text-secondary);">${escapeHtml(description)}</div>
+      </div>
+      <span class="badge ${ok ? 'badge-success' : 'badge-muted'}">${ok ? okLabel : badLabel}</span>
+    </div>`;
+  }
+
+  function showDashboardCustomizer() {
+    let working = dashboardEditorOrder();
+    const visible = new Set(dashboardWidgetOrder());
+
+    const renderList = () => working.map((id, i) => {
+      const def = DASHBOARD_WIDGETS[id];
+      const available = moduleEnabled(def.module);
+      const checked = available && visible.has(id);
+      return `<div class="widget-row" data-widget="${id}">
+        <label class="widget-row-label">
+          <input type="checkbox" data-widget-toggle="${id}" ${checked ? 'checked' : ''} ${available ? '' : 'disabled'}>
+          <span>${escapeHtml(def.title)}${available ? '' : ` <em style="color:var(--text-muted);">(enable ${escapeHtml(def.module)} module)</em>`}</span>
+        </label>
+        <div class="widget-row-actions">
+          <button class="btn btn-secondary btn-sm" data-widget-up="${id}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">&uarr;</button>
+          <button class="btn btn-secondary btn-sm" data-widget-down="${id}" ${i === working.length - 1 ? 'disabled' : ''} aria-label="Move down">&darr;</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    openModal({
+      title: 'Customize dashboard',
+      bodyHtml: `<p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">Choose which widgets appear and in what order. This preference is stored in your browser.</p>
+        <div id="widget-list">${renderList()}</div>
+        <div style="margin-top:14px;">
+          <button class="btn btn-secondary btn-sm" id="widget-reset">Reset to default</button>
+        </div>`,
+      confirmText: 'Save layout',
+      onConfirm: async () => {
+        state.dashboardWidgets = working.filter((id) => visible.has(id) && moduleEnabled(DASHBOARD_WIDGETS[id].module));
+        saveUiState({ dashboardWidgets: state.dashboardWidgets });
+        renderDashboardView();
+        showToast('Dashboard layout saved.', 'success');
+      },
+    });
+
+    const bindList = () => {
+      document.querySelectorAll('[data-widget-toggle]').forEach((box) => {
+        box.onchange = () => {
+          const id = box.getAttribute('data-widget-toggle');
+          if (box.checked) visible.add(id); else visible.delete(id);
+        };
+      });
+      document.querySelectorAll('[data-widget-up]').forEach((btn) => {
+        btn.onclick = () => {
+          const id = btn.getAttribute('data-widget-up');
+          const idx = working.indexOf(id);
+          if (idx > 0) { [working[idx - 1], working[idx]] = [working[idx], working[idx - 1]]; refresh(); }
+        };
+      });
+      document.querySelectorAll('[data-widget-down]').forEach((btn) => {
+        btn.onclick = () => {
+          const id = btn.getAttribute('data-widget-down');
+          const idx = working.indexOf(id);
+          if (idx < working.length - 1) { [working[idx + 1], working[idx]] = [working[idx], working[idx + 1]]; refresh(); }
+        };
+      });
+      const reset = document.getElementById('widget-reset');
+      if (reset) reset.onclick = () => {
+        working = [...DEFAULT_DASHBOARD_WIDGETS, ...Object.keys(DASHBOARD_WIDGETS).filter((id) => !DEFAULT_DASHBOARD_WIDGETS.includes(id))];
+        visible.clear();
+        DEFAULT_DASHBOARD_WIDGETS.forEach((id) => visible.add(id));
+        refresh();
+      };
+    };
+    const refresh = () => {
+      const list = document.getElementById('widget-list');
+      if (list) list.innerHTML = renderList();
+      bindList();
+    };
+    bindList();
+  }
+
+  async function loadDashboardActivity() {
+    const body = document.getElementById('dash-activity-body');
+    if (!body) return;
+    try {
+      const res = await api('/api/logs?limit=6');
+      const events = res.events || [];
+      body.innerHTML = events.length === 0
+        ? '<div style="color:var(--text-muted);">No recent events.</div>'
+        : events.slice(0, 6).map((e) => `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-color);">
+              <span style="font-size:12px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(e.message || e.action || e.type || 'event')}</span>
+              <span class="badge badge-muted">${escapeHtml(e.level || e.category || '')}</span>
+            </div>`).join('');
+    } catch {
+      body.innerHTML = '<div style="color:var(--text-muted);">Activity unavailable.</div>';
+    }
+  }
+
   async function renderDashboardView() {
     const content = document.getElementById('main-content');
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading system metrics...</div>';
+
+    const actions = document.getElementById('top-bar-actions');
+    actions.innerHTML = `<button class="btn btn-secondary btn-sm" id="dash-customize-btn">Personalizar</button>`;
+    document.getElementById('dash-customize-btn').onclick = showDashboardCustomizer;
 
     try {
       const [nodeRes, metricsRes, integRes] = await Promise.all([
@@ -640,145 +952,23 @@
       const node = nodeRes.node;
       const metrics = metricsRes.metrics;
       const integ = integRes.integrations;
+      const ctx = { node, metrics, integ };
 
-      content.innerHTML = `
-        <div class="grid-cards">
-          <div class="card">
-            <div class="card-title">MEMORY USAGE</div>
-            <div class="card-value">${metrics.memoryUsedPercent}%</div>
-            <div class="card-subtitle">${Math.round(node.memory.usedBytes / 1024 / 1024)} MB of ${Math.round(node.memory.totalBytes / 1024 / 1024)} MB</div>
-          </div>
-          <div class="card">
-            <div class="card-title">CPU LOAD (1m)</div>
-            <div class="card-value">${metrics.loadAvg.toFixed(2)}</div>
-            <div class="card-subtitle">${node.cpu.cores} cores (${node.cpu.model.split('@')[0].trim()})</div>
-          </div>
-          <div class="card">
-            <div class="card-title">ACTIVE PROJECTS</div>
-            <div class="card-value">${state.projects.length}</div>
-            <div class="card-subtitle">${node.stats.activeSessions} persistent terminals</div>
-          </div>
-          <div class="card">
-            <div class="card-title">VPS HOST</div>
-            <div class="card-value" style="font-size:18px;">${escapeHtml(node.hostname)}</div>
-            <div class="card-subtitle">${escapeHtml(node.platform)} ${escapeHtml(node.release)} (${node.arch})</div>
-          </div>
-        </div>
-
-        <div class="dash-grid-2">
-          <!-- Integrations status -->
-          <div class="card">
-            <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">Platform Integrations</h3>
-            <div style="display:flex;flex-direction:column;gap:12px;">
-              <div style="display:flex;align-items:center;justify-content:space-between;">
-                <div>
-                  <strong>tmux (PTY Persistence)</strong>
-                  <div style="font-size:12px;color:var(--text-secondary);">${integ.tmux.description}</div>
-                </div>
-                <span class="badge ${integ.tmux.available ? 'badge-success' : 'badge-warning'}">
-                  ${integ.tmux.available ? 'Available' : 'No tmux'}
-                </span>
-              </div>
-              <div style="display:flex;align-items:center;justify-content:space-between;">
-                <div>
-                  <strong>Git CLI</strong>
-                  <div style="font-size:12px;color:var(--text-secondary);">${integ.git.description}</div>
-                </div>
-                <span class="badge ${integ.git.available ? 'badge-success' : 'badge-danger'}">
-                  ${integ.git.available ? 'Active' : 'Missing'}
-                </span>
-              </div>
-              <div style="display:flex;align-items:center;justify-content:space-between;">
-                <div>
-                  <strong>Caddy Proxy (HTTPS)</strong>
-                  <div style="font-size:12px;color:var(--text-secondary);">${integ.caddy.helpMessage}</div>
-                </div>
-                <span class="badge ${integ.caddy.available ? 'badge-success' : 'badge-muted'}">
-                  ${integ.caddy.available ? 'Connected' : 'Optional / Inactive'}
-                </span>
-              </div>
-              <div style="display:flex;align-items:center;justify-content:space-between;">
-                <div>
-                  <strong>Docker Engine</strong>
-                  <div style="font-size:12px;color:var(--text-secondary);">${integ.docker.available ? 'Socket connected' : 'Disabled / Optional'}</div>
-                </div>
-                <span class="badge ${integ.docker.available ? 'badge-success' : 'badge-muted'}">
-                  ${integ.docker.available ? 'Active' : 'Optional'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Quick Actions & Projects -->
-          <div class="card">
-            <h3 style="font-size:14px;font-weight:600;margin-bottom:14px;">Quick Project Access</h3>
-            <div style="display:flex;gap:10px;margin-bottom:16px;">
-              <button class="btn btn-primary btn-sm" id="dash-new-project-btn">+ New Project</button>
-              <button class="btn btn-secondary btn-sm" id="dash-clone-btn">Clone Git</button>
-            </div>
-            <div style="display:flex;flex-direction:column;gap:8px;">
-              ${state.projects.length === 0 ? '<div style="color:var(--text-muted);font-size:13px;">No projects registered yet.</div>' : ''}
-              ${state.projects.slice(0, 5).map((p) => `
-                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-tertiary);border-radius:6px;">
-                  <div>
-                    <strong style="color:var(--accent-color);">${escapeHtml(p.name)}</strong>
-                    <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${escapeHtml(p.path)}</div>
-                  </div>
-                  <button class="btn btn-secondary btn-sm open-workspace-btn" data-project-id="${p.id}">Open Terminal</button>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        </div>
-
-        <div class="card" id="dash-fleet-card" style="margin-bottom:24px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
-            <div>
-              <h3 style="font-size:14px;font-weight:600;">Fleet — Remote Hosts</h3>
-              <div id="dash-fleet-summary" style="font-size:12px;color:var(--text-muted);margin-top:2px;">Checking all devices…</div>
-            </div>
-            <div style="display:flex;gap:10px;">
-              <button class="btn btn-secondary btn-sm" id="dash-fleet-check-all">Check All</button>
-              <button class="btn btn-secondary btn-sm" id="dash-fleet-update-all">Update All</button>
-            </div>
-          </div>
-          <div id="dash-fleet-body"><div style="color:var(--text-muted);font-size:13px;">Loading…</div></div>
-        </div>
-
-        <div class="card" style="margin-bottom:24px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;">
-            <div>
-              <h3 style="font-size:14px;font-weight:600;">Top Processes</h3>
-              <div id="process-summary" style="font-size:12px;color:var(--text-muted);margin-top:2px;">Live CPU &amp; memory per process</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span class="badge badge-muted" id="process-updated">—</span>
-              <button class="btn btn-secondary btn-sm" id="process-pause-btn">Pause</button>
-            </div>
-          </div>
-          <div class="table-container">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th style="width:90px;">PID</th>
-                  <th>Process</th>
-                  <th style="width:100px;">CPU</th>
-                  <th style="width:120px;">Memory</th>
-                  <th style="width:100px;">MEM %</th>
-                </tr>
-              </thead>
-              <tbody id="process-table-body">
-                <tr><td colspan="5" style="color:var(--text-muted);">Loading processes...</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `;
+      const widgets = dashboardWidgetOrder().filter(widgetAvailable);
+      content.innerHTML = `<div class="dash-widgets">${widgets.map((id) => dashboardWidgetHtml(id, ctx)).join('')}</div>`;
 
       document.getElementById('dash-new-project-btn')?.addEventListener('click', showCreateProjectModal);
       document.getElementById('dash-clone-btn')?.addEventListener('click', showCloneProjectModal);
+      document.getElementById('dash-activity-link')?.addEventListener('click', () => navigateTo('activity'));
       document.getElementById('dash-fleet-check-all')?.addEventListener('click', () => refreshDashboardFleet(true));
       document.getElementById('dash-fleet-update-all')?.addEventListener('click', fleetUpdateAll);
+      document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
+        btn.onclick = () => {
+          state.workspaceContext = btn.getAttribute('data-project-id');
+          saveUiState({ workspaceContext: state.workspaceContext });
+          navigateTo('workspace');
+        };
+      });
 
       const pauseBtn = document.getElementById('process-pause-btn');
       pauseBtn?.addEventListener('click', () => {
@@ -786,20 +976,15 @@
         pauseBtn.textContent = state.dashboardPaused ? 'Resume' : 'Pause';
       });
 
-      await refreshProcessTable();
-      refreshDashboardFleet();
+      if (widgets.includes('processes')) await refreshProcessTable();
+      if (widgets.includes('fleet')) refreshDashboardFleet();
+      if (widgets.includes('activity')) loadDashboardActivity();
+
       if (state.dashboardTimer) clearInterval(state.dashboardTimer);
       state.dashboardTimer = setInterval(() => {
         if (state.dashboardPaused || document.hidden) return;
-        refreshProcessTable();
+        if (widgets.includes('processes')) refreshProcessTable();
       }, 5000);
-
-      document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
-        btn.onclick = () => {
-          state.activeProjectId = btn.getAttribute('data-project-id');
-          navigateTo('workspace');
-        };
-      });
     } catch (err) {
       content.innerHTML = `<div style="color:var(--danger-color);">Error loading dashboard: ${escapeHtml(err.message)}</div>`;
     }
@@ -809,6 +994,7 @@
   async function renderProjectsView() {
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
+      <button class="btn btn-secondary btn-sm" id="proj-creds-btn">Git Credentials</button>
       <button class="btn btn-secondary btn-sm" id="proj-import-btn">Import Folder</button>
       <button class="btn btn-secondary btn-sm" id="proj-clone-btn">Clone Git</button>
       <button class="btn btn-primary btn-sm" id="proj-create-btn">+ New Project</button>
@@ -817,6 +1003,7 @@
     document.getElementById('proj-create-btn').onclick = showCreateProjectModal;
     document.getElementById('proj-import-btn').onclick = showImportProjectModal;
     document.getElementById('proj-clone-btn').onclick = showCloneProjectModal;
+    document.getElementById('proj-creds-btn').onclick = () => renderReposView();
 
     const content = document.getElementById('main-content');
     await loadProjects();
@@ -846,7 +1033,7 @@
             <tr>
               <th>Name</th>
               <th>Directory on VPS</th>
-              <th>Git / Branch</th>
+              <th>Repositories</th>
               <th>PTY Sessions</th>
               <th>Actions</th>
             </tr>
@@ -862,11 +1049,10 @@
                   ${escapeHtml(p.path)}
                   ${p.existsOnDisk ? '' : '<span class="badge badge-danger" style="margin-left:6px;">Missing</span>'}
                 </td>
-                <td data-label="Git / Branch">
-                  ${p.git_remote ? `
-                    <div style="font-size:12px;color:var(--accent-color);">${escapeHtml(p.git_branch || 'main')}</div>
-                    <div style="font-size:10px;color:var(--text-muted);">${escapeHtml(p.git_remote)}</div>
-                  ` : '<span style="color:var(--text-muted);">No Git</span>'}
+                <td data-label="Repositories">
+                  <button class="btn btn-secondary btn-sm toggle-repos-btn" data-project-id="${p.id}">
+                    ${p.repos_count || 0} repo${(p.repos_count || 0) === 1 ? '' : 's'} &#9662;
+                  </button>
                 </td>
                 <td data-label="PTY Sessions">
                   <span class="badge ${p.active_sessions_count > 0 ? 'badge-success' : 'badge-muted'}">
@@ -876,7 +1062,15 @@
                 <td data-label="Actions">
                   <div style="display:flex;gap:6px;flex-wrap:wrap;">
                     <button class="btn btn-primary btn-sm open-workspace-btn" data-project-id="${p.id}">Open Workspace</button>
+                    <button class="btn btn-secondary btn-sm assoc-repo-btn" data-project-id="${p.id}" data-project-name="${escapeHtml(p.name)}">+ Repository</button>
                     <button class="btn btn-danger btn-sm delete-project-btn" data-project-id="${p.id}" data-project-name="${escapeHtml(p.name)}">Delete</button>
+                  </div>
+                </td>
+              </tr>
+              <tr class="repo-detail-row" id="repos-row-${p.id}" hidden>
+                <td colspan="5" style="background:var(--bg-tertiary);">
+                  <div class="repo-detail-body" data-project-id="${p.id}">
+                    <div style="color:var(--text-muted);font-size:13px;">Loading repositories...</div>
                   </div>
                 </td>
               </tr>
@@ -888,8 +1082,27 @@
 
     document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
       btn.onclick = () => {
-        state.activeProjectId = btn.getAttribute('data-project-id');
+        state.workspaceContext = btn.getAttribute('data-project-id');
+        state.activeRepoId = null;
+        saveUiState({ workspaceContext: state.workspaceContext, activeRepoId: null });
         navigateTo('workspace');
+      };
+    });
+
+    document.querySelectorAll('.toggle-repos-btn').forEach((btn) => {
+      btn.onclick = () => {
+        const row = document.getElementById(`repos-row-${btn.getAttribute('data-project-id')}`);
+        if (!row) return;
+        row.hidden = !row.hidden;
+        if (!row.hidden) loadProjectRepos(btn.getAttribute('data-project-id'));
+      };
+    });
+
+    document.querySelectorAll('.assoc-repo-btn').forEach((btn) => {
+      btn.onclick = () => {
+        const id = btn.getAttribute('data-project-id');
+        const project = state.projects.find((p) => p.id === id);
+        showAssociateRepoModal(project);
       };
     });
 
@@ -923,6 +1136,180 @@
         });
       };
     });
+  }
+
+  // Render the expandable repository list for a project row.
+  async function loadProjectRepos(projectId) {
+    const body = document.querySelector(`.repo-detail-body[data-project-id="${projectId}"]`);
+    if (!body) return;
+    body.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Loading repositories...</div>';
+    try {
+      const res = await api(`/api/projects/${projectId}/repos`);
+      const repos = res.repos || [];
+      body.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;">
+          <strong style="font-size:13px;">Repositories</strong>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm clone-repo-btn" data-project-id="${projectId}">Clone Repository</button>
+            <button class="btn btn-secondary btn-sm assoc-repo-btn" data-project-id="${projectId}">Associate Folder</button>
+          </div>
+        </div>
+        ${repos.length === 0 ? '<div style="color:var(--text-muted);font-size:13px;">No repositories yet.</div>' : `
+          <div class="repo-list">
+            ${repos.map((r) => `
+              <div class="repo-item">
+                <div class="repo-item-main">
+                  <div>
+                    <strong style="font-size:13px;">${escapeHtml(r.name)}</strong>
+                    ${r.is_primary ? '<span class="badge badge-muted" style="margin-left:6px;">primary</span>' : ''}
+                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">${escapeHtml(r.path)}</div>
+                  </div>
+                  <div style="font-size:12px;color:var(--text-secondary);">
+                    ${r.git_branch ? `<span class="badge badge-muted">${escapeHtml(r.git_branch)}</span>` : '<span style="color:var(--text-muted);">no git</span>'}
+                  </div>
+                </div>
+                <div class="repo-item-actions">
+                  <button class="btn btn-secondary btn-sm open-repo-workspace-btn" data-project-id="${projectId}" data-repo-id="${r.id}">Open</button>
+                  <button class="btn btn-secondary btn-sm repo-status-btn" data-project-id="${projectId}" data-repo-id="${r.id}" data-repo-name="${escapeHtml(r.name)}">Status</button>
+                  <button class="btn btn-danger btn-sm repo-remove-btn" data-project-id="${projectId}" data-repo-id="${r.id}" data-repo-name="${escapeHtml(r.name)}">Remove</button>
+                </div>
+              </div>`).join('')}
+          </div>`}
+      `;
+      bindRepoRowActions(projectId);
+    } catch (err) {
+      body.innerHTML = `<div style="color:var(--danger-color);font-size:13px;">Failed to load repositories: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function bindRepoRowActions(projectId) {
+    const scope = document.querySelector(`.repo-detail-body[data-project-id="${projectId}"]`);
+    if (!scope) return;
+    const project = state.projects.find((p) => p.id === projectId);
+    scope.querySelectorAll('.assoc-repo-btn').forEach((btn) => { btn.onclick = () => showAssociateRepoModal(project); });
+    scope.querySelectorAll('.clone-repo-btn').forEach((btn) => { btn.onclick = () => showCloneRepoModal(project); });
+    scope.querySelectorAll('.open-repo-workspace-btn').forEach((btn) => {
+      btn.onclick = () => {
+        state.workspaceContext = btn.getAttribute('data-project-id');
+        state.activeRepoId = btn.getAttribute('data-repo-id');
+        saveUiState({ workspaceContext: state.workspaceContext, activeRepoId: state.activeRepoId });
+        navigateTo('workspace');
+      };
+    });
+    scope.querySelectorAll('.repo-status-btn').forEach((btn) => {
+      btn.onclick = () => showRepoStatusModal(
+        btn.getAttribute('data-project-id'),
+        btn.getAttribute('data-repo-id'),
+        btn.getAttribute('data-repo-name'),
+      );
+    });
+    scope.querySelectorAll('.repo-remove-btn').forEach((btn) => {
+      btn.onclick = () => {
+        const projectId = btn.getAttribute('data-project-id');
+        const repoId = btn.getAttribute('data-repo-id');
+        const repoName = btn.getAttribute('data-repo-name');
+        openModal({
+          title: `Remove repository "${repoName}"`,
+          bodyHtml: `
+            <p style="color:var(--text-secondary);margin-bottom:12px;">Unlink this repository from the project.</p>
+            <div style="background:var(--bg-tertiary);padding:12px;border-radius:6px;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <input type="checkbox" id="repo-del-files-check">
+                <span style="color:var(--danger-color);font-weight:600;">Also delete the files from disk</span>
+              </label>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Files are preserved by default.</div>
+            </div>`,
+          confirmText: 'Remove',
+          onConfirm: async () => {
+            const delFiles = document.getElementById('repo-del-files-check')?.checked || false;
+            await api(`/api/projects/${projectId}/repos/${repoId}?deleteFiles=${delFiles}`, { method: 'DELETE' });
+            showToast('Repository removed.', 'success');
+            await loadProjects();
+            renderProjectsView();
+          },
+        });
+      };
+    });
+  }
+
+  function showAssociateRepoModal(project) {
+    openModal({
+      title: `Associate folder to "${project ? project.name : 'project'}"`,
+      bodyHtml: `
+        <div class="form-group">
+          <label class="form-label">Absolute path on server</label>
+          <input type="text" class="form-input" id="m-repo-path" placeholder="/srv/apps/other-repo" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Display name (optional)</label>
+          <input type="text" class="form-input" id="m-repo-name" placeholder="other-repo">
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);">The folder stays exactly where it is; nothing is moved or copied.</p>`,
+      confirmText: 'Associate',
+      onConfirm: async () => {
+        const targetPath = document.getElementById('m-repo-path').value;
+        const name = document.getElementById('m-repo-name').value;
+        await api(`/api/projects/${project.id}/repos`, { method: 'POST', body: { targetPath, name } });
+        showToast('Folder associated.', 'success');
+        await loadProjects();
+        await loadProjectRepos(project.id);
+      },
+    });
+  }
+
+  function showCloneRepoModal(project) {
+    openModal({
+      title: `Clone repository into "${project ? project.name : 'project'}"`,
+      bodyHtml: `
+        <div class="form-group">
+          <label class="form-label">Git URL</label>
+          <input type="text" class="form-input" id="m-repo-clone-url" placeholder="https://github.com/user/repo.git" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Folder name (optional)</label>
+          <input type="text" class="form-input" id="m-repo-clone-name" placeholder="repo">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Branch (optional)</label>
+          <input type="text" class="form-input" id="m-repo-clone-branch" placeholder="main">
+        </div>`,
+      confirmText: 'Clone',
+      onConfirm: async () => {
+        const repoUrl = document.getElementById('m-repo-clone-url').value;
+        const name = document.getElementById('m-repo-clone-name').value;
+        const branch = document.getElementById('m-repo-clone-branch').value;
+        showToast('Cloning repository on the server...', 'info');
+        await api(`/api/projects/${project.id}/repos/clone`, { method: 'POST', body: { repoUrl, name, branch } });
+        showToast('Repository cloned.', 'success');
+        await loadProjects();
+        await loadProjectRepos(project.id);
+      },
+    });
+  }
+
+  async function showRepoStatusModal(projectId, repoId, repoName) {
+    openModal({
+      title: `Git status — ${repoName}`,
+      bodyHtml: '<div id="repo-status-body" style="color:var(--text-muted);">Loading…</div>',
+      confirmText: 'Close',
+      onConfirm: () => {},
+    });
+    const body = document.getElementById('repo-status-body');
+    try {
+      const { status } = await api(`/api/projects/${projectId}/repos/${repoId}/git/status`);
+      if (!status.isGitRepo) {
+        body.innerHTML = '<div style="color:var(--text-muted);">This folder is not a Git repository.</div>';
+        return;
+      }
+      body.innerHTML = `
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 16px;font-size:13px;">
+          <strong>Branch</strong><span>${escapeHtml(status.branch || '—')}</span>
+          <strong>Remote</strong><span style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(status.remote || '—')}</span>
+          <strong>Ahead / behind</strong><span>${status.ahead ?? 0} / ${status.behind ?? 0}</span>
+        </div>`;
+    } catch (err) {
+      body.innerHTML = `<div style="color:var(--danger-color);">Failed to read status: ${escapeHtml(err.message)}</div>`;
+    }
   }
 
   // Modals for project creation/import/clone
@@ -1010,7 +1397,7 @@
           <input type="text" class="form-input" id="m-clone-branch" placeholder="main">
         </div>
         <p style="font-size:12px;color:var(--text-muted);">
-          Private repositories use the credentials configured under <strong>Repositories</strong>.
+          Private repositories use the credentials configured under <strong>Projects → Git Credentials</strong>.
         </p>
       `,
       confirmText: 'Clone & Import',
@@ -1608,13 +1995,16 @@
   }
 
   // --- System (host) Terminal View ---
-  async function renderTerminalView() {
+  // Host (non-project) shell, rendered inside the Workspace view when the
+  // context selector points at "System".
+  async function renderSystemTerminals() {
     const content = document.getElementById('main-content');
     content.style.padding = '0'; // Terminal takes full viewport
 
     content.innerHTML = `
       <div class="workspace-container">
         <div class="terminal-tabs-bar" id="sys-terminal-tabs-container">
+          <span class="badge badge-muted" id="sys-host-badge" style="margin-right:6px;">Host shell</span>
           <button class="btn btn-secondary btn-sm paste-btn" id="sys-paste-btn" style="margin-left:auto;" title="Paste from clipboard">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
             <span class="paste-label">Paste</span>
@@ -1644,8 +2034,8 @@
     try {
       const termRes = await api('/api/terminals?scope=global');
       state.tmuxAvailable = !!termRes.tmuxAvailable;
-      const actions = document.getElementById('top-bar-actions');
-      actions.innerHTML = `<span style="font-size:12px;color:var(--text-muted);">Host shell${termRes.runAsUser ? ` (as ${escapeHtml(termRes.runAsUser)})` : ''}</span>`;
+      const hostBadge = document.getElementById('sys-host-badge');
+      if (hostBadge) hostBadge.textContent = termRes.runAsUser ? `Host shell (as ${termRes.runAsUser})` : 'Host shell';
 
       const alive = (termRes.sessions || []).filter((s) => s.isAlive);
 
@@ -1760,49 +2150,62 @@
     }
   }
 
-  // 3. Project Workspace & Terminal View (xterm.js + WebSockets + node-pty + tmux)
+  // 3. Workspace (system shell or a project's persistent terminals)
+  function resolveWorkspaceContext() {
+    if (state.workspaceContext === 'system') return 'system';
+    if (state.workspaceContext && state.projects.some((p) => p.id === state.workspaceContext)) {
+      return state.workspaceContext;
+    }
+    if (state.activeProjectId && state.projects.some((p) => p.id === state.activeProjectId)) {
+      return state.activeProjectId;
+    }
+    return 'system';
+  }
+
   async function renderWorkspaceView() {
     await loadProjects();
     const content = document.getElementById('main-content');
     content.style.padding = '0'; // Terminal takes full viewport
 
-    if (state.projects.length === 0) {
-      content.innerHTML = `
-        <div style="padding:40px;text-align:center;">
-          <h3>Create a project first to open a terminal</h3>
-          <button class="btn btn-primary" style="margin-top:16px;" id="ws-create-proj-btn">+ Create Project</button>
-        </div>
-      `;
-      document.getElementById('ws-create-proj-btn').onclick = showCreateProjectModal;
-      return;
-    }
+    const context = resolveWorkspaceContext();
+    state.workspaceContext = context;
+    if (context !== 'system') state.activeProjectId = context;
+    saveUiState({ workspaceContext: context, activeProjectId: state.activeProjectId });
 
-    const currentProject = state.projects.find((p) => p.id === state.activeProjectId) || state.projects[0];
-    state.activeProjectId = currentProject.id;
-    saveUiState({ activeProjectId: currentProject.id });
-
-    // Top action bar
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
-      <select class="form-input ws-project-selector" id="ws-project-selector">
-        ${state.projects.map((p) => `
-          <option value="${p.id}" ${p.id === currentProject.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>
-        `).join('')}
+      <select class="form-input ws-project-selector" id="ws-context-selector" title="Workspace context">
+        <option value="system" ${context === 'system' ? 'selected' : ''}>System (host)</option>
+        ${state.projects.map((p) => `<option value="${p.id}" ${p.id === context ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
       </select>
-      <button class="btn btn-primary btn-sm" id="ws-launch-agent-btn">
-        <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        <span class="launch-agent-label">Launch AI Agent</span>
-      </button>
+      ${moduleEnabled('agents') && context !== 'system' ? `
+        <button class="btn btn-primary btn-sm" id="ws-launch-agent-btn">
+          <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span class="launch-agent-label">Launch AI Agent</span>
+        </button>` : ''}
     `;
 
-    document.getElementById('ws-project-selector').onchange = (e) => {
-      state.activeProjectId = e.target.value;
+    document.getElementById('ws-context-selector').onchange = (e) => {
+      state.workspaceContext = e.target.value;
+      state.activeRepoId = null;
+      saveUiState({ workspaceContext: state.workspaceContext, activeRepoId: null });
       renderWorkspaceView();
     };
 
-    document.getElementById('ws-launch-agent-btn').onclick = () => {
-      showLaunchAgentModal(currentProject.id);
-    };
+    const launchBtn = document.getElementById('ws-launch-agent-btn');
+    if (launchBtn) launchBtn.onclick = () => showLaunchAgentModal(context);
+
+    if (context === 'system') {
+      return renderSystemTerminals();
+    }
+
+    const currentProject = state.projects.find((p) => p.id === context) || state.projects[0];
+    return renderProjectTerminals(currentProject);
+  }
+
+  async function renderProjectTerminals(currentProject) {
+    const content = document.getElementById('main-content');
+    content.style.padding = '0';
 
     content.innerHTML = `
       <div class="workspace-container">
@@ -1826,7 +2229,7 @@
     `;
 
     document.getElementById('tab-new-terminal-btn').onclick = async () => {
-      await spawnNewTerminal(currentProject.id);
+      await spawnNewTerminal(currentProject.id, null, null, state.activeRepoId);
     };
     document.getElementById('ws-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
@@ -1836,6 +2239,33 @@
     };
 
     const viewport = document.getElementById('terminal-viewport');
+
+    // When a project holds several repositories, let the user choose which one
+    // new terminals start in (defaults to the most recently selected/primary).
+    try {
+      const repoRes = await api(`/api/projects/${currentProject.id}/repos`);
+      const repos = repoRes.repos || [];
+      if (repos.length > 1) {
+        if (!state.activeRepoId || !repos.some((r) => r.id === state.activeRepoId)) {
+          state.activeRepoId = (repos.find((r) => r.is_primary) || repos[0]).id;
+        }
+        const container = document.getElementById('terminal-tabs-container');
+        const slot = document.createElement('select');
+        slot.className = 'form-input ws-repo-selector';
+        slot.id = 'ws-repo-selector';
+        slot.title = 'New terminals open inside this repository';
+        slot.innerHTML = repos.map((r) => `<option value="${r.id}" ${r.id === state.activeRepoId ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('');
+        slot.onchange = () => {
+          state.activeRepoId = slot.value;
+          saveUiState({ activeRepoId: slot.value });
+        };
+        container.insertBefore(slot, container.firstChild);
+      } else {
+        state.activeRepoId = repos[0] ? repos[0].id : null;
+      }
+    } catch {
+      // Repositories are best-effort here; terminals still work at project root.
+    }
 
     // Restore all live sessions for this project from the backend (tmux keeps
     // them running server-side), then attach/mount them as tabs.
@@ -1853,7 +2283,7 @@
       }
 
       if (alive.length === 0) {
-        await spawnNewTerminal(currentProject.id);
+        await spawnNewTerminal(currentProject.id, null, null, state.activeRepoId);
         return;
       }
 
@@ -1874,15 +2304,14 @@
     }
   }
 
-  async function spawnNewTerminal(projectId, customName = null, agentId = null) {
+  async function spawnNewTerminal(projectId, customName = null, agentId = null, repoId = null) {
     try {
-      const res = await api('/api/terminals', {
-        method: 'POST',
-        body: {
-          projectId,
-          name: customName || `Terminal ${state.terminals.size + 1}`,
-        },
-      });
+      const body = {
+        projectId,
+        name: customName || `Terminal ${state.terminals.size + 1}`,
+      };
+      if (repoId) body.repoId = repoId;
+      const res = await api('/api/terminals', { method: 'POST', body });
       await activateTerminalSession(res.session.sessionId, res.session.name);
     } catch (err) {
       showToast(`Failed to create terminal: ${err.message}`, 'error');
@@ -2592,19 +3021,83 @@
   }
 
   // 4c. Logs & Metrics — observability (event trace + resource samples)
-  async function renderLogsView() {
+  // Activity view: operational activity (events/logs) + the audit trail.
+  async function renderActivityView() {
     const content = document.getElementById('main-content');
     const actions = document.getElementById('top-bar-actions');
+    const tab = state.activityTab === 'audit' ? 'audit' : 'activity';
+
     actions.innerHTML = `
+      <div class="segmented" role="tablist">
+        <button class="seg-btn ${tab === 'activity' ? 'active' : ''}" data-activity-tab="activity" role="tab">Activity</button>
+        <button class="seg-btn ${tab === 'audit' ? 'active' : ''}" data-activity-tab="audit" role="tab">Audit</button>
+      </div>
       <button class="btn btn-secondary btn-sm" id="logs-export-json">Export JSON</button>
       <button class="btn btn-secondary btn-sm" id="logs-export-csv">Export CSV</button>
       <button class="btn btn-secondary btn-sm" id="logs-refresh">Refresh</button>`;
+
+    document.querySelectorAll('[data-activity-tab]').forEach((btn) => {
+      btn.onclick = () => {
+        state.activityTab = btn.getAttribute('data-activity-tab');
+        saveUiState({ activityTab: state.activityTab });
+        renderActivityView();
+      };
+    });
     document.getElementById('logs-export-json').onclick = () => exportLogs('json');
     document.getElementById('logs-export-csv').onclick = () => exportLogs('csv');
-    document.getElementById('logs-refresh').onclick = () => refreshLogs();
+    document.getElementById('logs-refresh').onclick = () => (tab === 'audit' ? refreshAudit() : refreshLogs());
 
-    content.innerHTML = '<div style="color:var(--text-secondary);">Loading logs…</div>';
-    await refreshLogs();
+    content.innerHTML = `<div style="color:var(--text-secondary);">Loading ${tab === 'audit' ? 'audit trail' : 'activity'}…</div>`;
+    if (tab === 'audit') {
+      await refreshAudit();
+    } else {
+      await refreshLogs();
+    }
+  }
+
+  async function refreshAudit() {
+    const content = document.getElementById('main-content');
+    if (!content) return;
+    try {
+      const res = await api('/api/audit?limit=100');
+      state.auditLogs = res.logs || [];
+    } catch (err) {
+      content.innerHTML = `<div style="color:var(--danger-color);">Failed to load audit logs: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
+    renderAuditContent();
+  }
+
+  function renderAuditContent() {
+    const content = document.getElementById('main-content');
+    const logs = state.auditLogs || [];
+    content.innerHTML = `
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <h3 style="font-size:14px;font-weight:600;">Audit trail</h3>
+          <span style="font-size:12px;color:var(--text-muted);">${logs.length} recent events</span>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead><tr>
+              <th style="width:150px;">Time</th><th style="width:120px;">User</th>
+              <th style="width:160px;">Action</th><th style="width:150px;">Target</th>
+              <th>Details</th><th style="width:130px;">IP</th>
+            </tr></thead>
+            <tbody>
+              ${logs.length === 0 ? '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);">No audit events recorded</td></tr>' : logs.map((l) => `
+                <tr>
+                  <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(new Date(l.created_at).toLocaleString())}</td>
+                  <td>${escapeHtml(l.user_id || 'system')}</td>
+                  <td><span class="badge badge-muted">${escapeHtml(l.action)}</span></td>
+                  <td style="font-size:12px;">${escapeHtml(l.target_type || '—')}${l.target_id ? `: ${escapeHtml(String(l.target_id).slice(0, 12))}` : ''}</td>
+                  <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(l.details ? JSON.stringify(l.details) : '')}</td>
+                  <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(l.ip || '—')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
   }
 
   function exportLogs(format, type = 'events') {
@@ -2627,11 +3120,14 @@
     if (f.level) qs.set('level', f.level);
     if (f.category) qs.set('category', f.category);
     qs.set('limit', String(f.limit || 200));
+    // Metrics are an optional module; skip them (and never fail the view) when
+    // the module is disabled. Events and summary stay available either way.
+    const wantMetrics = moduleEnabled('metrics');
     try {
-      const [ev, me, su] = await Promise.all([
+      const [ev, su, me] = await Promise.all([
         api(`/api/logs/events?${qs.toString()}`),
-        api('/api/logs/metrics?limit=120'),
         api('/api/logs/summary'),
+        wantMetrics ? api('/api/logs/metrics?limit=120') : Promise.resolve({ metrics: [] }),
       ]);
       state.logsEvents = ev.events || [];
       state.logsMetrics = me.metrics || [];
@@ -2738,7 +3234,7 @@
         </div>
       </div>
 
-      ${renderMetricsChart(metrics)}
+      ${moduleEnabled('metrics') ? renderMetricsChart(metrics) : ''}
 
       <div class="card" style="margin-bottom:24px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
@@ -2952,21 +3448,19 @@
     }
   }
 
-  // 7. System & Audit View
+  // 7. System View (host tools, updates and diagnostics)
   async function renderSystemView() {
     const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Loading diagnostics and audit logs...</div>';
+    content.innerHTML = '<div style="color:var(--text-secondary);">Loading diagnostics...</div>';
 
     try {
-      const [nodeRes, auditRes, versionRes, connectRes] = await Promise.all([
+      const [nodeRes, versionRes, connectRes] = await Promise.all([
         api('/api/system/node'),
-        api('/api/audit?limit=25'),
         api('/api/system/version'),
         api('/api/system/connect'),
       ]);
 
       const node = nodeRes.node;
-      const logs = auditRes.logs || [];
       const ver = versionRes.version || {};
       const connect = connectRes.connect || {};
 
@@ -3043,37 +3537,20 @@
           </div>
         </div>
 
-        <h3 style="font-size:15px;font-weight:600;margin-bottom:12px;">Security Audit Log</h3>
-        <div class="table-container">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Action</th>
-                <th>User</th>
-                <th>Target</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${logs.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">No audit events recorded</td></tr>' : ''}
-              ${logs.map((l) => `
-                <tr>
-                  <td data-label="Date" style="font-size:11px;color:var(--text-muted);white-space:nowrap;">
-                    ${new Date(l.created_at).toLocaleString()}
-                  </td>
-                  <td data-label="Action"><strong style="color:var(--accent-color);">${escapeHtml(l.action)}</strong></td>
-                  <td data-label="User">${escapeHtml(l.user_id || 'system')}</td>
-                  <td data-label="Target">${escapeHtml(l.target_type || '-')} ${escapeHtml(l.target_id ? `(${l.target_id.slice(0, 8)})` : '')}</td>
-                  <td data-label="Details" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
-                    ${escapeHtml(typeof l.details === 'object' ? JSON.stringify(l.details) : (l.details || '-'))}
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
+        <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+          <div>
+            <h3 style="font-size:15px;font-weight:600;">Audit trail</h3>
+            <p style="color:var(--text-secondary);font-size:13px;margin-top:4px;">Security events moved to the Activity view.</p>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="system-open-audit">Open Audit</button>
         </div>
       `;
+
+      document.getElementById('system-open-audit').onclick = () => {
+        state.activityTab = 'audit';
+        saveUiState({ activityTab: 'audit' });
+        navigateTo('activity');
+      };
 
       const statusEl = document.getElementById('update-status');
       const checkBtn = document.getElementById('check-updates-btn');
@@ -3167,24 +3644,107 @@
     }
   }
 
-  // 8. Plugins View
-  async function renderPluginsView() {
+  // 8. Modules & Plugins View
+  async function renderModulesView() {
     const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Loading plugins...</div>';
+    content.innerHTML = '<div style="color:var(--text-secondary);">Loading modules...</div>';
+    await loadModules();
 
+    const core = state.modules.filter((m) => m.core);
+    const optional = state.modules.filter((m) => !m.core);
+
+    content.innerHTML = `
+      <div style="margin-bottom:20px;">
+        <h2 style="font-size:18px;margin-bottom:6px;">Modules</h2>
+        <p style="color:var(--text-secondary);font-size:13px;">
+          Enable only what you use. Disabled modules are hidden from navigation and their
+          endpoints are locked, but your data is never deleted.
+        </p>
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <h3 class="widget-heading">Core</h3>
+        <div class="module-grid">
+          ${core.map((m) => `
+            <div class="module-card">
+              <div class="module-card-head">
+                <strong>${escapeHtml(m.name)}</strong>
+                <span class="badge badge-success">Always on</span>
+              </div>
+              <p class="module-desc">${escapeHtml(m.description)}</p>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <h3 class="widget-heading">Optional</h3>
+        <div class="module-grid">
+          ${optional.map((m) => {
+            const blocked = !m.ready && !m.enabled;
+            const badge = m.enabled
+              ? '<span class="badge badge-success">Enabled</span>'
+              : (m.ready ? '<span class="badge badge-muted">Disabled</span>' : '<span class="badge badge-warning">Unavailable</span>');
+            return `
+              <div class="module-card">
+                <div class="module-card-head">
+                  <strong>${escapeHtml(m.name)}</strong>
+                  ${badge}
+                </div>
+                <p class="module-desc">${escapeHtml(m.description)}</p>
+                ${m.reason && !m.enabled ? `<p class="module-reason">${escapeHtml(m.reason)}</p>` : ''}
+                <button class="btn ${m.enabled ? 'btn-secondary' : 'btn-primary'} btn-sm module-toggle-btn"
+                  data-module-id="${m.id}" data-enabled="${m.enabled ? '1' : '0'}"
+                  ${blocked ? 'disabled' : ''}>
+                  ${m.enabled ? 'Disable' : 'Enable'}
+                </button>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <h3 class="widget-heading">Plugins</h3>
+          <span style="font-size:12px;color:var(--text-muted);">Loaded from <code>plugins/</code> (plugin.json)</span>
+        </div>
+        <div id="modules-plugin-list"><div style="color:var(--text-muted);font-size:13px;">Loading plugins…</div></div>
+      </div>
+    `;
+
+    document.querySelectorAll('.module-toggle-btn').forEach((btn) => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute('data-module-id');
+        const target = btn.getAttribute('data-enabled') !== '1';
+        btn.disabled = true;
+        try {
+          await api(`/api/modules/${id}/state`, { method: 'POST', body: { enabled: target } });
+          showToast(`Module "${id}" ${target ? 'enabled' : 'disabled'}.`, 'success');
+          await loadModules();
+          renderSidebarNav();
+          renderModulesView();
+        } catch (err) {
+          btn.disabled = false;
+          showToast(err.message, 'error');
+        }
+      };
+    });
+
+    loadPluginList();
+  }
+
+  async function loadPluginList() {
+    const container = document.getElementById('modules-plugin-list');
+    if (!container) return;
     try {
       const res = await api('/api/plugins');
-      const plugins = res.plugins || [];
-
-      content.innerHTML = `
-        <div style="margin-bottom:24px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Modular Plugins & Extensions</h2>
-          <p style="color:var(--text-secondary);">
-            Citadel loads plugins from the <code>plugins/</code> directory based on the <code>plugin.json</code> standard.
-          </p>
-        </div>
-
-        <div class="table-container">
+      state.plugins = res.plugins || [];
+    } catch (err) {
+      container.innerHTML = `<div style="color:var(--danger-color);font-size:13px;">Failed to load plugins: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
+    const plugins = state.plugins;
+    container.innerHTML = `
+      <div class="table-container">
           <table class="data-table">
             <thead>
               <tr>
@@ -3224,21 +3784,18 @@
         </div>
       `;
 
-      document.querySelectorAll('.toggle-plugin-btn').forEach((btn) => {
-        btn.onclick = async () => {
-          const id = btn.getAttribute('data-id');
-          const isCurrentlyEnabled = btn.getAttribute('data-enabled') === '1';
-          await api(`/api/plugins/${id}/toggle`, {
-            method: 'POST',
-            body: { enabled: !isCurrentlyEnabled },
-          });
-          showToast(`Plugin ${!isCurrentlyEnabled ? 'enabled' : 'disabled'}.`, 'success');
-          renderPluginsView();
-        };
-      });
-    } catch (err) {
-      content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
-    }
+    container.querySelectorAll('.toggle-plugin-btn').forEach((btn) => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute('data-id');
+        const isCurrentlyEnabled = btn.getAttribute('data-enabled') === '1';
+        await api(`/api/plugins/${id}/toggle`, {
+          method: 'POST',
+          body: { enabled: !isCurrentlyEnabled },
+        });
+        showToast(`Plugin ${!isCurrentlyEnabled ? 'enabled' : 'disabled'}.`, 'success');
+        loadPluginList();
+      };
+    });
   }
 
   // Run on page load

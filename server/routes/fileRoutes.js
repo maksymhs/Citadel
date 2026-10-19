@@ -8,6 +8,7 @@
  */
 const path = require('node:path');
 const { requireAuth } = require('../security/auth');
+const { requireModule } = require('../modules/registry');
 const fileService = require('../services/fileService');
 const auditService = require('../services/auditService');
 
@@ -22,6 +23,7 @@ function requirePath(value) {
 
 async function fileRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
+  fastify.addHook('preHandler', requireModule('files'));
 
   // Whether the explorer can reach the whole host (admin user configured).
   fastify.get('/api/files/capabilities', async () => ({

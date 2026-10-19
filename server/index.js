@@ -36,6 +36,7 @@ const fileRoutes = require('./routes/fileRoutes');
 const proxyRoutes = require('./routes/proxyRoutes');
 const dockerRoutes = require('./routes/dockerRoutes');
 const pluginRoutes = require('./routes/pluginRoutes');
+const moduleRoutes = require('./routes/moduleRoutes');
 const wsTerminalRoutes = require('./routes/wsTerminal');
 
 async function buildServer(options = {}) {
@@ -141,6 +142,7 @@ async function buildServer(options = {}) {
   await fastify.register(proxyRoutes);
   await fastify.register(dockerRoutes);
   await fastify.register(pluginRoutes);
+  await fastify.register(moduleRoutes);
 
   // 8. Register WebSocket endpoints
   wsTerminalRoutes(fastify);

@@ -126,6 +126,7 @@ function isAllowedOrigin(originHeader) {
 
 module.exports = {
   validateSafePath,
+  isInsideBase,
   sanitizeSlug,
   validateDomain,
   isAllowedOrigin,

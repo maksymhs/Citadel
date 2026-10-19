@@ -1248,3 +1248,178 @@ html.is-mobile-ui .files-table .file-name {
     align-self: center;
   }
 }
+
+/* Dashboard widget grid + customizer */
+.dash-widgets {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.dash-widget {
+  grid-column: span 12;
+  min-width: 0;
+}
+
+.dash-widget[data-widget="memory"],
+.dash-widget[data-widget="cpu"],
+.dash-widget[data-widget="projects"],
+.dash-widget[data-widget="host"] {
+  grid-column: span 3;
+}
+
+.dash-widget[data-widget="integrations"],
+.dash-widget[data-widget="quick-access"],
+.dash-widget[data-widget="activity"] {
+  grid-column: span 6;
+}
+
+.widget-heading {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@media (max-width: 1100px) {
+  .dash-widget[data-widget="memory"],
+  .dash-widget[data-widget="cpu"],
+  .dash-widget[data-widget="projects"],
+  .dash-widget[data-widget="host"] {
+    grid-column: span 6;
+  }
+}
+
+@media (max-width: 768px) {
+  .dash-widget,
+  .dash-widget[data-widget="memory"],
+  .dash-widget[data-widget="cpu"],
+  .dash-widget[data-widget="projects"],
+  .dash-widget[data-widget="host"],
+  .dash-widget[data-widget="integrations"],
+  .dash-widget[data-widget="quick-access"],
+  .dash-widget[data-widget="activity"] {
+    grid-column: span 12;
+  }
+}
+
+.widget-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.widget-row-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.widget-row-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Segmented control (Activity / Audit tabs) */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.seg-btn.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Modules view */
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.module-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.module-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.module-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  flex: 1;
+}
+
+.module-reason {
+  font-size: 11px;
+  color: var(--warning-color);
+}
+
+/* Project repository list */
+.repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.repo-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.repo-item-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.repo-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ws-repo-selector {
+  padding: 4px 8px;
+  font-size: 12px;
+  width: auto;
+  margin-right: 8px;
+}

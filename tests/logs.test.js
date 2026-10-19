@@ -109,6 +109,14 @@ describe('Log HTTP routes', () => {
       payload: { username: 'logadmin', password: 'SuperPassword123!' },
     });
     cookie = `session_id=${setup.cookies[0].value}`;
+    // Advanced metrics are an optional module, disabled by default on new installs.
+    const enable = await app.inject({
+      method: 'POST',
+      url: '/api/modules/metrics/state',
+      headers: { cookie },
+      payload: { enabled: true },
+    });
+    assert.equal(enable.statusCode, 200);
   });
 
   after(async () => {

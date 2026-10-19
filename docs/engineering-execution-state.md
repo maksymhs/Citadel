@@ -850,3 +850,115 @@ README/.env.example/architecture. No commits/pushes/deploys.
   `git diff --check` clean, README and this ledger updated. No commits/pushes/
   deploys performed.
 - Next safe action: operator review of `git diff` and manual commit if approved.
+
+---
+
+# Continuation run — v0.20.0 modular, project-centric workspace (2026-10-19)
+
+## 46. Scope and entry state
+- Entry: `main` at `1349403` (`fix(hardening): isolate task secrets…`), version
+  `0.19.0`. Baseline `npm test` → 289 tests, 289 pass, 0 fail.
+- Goal: turn Citadel into a minimal, modular, project-centric workspace, keeping
+  the current stack (Fastify, `better-sqlite3`, `node-pty`/tmux, zero-framework
+  SPA) with no new databases or services and no destructive rewrites.
+- 6 phases: navigation collapse, Projects+Repositories unification, Workspace
+  context (System + project/repo), central module registry, configurable
+  dashboard, Activity/Audit/System split.
+
+## 47. Phase 1 — central module registry
+- `server/modules/registry.js` (new): MODULES catalogue with per-module
+  `requires` (modules/services), `views`, `widgets`; `isEnabled`, `seedDefaults`,
+  `validateRequirements`, `setEnabled`, `listModules`, `requireModule`,
+  `resetProbeCache`. State is stored in the existing `app_config` table under
+  `module.<id>.enabled`; no new DB/table.
+- Four facts kept distinct: available / serviceAvailable / enabled /
+  widget-visible (the last is client-side only).
+- Seeding rule: existing installs (any `users` row) keep every module enabled;
+  fresh installs get minimal defaults (`dashboard, projects, workspace, activity,
+  audit` on; `agents, files, docker, proxy, fleet, metrics` off). Once, via the
+  `modules.seeded` marker.
+- `server/routes/moduleRoutes.js` (new): `GET /api/modules`,
+  `POST /api/modules/:id/state` (admin, audited). Registered in `server/index.js`.
+- Guards: `requireModule('files'|'docker'|'proxy'|'fleet'|'agents')` on those
+  routers; `metrics` gated inline on `/api/logs/metrics` and export `type=metrics`.
+  `requireModule` runs after `requireAuth` so unauthenticated calls still 401.
+
+## 48. Phase 2 — Projects + Repositories
+- Migration `005_project_repositories` + `project_repos` table (additive; legacy
+  1:1 `projects` git fields kept for back-compat). Each existing project is
+  backfilled once as its primary repository.
+- `projectService`: `_insertRepo`, `listRepos`, `getRepo`, `addRepo`,
+  `registerClonedRepo`, `updateRepoGitMeta`, `removeRepo`; primary repo created
+  on `createProject`/`importProject`; `repos_count` in `listProjects`.
+- `projectRoutes`: associate existing folder (no move/copy), clone into project
+  (never over a non-empty dir → 409), unlink (files preserved unless
+  `deleteFiles=true`), and per-repo git status/commits/pull. `validateGitUrl`
+  restricts to `https?://`/`git@`; target path checked with `isInsideBase`.
+
+## 49. Phase 3 — Workspace context
+- `terminalManager.createSession` accepts `repoId` (must belong to the project;
+  falls back to the project path if the repo is missing on disk).
+- Workspace view has a context selector: System (host shell) or any project, with
+  an optional repository selector for multi-repo projects that sets the cwd of
+  new terminals.
+
+## 50. Phase 4 — Frontend (zero-framework SPA)
+- Sidebar collapsed to 5 primary views (Dashboard, Projects, Workspace, Activity,
+  Modules) + enabled optional module views + System; disabled modules are never
+  rendered. Legacy view ids are remapped (`repos→projects`, `terminal→workspace`,
+  `logs→activity`, `plugins→modules`, `deployments→proxy`).
+- Dashboard is a widget grid with a "Personalizar" customizer (order + on/off),
+  persisted per browser in `localStorage`; widgets backed by a disabled module
+  are dropped, never left broken.
+- Activity view: Activity | Audit tabs (Audit moved out of System); metrics chart
+  and samples only when the `metrics` module is enabled.
+- Modules view: core (always on) + optional (enable/disable with requirement
+  reasons) + plugins list.
+
+## 51. Phase 5 — existing-install upgrade fix (critical for VPS)
+- Defect (pre-existing, not introduced here): `initDatabase` created tables and
+  **indexes** in one `exec`, then ran migrations. On an existing DB whose `tasks`
+  table predated the execution-identity columns, `CREATE INDEX … tasks(status,
+  reconcile_state)` aborted startup (`no such column`) before migration 004 could
+  add the column. Reproduced with the local stale `data/citadel.db`.
+- Fix: split into `CREATE TABLE …` → `runMigrations(db)` → `CREATE INDEX …`, so
+  indexes that reference migration-added columns are built only afterwards.
+  Fresh DBs and in-place upgrades both succeed.
+
+## 52. Tests executed (real commands, real results)
+- Baseline: `npm test` 289/289.
+- New: `tests/modules.test.js` (9) — seeding (fresh minimal / existing all-on),
+  list shape, 403 on a gated endpoint, enable unlocks + audits, core cannot be
+  disabled, unmet service requirement rejected, unknown module 404.
+- New: `tests/project-repos.test.js` (9) — one primary repo on create, associate
+  without moving, duplicate/missing rejected, per-repo git status, invalid clone
+  URL, clone never clobbers a non-empty dir, unlink preserves files, terminal cwd
+  inside a chosen repo.
+- New: `tests/db-upgrade.test.js` (2) — legacy `tasks` table + legacy project
+  migrate cleanly (columns added, index built, primary repo backfilled once,
+  modules stay enabled) and a second boot is idempotent.
+- Updated: `tests/files.test.js`, `tests/fleet.test.js`, `tests/logs.test.js`
+  enable their module before exercising gated endpoints.
+- Final: `npm test` → **309 tests, 309 pass, 0 fail**. `git diff --check` clean;
+  `node --check` clean on every changed JS file.
+- Real boot smoke against a copy of the legacy DB (`PORT=3999
+  DATABASE_PATH=…`): `/` 200, `/api/auth/status` 200, graceful shutdown. Fresh
+  DB boot: minimal module defaults and a gated endpoint returning 403.
+
+## 53. Compatibility notes / residual risks
+- Module state is a preference only: no data is deleted and no external service
+  is touched; disabling hides navigation and locks endpoints but keeps data.
+- Existing installs keep prior behaviour (all capabilities enabled) by design.
+- Optional modules with unmet requirements (Docker without the engine, Proxy
+  without Caddy) remain listed but cannot be enabled; the reason is surfaced.
+- `metrics` is a widget/data module with no standalone view; `agents` requires
+  the core `workspace` module. No module depends on an optional module, so
+  disabling one cannot cascade.
+- Checklist to avoid failure on a physical server/VPS: verify the module guards
+  sit after `requireAuth`; confirm the migration/index ordering above; ensure
+  `repoId` sessions degrade to the project path when a repo is absent; and keep
+  optional-module fetches on the client behind `moduleEnabled(...)`.
+
+## 54. Version
+- Version bumped to `0.20.0`; asset cache-buster moved to `v0200`.
+- Release: `chore(release): v0.20.0`, annotated tag `v0.20.0`.
