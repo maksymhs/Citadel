@@ -59,7 +59,8 @@ Citadel CLI
   citadel logs           Follow the service logs
   citadel restart        Restart the service
   citadel update         Update to the latest version
-  citadel tunnel         Expose the panel globally via a Cloudflare Quick Tunnel
+  citadel tunnel         Expose the panel globally via a Cloudflare tunnel
+                         (--domain=HOST --token=TOKEN for your own domain)
   citadel help           Show this help
 
 Diagnostics options: doctor/network/wifi support --json; repair supports

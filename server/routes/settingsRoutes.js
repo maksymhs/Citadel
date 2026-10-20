@@ -10,6 +10,7 @@ const { requireAuth } = require('../security/auth');
 const { getDatabase } = require('../database/db');
 const connectService = require('../services/connectService');
 const auditService = require('../services/auditService');
+const cloudflareTunnel = require('../services/cloudflareTunnelService');
 const { PUBLIC_URL } = require('../config');
 
 const STORED_KEY = 'connect.public_url';
@@ -93,6 +94,53 @@ async function settingsRoutes(fastify) {
         effectiveUrl: connectService.getConnectInfo().url,
       },
     };
+  });
+
+  // --- Own-domain Cloudflare tunnel (Settings → Tunnel) --------------------
+  fastify.get('/api/settings/tunnel', { preHandler: requireAdmin }, async () => {
+    const tunnel = cloudflareTunnel.getStatus();
+    if (tunnel.job.phase === 'done') connectService._reset();
+    return { tunnel };
+  });
+
+  fastify.post('/api/settings/tunnel', { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const tunnel = cloudflareTunnel.start(request.body && request.body.domain);
+      auditService.logAction({
+        userId: request.user.id,
+        action: 'tunnel_setup_started',
+        targetType: 'settings',
+        targetId: 'tunnel',
+        details: { domain: tunnel.job.domain },
+        ip: request.ip,
+      });
+      return { tunnel };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+
+  fastify.delete('/api/settings/tunnel/setup', { preHandler: requireAdmin }, async () => {
+    cloudflareTunnel.cancel();
+    return { tunnel: cloudflareTunnel.getStatus() };
+  });
+
+  fastify.delete('/api/settings/tunnel', { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      cloudflareTunnel.revertToQuick();
+    } catch (err) {
+      return reply.status(500).send({ error: err.message });
+    }
+    connectService._reset();
+    auditService.logAction({
+      userId: request.user.id,
+      action: 'tunnel_reverted_to_quick',
+      targetType: 'settings',
+      targetId: 'tunnel',
+      details: {},
+      ip: request.ip,
+    });
+    return { tunnel: cloudflareTunnel.getStatus() };
   });
 }
 

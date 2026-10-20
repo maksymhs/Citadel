@@ -5,6 +5,11 @@
 #   sudo ./scripts/tunnel.sh          # install cloudflared and start the tunnel
 #   sudo ./scripts/tunnel.sh stop     # stop it (URL goes away)
 #   sudo ./scripts/tunnel.sh remove   # stop and delete the service
+#   sudo ./scripts/tunnel.sh --domain=citadel.example.com --token=<TOKEN>
+#                                     # stable URL on your own domain (named tunnel)
+#   sudo ./scripts/tunnel.sh --quick  # go back to a random trycloudflare.com URL
+#   sudo ./scripts/tunnel.sh setup    # install cloudflared + the root helper that lets
+#                                     # Settings → Tunnel manage the tunnel from the panel
 #
 # Gives the panel a GLOBAL https URL (https://<random>.trycloudflare.com) that
 # works from any network. The URL changes every time the tunnel restarts, so the
@@ -12,7 +17,19 @@
 # ==============================================================================
 set -euo pipefail
 
-ACTION="${1:-up}"
+ACTION="up"
+DOMAIN=""
+TOKEN=""
+QUICK=false
+for arg in "$@"; do
+  case "$arg" in
+    up|stop|remove|setup) ACTION="$arg" ;;
+    --domain=*) DOMAIN="${arg#--domain=}" ;;
+    --token=*) TOKEN="${arg#--token=}" ;;
+    --quick) QUICK=true ;;
+    *) echo "Usage: $0 [up|stop|remove|setup|--domain=HOST --token=TOKEN|--quick]" >&2; exit 1 ;;
+  esac
+done
 SERVICE="citadel-tunnel"
 APP_DIR="${CITADEL_APP_DIR:-/srv/citadel/app}"
 DATA_DIR="${CITADEL_DATA_DIR:-/srv/citadel/data}"
@@ -22,6 +39,8 @@ TARGET="http://127.0.0.1:${PORT}"
 CLOUDFLARED="/usr/local/bin/cloudflared"
 UNIT="/etc/systemd/system/${SERVICE}.service"
 URL_FILE="$DATA_DIR/tunnel-url"
+TOKEN_FILE="$DATA_DIR/tunnel-token"
+DOMAIN_FILE="$DATA_DIR/tunnel-domain"
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
@@ -60,11 +79,27 @@ case "$ACTION" in
     exit 0
     ;;
   up) ;;
-  *)
-    echo "Usage: $0 [up|stop|remove]" >&2
-    exit 1
-    ;;
 esac
+
+# Named tunnel settings: persisted so restarts and reboots keep the same domain.
+if [ "$QUICK" = true ]; then
+  $SUDO rm -f "$TOKEN_FILE" "$DOMAIN_FILE"
+elif [ -n "$DOMAIN" ] || [ -n "$TOKEN" ]; then
+  if [ -z "$DOMAIN" ] || [ -z "$TOKEN" ]; then
+    echo "ERROR: --domain and --token must be given together." >&2
+    exit 1
+  fi
+  DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%/}"
+  if ! printf '%s' "$DOMAIN" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$'; then
+    echo "ERROR: '$DOMAIN' is not a valid hostname." >&2
+    exit 1
+  fi
+  $SUDO mkdir -p "$DATA_DIR"
+  printf '%s\n' "$TOKEN" | $SUDO tee "$TOKEN_FILE" >/dev/null
+  printf '%s\n' "$DOMAIN" | $SUDO tee "$DOMAIN_FILE" >/dev/null
+  $SUDO chown "$RUN_USER" "$TOKEN_FILE" "$DOMAIN_FILE" 2>/dev/null || true
+  $SUDO chmod 600 "$TOKEN_FILE"
+fi
 
 # 1. cloudflared ---------------------------------------------------------------
 if [ ! -x "$CLOUDFLARED" ]; then
@@ -91,6 +126,20 @@ if [ ! -x "$CLOUDFLARED" ]; then
   echo "Installed $CLOUDFLARED"
 else
   echo "cloudflared already installed."
+fi
+
+# Panel helper: a root-owned copy of this script plus a sudoers rule scoped to
+# it, so the panel (running as $RUN_USER) can start/restart the tunnel service
+# from Settings without a general root shell.
+if [ "$ACTION" = "setup" ]; then
+  HELPER="/usr/local/sbin/citadel-tunnel"
+  SUDOERS="/etc/sudoers.d/citadel-tunnel"
+  $SUDO install -o root -g root -m 0755 "${BASH_SOURCE[0]}" "$HELPER"
+  echo "$RUN_USER ALL=(root) NOPASSWD: $HELPER" | $SUDO tee "$SUDOERS" >/dev/null
+  $SUDO chmod 0440 "$SUDOERS"
+  $SUDO visudo -cf "$SUDOERS" >/dev/null
+  echo "Panel tunnel helper installed ($HELPER)."
+  exit 0
 fi
 
 # 2. Service unit --------------------------------------------------------------
@@ -136,7 +185,11 @@ fi
 
 echo ""
 echo "Global URL: $PUBLIC_URL"
-echo "(This URL changes when the tunnel restarts.)"
+if [ -s "$DOMAIN_FILE" ]; then
+  echo "(Stable URL on your own domain.)"
+else
+  echo "(This URL changes when the tunnel restarts. For a stable one: citadel tunnel --domain=HOST --token=TOKEN)"
+fi
 echo ""
 
 PAIR_LINK=""

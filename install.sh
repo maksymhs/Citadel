@@ -579,6 +579,13 @@ EOF
     fi
   fi
 
+  # Tunnel helper: lets Settings → Tunnel link a domain of your own from the
+  # panel (root-owned copy of tunnel.sh + a sudoers rule scoped to it).
+  if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && command -v systemctl >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/tunnel.sh" ]; then
+    $SUDO env CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" CITADEL_RUN_USER="$RUN_USER" PORT="$PANEL_PORT" \
+      bash "$APP_DIR/scripts/tunnel.sh" setup || echo -e "${YELLOW}      Tunnel helper skipped.${NC}"
+  fi
+
   # Git credential helper: lets project terminals reuse the provider tokens
   # already stored (encrypted) by the panel for git fetch/pull/push, without
   # ever writing them in clear text. Tokens are only decryptable by the service

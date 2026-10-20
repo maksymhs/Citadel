@@ -11,6 +11,10 @@ TARGET="${1:-http://127.0.0.1:3000}"
 DATA_DIR="${CITADEL_DATA_DIR:-/srv/citadel/data}"
 URL_FILE="$DATA_DIR/tunnel-url"
 CLOUDFLARED="${CLOUDFLARED_PATH:-/usr/local/bin/cloudflared}"
+# Named tunnel (your own domain): `citadel tunnel --domain=... --token=...`
+# stores these two files; without them a random Quick Tunnel is used.
+TOKEN_FILE="$DATA_DIR/tunnel-token"
+DOMAIN_FILE="$DATA_DIR/tunnel-domain"
 
 mkdir -p "$DATA_DIR" 2>/dev/null || true
 : > "$URL_FILE" 2>/dev/null || true
@@ -18,6 +22,19 @@ mkdir -p "$DATA_DIR" 2>/dev/null || true
 if [ ! -x "$CLOUDFLARED" ]; then
   echo "cloudflared not found at $CLOUDFLARED" >&2
   exit 1
+fi
+
+if [ -s "$TOKEN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
+  domain="$(head -n1 "$DOMAIN_FILE" | tr -d '[:space:]')"
+  # The token goes through the environment so it never shows up in `ps`.
+  TUNNEL_TOKEN="$(head -n1 "$TOKEN_FILE" | tr -d '[:space:]')" \
+    "$CLOUDFLARED" tunnel --no-autoupdate run &
+  cf_pid=$!
+  printf 'https://%s\n' "$domain" > "$URL_FILE"
+  trap 'kill "$cf_pid" 2>/dev/null' TERM INT
+  wait "$cf_pid"
+  : > "$URL_FILE" 2>/dev/null || true
+  exit 0
 fi
 
 # Stream cloudflared output, scraping the public URL from the startup banner.

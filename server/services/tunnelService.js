@@ -5,6 +5,9 @@
  * writes the current public `https://*.trycloudflare.com` URL to a file. This
  * module reads that file so the panel (QR code, "Connect from your phone") can
  * follow along even though a Quick Tunnel URL changes on every restart.
+ *
+ * With a named tunnel (`citadel tunnel --domain=... --token=...`) the same file
+ * holds the stable `https://<your-domain>` address instead.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -17,7 +20,8 @@ function normalizeTunnelUrl(value) {
   if (!value) return null;
   const url = String(value).trim().split(/\s+/)[0];
   if (!/^https:\/\//i.test(url)) return null;
-  if (!/\.trycloudflare\.com$/i.test(url.replace(/\/+$/, ''))) return null;
+  const host = url.replace(/\/+$/, '').slice('https://'.length);
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i.test(host)) return null;
   return url.replace(/\/+$/, '');
 }
 

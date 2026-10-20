@@ -264,10 +264,10 @@ if [ -f "$POWER_DROPIN" ]; then
 fi
 
 echo "Removing sudoers rules..."
-$SUDO rm -f /etc/sudoers.d/citadel-terminal /etc/sudoers.d/citadel-updater
+$SUDO rm -f /etc/sudoers.d/citadel-terminal /etc/sudoers.d/citadel-updater /etc/sudoers.d/citadel-tunnel
 
 echo "Removing helper scripts..."
-$SUDO rm -f /usr/local/sbin/citadel-update /usr/local/sbin/.citadel-update.new
+$SUDO rm -f /usr/local/sbin/citadel-tunnel /usr/local/sbin/citadel-update /usr/local/sbin/.citadel-update.new
 $SUDO rm -f /usr/local/bin/citadel-git-credential /usr/local/bin/citadel-creds
 $SUDO rm -f /usr/local/bin/citadel
 $SUDO rm -f /etc/profile.d/citadel-agents.sh

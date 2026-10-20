@@ -290,6 +290,19 @@ Peer credentials are separate per direction: the inbound token is stored only as
 
 A pairing code created in **Settings → Connection** (the startup/installer QR does not, as it has no administrator attached) also merges the encrypted credential vault in both directions: environment variables, GitHub/GitLab tokens and the other vault entries (SSH keys, files). The merge runs server-to-server with the paired peer token, so values never reach the browser. The newest `updated_at` wins, equal values are skipped, and deletions stay local. For safety it only runs over HTTPS (or loopback); pairing over a plain-HTTP LAN address still succeeds but skips the merge. Use **Settings → Machines → Sync credentials** to merge again after adding or rotating a token.
 
+### Stable URL on your own domain (named tunnel)
+
+With a domain on Cloudflare (e.g. `citadel.example.com`): in Zero Trust → Networks → Tunnels create a tunnel, add a *Public hostname* pointing to `http://localhost:3000`, and copy its token. Then:
+
+```bash
+citadel tunnel --domain=citadel.example.com --token=<TOKEN>
+citadel tunnel --quick     # back to a random trycloudflare.com URL
+```
+
+**From the panel:** run `sudo citadel tunnel setup` once (installs `cloudflared` and a scoped root helper; the installer already does it), then open **Settings → Tunnel (your own domain)**, enter the hostname and click *Connect domain*. You authorize once in Cloudflare and the panel creates the tunnel, the DNS record and starts the service; the login certificate is deleted afterwards and only the tunnel token is kept.
+
+The URL survives restarts and reboots, and the panel, QR and pairing use it automatically. The token is stored in `data/tunnel-token` (mode 600).
+
 ### Global URL with a Cloudflare Quick Tunnel (no account, no domain)
 
 To reach the panel from **any network with a single command**, start a Cloudflare Quick Tunnel:

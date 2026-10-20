@@ -16,13 +16,15 @@ const tunnelService = require('../server/services/tunnelService');
 const connectService = require('../server/services/connectService');
 const { isAllowedOrigin } = require('../server/security/guard');
 
-test('normalizeTunnelUrl only accepts https trycloudflare URLs', () => {
+test('normalizeTunnelUrl only accepts plain https hostnames', () => {
   assert.equal(
     tunnelService.normalizeTunnelUrl('https://abc-def.trycloudflare.com'),
     'https://abc-def.trycloudflare.com'
   );
   assert.equal(tunnelService.normalizeTunnelUrl('https://abc.trycloudflare.com/'), 'https://abc.trycloudflare.com');
-  assert.equal(tunnelService.normalizeTunnelUrl('https://evil.example.com'), null);
+  assert.equal(tunnelService.normalizeTunnelUrl('https://citadel.maksym.site'), 'https://citadel.maksym.site');
+  assert.equal(tunnelService.normalizeTunnelUrl('https://evil.com/path'), null);
+  assert.equal(tunnelService.normalizeTunnelUrl('https://user@evil.com'), null);
   assert.equal(tunnelService.normalizeTunnelUrl('http://abc.trycloudflare.com'), null);
   assert.equal(tunnelService.normalizeTunnelUrl(''), null);
 });
@@ -47,4 +49,15 @@ test('falls back to localhost when nothing else is configured', () => {
   connectService._reset();
   const info = connectService.getConnectInfo();
   assert.equal(info.source, 'localhost');
+});
+
+test('cloudflare tunnel setup only accepts plain hostnames and reports status', () => {
+  const cf = require('../server/services/cloudflareTunnelService');
+  assert.equal(cf.normalizeDomain('https://Citadel.Maksym.site/'), 'citadel.maksym.site');
+  assert.equal(cf.normalizeDomain('citadel'), null);
+  assert.equal(cf.normalizeDomain('a.com; rm -rf /'), null);
+  assert.equal(cf.normalizeDomain('evil.com/path'), null);
+  const status = cf.getStatus();
+  assert.equal(status.helperInstalled, false);
+  assert.throws(() => cf.start('citadel.maksym.site'), /citadel tunnel setup|Linux/);
 });
