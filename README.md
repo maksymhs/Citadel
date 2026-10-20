@@ -60,7 +60,7 @@ That command installs the service **local-only and unprivileged by default**. Ev
 | Flag | Effect |
 | --- | --- |
 | `--lan` (or `--host=ADDR`) | Reachable on your local network (QR from your phone) |
-| `--tunnel` | Public Cloudflare Quick Tunnel URL |
+| `--no-tunnel` | Skip the public Cloudflare Quick Tunnel (on by default) |
 | `--admin-terminal[=user]` | Root-capable System Terminal (privileged) |
 | `--enable-updater` | Root-owned in-panel updater |
 | `--24-7` (or `--keep-awake`) | Default: ignore lid close and block suspend/hibernate |

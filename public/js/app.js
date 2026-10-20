@@ -2894,7 +2894,11 @@
       <div class="workspace-container">
         <div class="terminal-tabs-bar" id="sys-terminal-tabs-container">
           <span class="badge badge-muted" id="sys-host-badge" style="margin-right:6px;">Host shell</span>
-          <button class="btn btn-secondary btn-sm paste-btn" id="sys-paste-btn" style="margin-left:auto;" title="Paste from clipboard">
+          <button class="btn btn-secondary btn-sm copy-btn" id="sys-copy-btn" style="margin-left:auto;" title="Copy the selection (or the whole terminal) to the clipboard">
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span class="paste-label">Copy</span>
+          </button>
+          <button class="btn btn-secondary btn-sm paste-btn" id="sys-paste-btn" title="Paste from clipboard">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
             <span class="paste-label">Paste</span>
           </button>
@@ -2909,6 +2913,9 @@
 
     document.getElementById('sys-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.sysTerminals.get(state.activeSysTerminalId), 'sys-copy-mode-btn');
+    };
+    document.getElementById('sys-copy-btn').onclick = () => {
+      copyFromTerminal(() => state.sysTerminals.get(state.activeSysTerminalId));
     };
     document.getElementById('sys-paste-btn').onclick = () => {
       pasteIntoTerminal(() => state.sysTerminals.get(state.activeSysTerminalId));
@@ -3154,7 +3161,11 @@
         <!-- Toolbar (terminal switching lives in the sidebar) -->
         <div class="terminal-tabs-bar" id="terminal-tabs-container">
           <span class="badge badge-muted ws-context-badge">${escapeHtml(currentProject.name)}</span>
-          <button class="btn btn-secondary btn-sm paste-btn" id="ws-paste-btn" style="margin-left:auto;" title="Paste from clipboard">
+          <button class="btn btn-secondary btn-sm copy-btn" id="ws-copy-btn" style="margin-left:auto;" title="Copy the selection (or the whole terminal) to the clipboard">
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span class="paste-label">Copy</span>
+          </button>
+          <button class="btn btn-secondary btn-sm paste-btn" id="ws-paste-btn" title="Paste from clipboard">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>
             <span class="paste-label">Paste</span>
           </button>
@@ -3170,6 +3181,9 @@
 
     document.getElementById('ws-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
+    };
+    document.getElementById('ws-copy-btn').onclick = () => {
+      copyFromTerminal(() => state.terminals.get(state.activeTerminalId));
     };
     document.getElementById('ws-paste-btn').onclick = () => {
       pasteIntoTerminal(() => state.terminals.get(state.activeTerminalId));
@@ -3402,6 +3416,80 @@
     } catch (err) {
       showToast(err.message, 'error');
     }
+  }
+
+  // Copy button for the terminal toolbars: copies the current selection, or the
+  // whole terminal buffer (scrollback included) when nothing is selected. The
+  // Clipboard API needs a secure origin, so plain-HTTP panels fall back to a
+  // hidden-textarea execCommand copy, and finally to a modal with the text
+  // preselected.
+  function terminalText(term) {
+    const buffer = term.buffer.active;
+    const lines = [];
+    for (let i = 0; i < buffer.length; i += 1) {
+      const line = buffer.getLine(i);
+      if (!line) continue;
+      const text = line.translateToString(true);
+      // Soft-wrapped rows belong to the previous logical line.
+      if (line.isWrapped && lines.length) lines[lines.length - 1] += text;
+      else lines.push(text);
+    }
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    return lines.join('\n');
+  }
+
+  async function writeClipboard(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // fall through to the legacy path
+    }
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    return ok;
+  }
+
+  async function copyFromTerminal(getItem) {
+    const item = getItem ? getItem() : null;
+    if (!item || item.disposed) return;
+
+    const selection = item.term.hasSelection() ? item.term.getSelection() : '';
+    const text = selection || terminalText(item.term);
+    if (!text) {
+      showToast('The terminal is empty.', 'info');
+      return;
+    }
+    if (await writeClipboard(text)) {
+      showToast(selection ? 'Selection copied.' : 'Terminal content copied.', 'success');
+      return;
+    }
+    openModal({
+      title: 'Copy from terminal',
+      bodyHtml: `
+        <div class="form-group">
+          <label class="form-label" for="terminal-copy-output">Select all and copy (the browser blocked automatic copying)</label>
+          <textarea id="terminal-copy-output" class="form-input" rows="10" spellcheck="false" readonly>${escapeHtml(text)}</textarea>
+        </div>
+      `,
+      confirmText: 'Close',
+      onConfirm: async () => {},
+    });
+    const out = document.getElementById('terminal-copy-output');
+    if (out) { out.focus(); out.select(); }
   }
 
   // Paste button for the terminal toolbars. Long-press paste inside xterm is
