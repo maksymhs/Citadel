@@ -15,6 +15,7 @@
  * has an independent token that can be revoked separately.
  */
 const hostService = require('./hostService');
+const meshService = require('./meshService');
 const secretSyncService = require('./secretSyncService');
 
 const ACCEPT_TIMEOUT_MS = 12000;
@@ -58,6 +59,9 @@ function acceptPairing({ inviteId, secret, peer, token }) {
     outboundToken: token,
     inboundToken,
   });
+
+  // A new machine joined: let the mesh (when enabled) introduce it to the rest.
+  meshService.scheduleSync();
 
   return {
     host,
@@ -126,6 +130,7 @@ async function redeemPairing(code) {
       // Best-effort: exchange fresh addresses right away so both sides can
       // follow an address rotation without waiting for the periodic announce.
       hostService.announceToPeers().catch(() => {});
+      meshService.scheduleSync();
 
       // Invitations created from an authenticated Settings screen mean both
       // machines belong to the same operator, so merge the credential vault in

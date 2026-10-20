@@ -24,6 +24,7 @@ const connectService = require('./connectService');
 
 const INSTANCE_ID_KEY = 'instance.id';
 const INSTANCE_NAME_KEY = 'instance.name';
+const MESH_KEY = 'mesh.enabled';
 const INVITE_TTL_MS = 10 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 12000;
 const STREAM_TIMEOUT_MS = 120000;
@@ -60,6 +61,16 @@ function getInstanceId() {
 
 function getInstanceName() {
   return readConfig(INSTANCE_NAME_KEY) || defaultInstanceName();
+}
+
+/** Opt-in: allow paired machines to introduce this one to the rest. */
+function getMeshEnabled() {
+  return readConfig(MESH_KEY) === '1';
+}
+
+function setMeshEnabled(enabled) {
+  writeConfig(MESH_KEY, enabled ? '1' : '0');
+  return getMeshEnabled();
 }
 
 function setInstanceName(name) {
@@ -829,6 +840,9 @@ module.exports = {
   openHostStream,
   wsCandidates,
   announceToPeers,
+  getMeshEnabled,
+  setMeshEnabled,
+  listHostRows,
   listKnownPeers,
   discoverSuggestions,
   unpairHost,

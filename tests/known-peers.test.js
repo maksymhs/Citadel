@@ -56,4 +56,52 @@ describe('Peer discovery', () => {
     const res = await app.inject({ method: 'GET', url: '/api/host/peers/known' });
     assert.equal(res.statusCode, 401);
   });
+
+  test('mesh endpoints are refused until the admin opts in', async () => {
+    hostService.setMeshEnabled(false);
+    const headers = { authorization: `Bearer ${tokenB}` };
+    const off = await app.inject({ method: 'POST', url: '/api/host/peers/mesh/invite', headers, payload: {} });
+    assert.equal(off.statusCode, 403);
+    const offJoin = await app.inject({ method: 'POST', url: '/api/host/peers/mesh/join', headers, payload: { link: 'x' } });
+    assert.equal(offJoin.statusCode, 403);
+
+    hostService.setMeshEnabled(true);
+    const on = await app.inject({ method: 'POST', url: '/api/host/peers/mesh/invite', headers, payload: {} });
+    assert.equal(on.statusCode, 200);
+    const { link } = JSON.parse(on.payload);
+    assert.match(link, /#pair=v1\./);
+    // Joining with a code that points at this very host is rejected.
+    const self = await app.inject({ method: 'POST', url: '/api/host/peers/mesh/join', headers, payload: { link } });
+    assert.equal(self.statusCode, 400);
+    hostService.setMeshEnabled(false);
+  });
+
+  test('mesh endpoints need a peer token', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/host/peers/mesh/invite', payload: {} });
+    assert.equal(res.statusCode, 401);
+  });
+});
+
+describe('Mesh planning', () => {
+  const { planIntroductions } = require('../server/services/meshService');
+  const row = (id) => ({ id, name: id, instance_id: id });
+
+  test('introduces only pairs that are not paired yet', () => {
+    const peers = [
+      { row: row('x'), known: new Set(['y']) },
+      { row: row('y'), known: new Set(['x']) },
+      { row: row('z'), known: new Set() },
+    ];
+    const plan = planIntroductions(peers).map((p) => [p.joiner.id, p.inviter.id].sort().join('-'));
+    assert.deepEqual(plan.sort(), ['x-z', 'y-z']);
+  });
+
+  test('a fully connected mesh needs no introductions', () => {
+    const peers = [
+      { row: row('x'), known: new Set(['y', 'z']) },
+      { row: row('y'), known: new Set(['x', 'z']) },
+      { row: row('z'), known: new Set(['x', 'y']) },
+    ];
+    assert.deepEqual(planIntroductions(peers), []);
+  });
 });

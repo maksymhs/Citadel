@@ -4457,6 +4457,17 @@
                   </div>
                 </div>`).join('')}
           </div>
+          ${canPair ? `
+          <div id="settings-mesh" style="margin-top:12px;padding:10px 12px;border:1px solid var(--border-color);border-radius:6px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer;">
+              <input type="checkbox" id="settings-mesh-toggle" /> Auto-pair with all my machines (mesh)
+            </label>
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-top:6px;">
+              When on, machines already paired with this one can introduce it to the others, so every machine ends up paired with every other and each one can open terminals, logs and processes on the rest. Turn it on in every machine that should join. Credentials are not shared; pairing stays revocable with Unpair.
+            </div>
+            <div style="margin-top:8px;"><button class="btn btn-secondary btn-sm" id="settings-mesh-sync" disabled>Sync now</button>
+              <span id="settings-mesh-result" style="font-size:12px;color:var(--text-muted);margin-left:8px;"></span></div>
+          </div>` : ''}
           <div id="settings-suggestions" style="margin-top:6px;"></div>
         </div>
 
@@ -4667,6 +4678,48 @@
           }
         };
       });
+
+      // Mesh pairing opt-in.
+      const meshToggle = document.getElementById('settings-mesh-toggle');
+      if (canPair && meshToggle) {
+        const meshSync = document.getElementById('settings-mesh-sync');
+        const meshResult = document.getElementById('settings-mesh-result');
+        api('/api/host/mesh').then((res) => {
+          meshToggle.checked = Boolean(res.enabled);
+          meshSync.disabled = !res.enabled;
+        }).catch(() => {});
+        meshToggle.onchange = async () => {
+          meshToggle.disabled = true;
+          try {
+            const res = await api('/api/host/mesh', { method: 'PUT', body: { enabled: meshToggle.checked } });
+            meshToggle.checked = Boolean(res.enabled);
+            meshSync.disabled = !res.enabled;
+            showToast(res.enabled ? 'Mesh pairing enabled.' : 'Mesh pairing disabled.', 'success');
+          } catch (err) {
+            meshToggle.checked = !meshToggle.checked;
+            showToast(err.message, 'error');
+          } finally {
+            meshToggle.disabled = false;
+          }
+        };
+        meshSync.onclick = async () => {
+          meshSync.disabled = true;
+          meshResult.textContent = 'Syncing…';
+          try {
+            const res = await api('/api/host/mesh/sync', { method: 'POST' });
+            const done = (res.introduced || []).length;
+            const failed = (res.failed || []).length;
+            meshResult.textContent = done || failed
+              ? `${done} new pairing(s)${failed ? `, ${failed} failed (${res.failed[0].error})` : ''}`
+              : 'Already fully connected.';
+            if (done) { await loadHosts(); renderSettingsView(); }
+          } catch (err) {
+            meshResult.textContent = err.message;
+          } finally {
+            meshSync.disabled = false;
+          }
+        };
+      }
 
       // Machines my paired hosts know about but I am not paired with yet.
       const suggestionsEl = document.getElementById('settings-suggestions');

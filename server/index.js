@@ -44,6 +44,7 @@ const hostRoutes = require('./routes/hostRoutes');
 const remoteProxyRoutes = require('./routes/remoteProxyRoutes');
 const wsTerminalRoutes = require('./routes/wsTerminal');
 const hostService = require('./services/hostService');
+const meshService = require('./services/meshService');
 
 async function buildServer(options = {}) {
   // Only honour X-Forwarded-* from explicitly trusted peers (default loopback).
@@ -213,6 +214,11 @@ async function startServer() {
       if (typeof t.unref === 'function') t.unref();
     }
   };
+  // Opt-in mesh: periodically introduce paired machines to each other.
+  const meshStartup = setTimeout(() => meshService.scheduleSync(0), 30000);
+  const meshTimer = setInterval(() => meshService.scheduleSync(0), 10 * 60 * 1000);
+  if (typeof meshStartup.unref === 'function') meshStartup.unref();
+  if (typeof meshTimer.unref === 'function') meshTimer.unref();
   const announceStartup = setTimeout(announce, 5000);
   const announceTimer = setInterval(announce, 5 * 60 * 1000);
   if (typeof announceStartup.unref === 'function') announceStartup.unref();

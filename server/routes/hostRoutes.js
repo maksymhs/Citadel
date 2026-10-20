@@ -9,6 +9,7 @@ const { requireSessionAuth, requirePeerAuth } = require('../security/auth');
 const hostService = require('../services/hostService');
 const pairingService = require('../services/pairingService');
 const secretSyncService = require('../services/secretSyncService');
+const meshService = require('../services/meshService');
 const auditService = require('../services/auditService');
 
 function requireAdmin(request, reply, done) {
@@ -72,6 +73,21 @@ async function hostRoutes(fastify) {
     }));
     return { hosts };
   });
+
+  fastify.get('/api/host/mesh', { preHandler: requireSessionAuth }, async () => ({
+    enabled: hostService.getMeshEnabled(),
+  }));
+
+  fastify.put('/api/host/mesh', { preHandler: [requireSessionAuth, requireAdmin] }, async (request) => {
+    const enabled = hostService.setMeshEnabled(Boolean(request.body && request.body.enabled));
+    audit(request, enabled ? 'host_mesh_enabled' : 'host_mesh_disabled', null, {});
+    if (enabled) meshService.scheduleSync(500);
+    return { enabled };
+  });
+
+  fastify.post('/api/host/mesh/sync', { preHandler: [requireSessionAuth, requireAdmin] }, async () => (
+    meshService.syncMesh()
+  ));
 
   // Machines known by my paired hosts that I am not paired with. Discovery
   // only: pairing each one still needs that machine's own invitation.
@@ -211,6 +227,42 @@ async function hostRoutes(fastify) {
   fastify.get('/api/host/peers/known', { preHandler: requirePeerAuth }, async (request) => ({
     peers: hostService.listKnownPeers(request.user.peerHostId),
   }));
+
+  // --- Mesh pairing (opt-in per machine) ----------------------------------
+
+  const meshOff = (reply) => reply.status(403).send({
+    error: 'Mesh pairing is disabled on this machine. Enable it in Settings → Machines.',
+  });
+
+  // An introducer asks for a single-use invitation for another of its peers.
+  fastify.post('/api/host/peers/mesh/invite', {
+    preHandler: requirePeerAuth,
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    if (!hostService.getMeshEnabled()) return meshOff(reply);
+    const invite = hostService.createInvite({ userId: null });
+    audit(request, 'host_mesh_invite_created', request.user.peerHostId, { expiresAt: invite.expiresAt });
+    return { link: invite.compactLink, expiresAt: invite.expiresAt };
+  });
+
+  // An introducer hands us another peer's invitation; we redeem it.
+  fastify.post('/api/host/peers/mesh/join', {
+    preHandler: requirePeerAuth,
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    if (!hostService.getMeshEnabled()) return meshOff(reply);
+    try {
+      const result = await pairingService.redeemPairing(request.body ? request.body.link : null);
+      audit(request, 'host_mesh_joined', result.host.id, {
+        instanceId: result.host.instanceId,
+        name: result.host.name,
+        introducedBy: request.user.peerHostId,
+      });
+      return { host: { id: result.host.id, name: result.host.name } };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
 
   // A peer asks us to forget it (the other half of unpair). We remove the row
   // for that instance and revoke its inbound token, which is this very token.

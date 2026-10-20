@@ -1503,3 +1503,26 @@ README/.env.example/architecture. No commits/pushes/deploys.
   implemented.
 - Tests: `tests/known-peers.test.js`. Version bumped to `0.34.0`; cache-buster
   token moved to `v0340`.
+
+## 89. Opt-in mesh pairing (v0.35.0)
+- **Why.** Pairing is pairwise; with three or more machines each pair had to be
+  scanned by hand. Remote terminals, logs and processes already work on any
+  paired machine (`/api/remote/<id>/…`, `/ws/remote/…`), so the missing piece was
+  getting every machine paired with every other.
+- **How.** Each machine's admin opts in (`PUT /api/host/mesh`, Settings →
+  Machines; default off). An introducer paired with X and Y that sees they are
+  not paired with each other asks Y for a single-use invitation
+  (`POST /api/host/peers/mesh/invite`) and gives it to X
+  (`POST /api/host/peers/mesh/join`), which redeems it through the normal
+  handshake. Both endpoints need a peer token **and** local mesh enabled, else
+  403. Runs shortly after any pairing and every 10 minutes (`meshService`);
+  `POST /api/host/mesh/sync` forces it. Mesh pairings never auto-merge the
+  credential vault.
+- **Trust model.** Opting in means "my paired machines may introduce me to the
+  rest" — pairing grants full remote control, so enable it only on machines the
+  same operator owns. Unpair removes a machine from both sides.
+- **Verification.** End-to-end with three real server processes: mesh off ⇒ no
+  introductions; a machine that did not opt in is refused (403) and stays
+  unpaired; after all opt in, B↔C get paired, B reads C's processes through the
+  proxy, and a second sync is a no-op. Unit tests: `tests/known-peers.test.js`.
+- Version bumped to `0.35.0`; asset cache-buster token moved to `v0350`.

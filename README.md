@@ -223,6 +223,8 @@ The **Files** view browses the host filesystem: navigate directories, read and e
 
 Scan a QR from your phone, pair several Citadel machines and expose the panel globally (Cloudflare Quick Tunnel, or a stable URL on your own domain from **Settings → Tunnel**). Quick start: `citadel qr` (or `citadel qr --url` on small terminals), `citadel tunnel`, `citadel tunnel --domain=HOST --token=TOKEN`. Full details: [docs/remote-access.md](docs/remote-access.md).
 
+**Mesh pairing (opt-in).** In **Settings → Machines** turn on *Auto-pair with all my machines* on each Citadel that should join. Machines that are already paired then introduce them to each other, so every machine ends up paired with every other one (single-use invitations, one token per direction, no credential vault merge). Once paired, the machine selector under the logo opens any machine's terminals, logs and processes. Machines with mesh off refuse introductions; *Unpair* removes a machine from both sides.
+
 ### Git credentials for terminals
 
 The installer also registers a git credential helper (`/usr/local/bin/citadel-git-credential`) system-wide. It lets plain `git fetch/pull/push` inside project terminals reuse the provider tokens you stored in **Repositories**, decrypting them on demand — tokens are never written to disk in clear text. It only resolves credentials for hosts that have a configured provider (GitHub/GitLab).
