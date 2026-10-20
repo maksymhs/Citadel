@@ -1127,6 +1127,7 @@
   function monitorCtx() {
     return {
       localApi, escapeHtml, showToast, openModal, reloadWhenServerReady,
+      openOverview: () => navigateTo('machines'),
       isAdmin: Boolean(state.user && state.user.role === 'admin'),
       switchHost: (id) => (id === state.activeHostId ? navigateTo('dashboard') : switchHost(id)),
     };
@@ -1231,7 +1232,7 @@
               <h3 class="widget-heading">Machines</h3>
               <div id="dash-machines-summary" class="mon-muted" style="margin-top:2px;">Checking…</div>
             </div>
-            <button class="btn btn-secondary btn-sm" id="dash-machines-open">Open</button>
+            <button class="btn btn-secondary btn-sm" id="dash-machines-open">Machines overview &rarr;</button>
           </div>
           <div id="dash-machines-body"><div class="mon-muted">Loading…</div></div>`);
       case 'fleet':
