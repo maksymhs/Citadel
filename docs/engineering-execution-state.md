@@ -1470,3 +1470,10 @@ README/.env.example/architecture. No commits/pushes/deploys.
   public hostnames. Existing installs pick it up on `citadel update` followed by
   `sudo systemctl restart citadel-tunnel`.
 - Version bumped to `0.33.11`; asset cache-buster token moved to `v03311`.
+
+## 86. Tunnel setup verifies itself and rolls back (v0.33.12)
+- After starting a named tunnel, Settings → Tunnel polls `https://<domain>/api/auth/status`
+  from the host (up to ~80 s, progress shown in the card). If it never answers
+  the temporary Quick Tunnel is restored automatically and the card explains
+  why, so a failed domain setup can no longer leave the panel unreachable.
+- Version bumped to `0.33.12`; asset cache-buster token moved to `v03312`.

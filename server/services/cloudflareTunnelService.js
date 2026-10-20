@@ -163,8 +163,38 @@ async function finishSetup(domain) {
   fs.chmodSync(TOKEN_FILE, 0o600);
   fs.writeFileSync(DOMAIN_FILE, `${domain}\n`, { mode: 0o600 });
 
-  setJob({ message: 'Starting the tunnel service…' });
+  setJob({ message: 'Starting the tunnel service…', detail: '' });
   runHelper(['up']);
+
+  // Never leave the panel unreachable: the new address must answer from this
+  // very machine, otherwise fall back to a temporary URL and report why.
+  setJob({ message: `Checking https://${domain}…` });
+  const reachable = await waitForPublicUrl(domain);
+  if (!reachable.ok) {
+    logSetup(`  ${domain} did not answer (${reachable.reason}); reverting to a temporary URL`);
+    try { revertToQuick(); } catch (err) { logSetup(`  revert failed: ${err.message}`); }
+    throw new Error(`https://${domain} did not answer (${reachable.reason}), so the temporary URL was restored. Check the DNS record and try again.`);
+  }
+}
+
+/** Poll the public hostname until the panel answers through the tunnel. */
+async function waitForPublicUrl(domain, { attempts = 20, delayMs = 4000 } = {}) {
+  let reason = 'no response';
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const res = await fetch(`https://${domain}/api/auth/status`, {
+        signal: AbortSignal.timeout(8000),
+        headers: { 'User-Agent': 'Citadel-TunnelCheck' },
+      });
+      if (res.ok) return { ok: true };
+      reason = `HTTP ${res.status}`;
+    } catch (err) {
+      reason = err.cause && err.cause.code ? err.cause.code : err.name;
+    }
+    setJob({ detail: `Waiting for https://${domain} (${reason})…` });
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return { ok: false, reason };
 }
 
 /** Begin the login → create → route → start flow. Returns immediately. */
