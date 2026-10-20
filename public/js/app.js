@@ -1405,9 +1405,9 @@
   function renderProjectsActions() {
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
-      <button class="btn btn-secondary btn-sm" id="proj-creds-btn">Git</button>
-      <button class="btn btn-secondary btn-sm" id="proj-import-btn">Import Folder</button>
-      <button class="btn btn-primary btn-sm" id="proj-create-btn">+ New Project</button>
+      <button class="btn btn-secondary btn-sm" id="proj-creds-btn" title="Git providers and your remote repositories">Git providers</button>
+      <button class="btn btn-secondary btn-sm" id="proj-import-btn" title="Register an existing folder as a project">Import folder</button>
+      <button class="btn btn-primary btn-sm" id="proj-create-btn">+ New project</button>
     `;
     document.getElementById('proj-create-btn').onclick = showCreateProjectModal;
     document.getElementById('proj-import-btn').onclick = showImportProjectModal;
@@ -1450,59 +1450,53 @@
       return;
     }
 
+    const projectRow = (p) => {
+      const repos = p.repos_count || 0;
+      const sessions = p.active_sessions_count || 0;
+      return `
+        <div class="proj-item" data-proj-search="${escapeHtml(`${p.name} ${p.path} ${p.description || ''}`.toLowerCase())}">
+          <div class="proj-row">
+            <div class="proj-main">
+              <div class="proj-name">
+                <strong>${escapeHtml(p.name)}</strong>
+                ${p.existsOnDisk ? '' : '<span class="badge badge-danger">Missing</span>'}
+                ${sessions > 0 ? `<span class="badge badge-success" title="Persistent terminals running">${sessions} terminal${sessions === 1 ? '' : 's'}</span>` : ''}
+              </div>
+              ${p.description ? `<div class="proj-desc">${escapeHtml(p.description)}</div>` : ''}
+              <div class="proj-path">${escapeHtml(p.path)}</div>
+            </div>
+            <div class="proj-actions">
+              <button class="btn btn-secondary btn-sm toggle-repos-btn" data-project-id="${p.id}" aria-expanded="false">
+                ${repos} repo${repos === 1 ? '' : 's'} <span class="proj-caret">&#9662;</span>
+              </button>
+              <button class="btn btn-primary btn-sm open-workspace-btn" data-project-id="${p.id}">Open</button>
+              <button class="btn btn-secondary btn-sm proj-menu-btn" data-project-id="${p.id}" data-project-name="${escapeHtml(p.name)}" aria-label="More actions" title="More actions">&#8943;</button>
+            </div>
+          </div>
+          <div class="proj-repos" id="repos-row-${p.id}" hidden>
+            <div class="repo-detail-body" data-project-id="${p.id}">
+              <div class="mon-muted">Loading repositories...</div>
+            </div>
+          </div>
+        </div>`;
+    };
+
     content.innerHTML = `
-      <div class="table-container">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Directory on VPS</th>
-              <th>Repositories</th>
-              <th>PTY Sessions</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${state.projects.map((p) => `
-              <tr>
-                <td data-label="Name">
-                  <strong style="color:var(--text-primary);">${escapeHtml(p.name)}</strong>
-                  <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(p.description || '')}</div>
-                </td>
-                <td data-label="Directory" style="font-family:var(--font-mono);font-size:12px;">
-                  ${escapeHtml(p.path)}
-                  ${p.existsOnDisk ? '' : '<span class="badge badge-danger" style="margin-left:6px;">Missing</span>'}
-                </td>
-                <td data-label="Repositories">
-                  <button class="btn btn-secondary btn-sm toggle-repos-btn" data-project-id="${p.id}">
-                    ${p.repos_count || 0} repo${(p.repos_count || 0) === 1 ? '' : 's'} &#9662;
-                  </button>
-                </td>
-                <td data-label="PTY Sessions">
-                  <span class="badge ${p.active_sessions_count > 0 ? 'badge-success' : 'badge-muted'}">
-                    ${p.active_sessions_count} active
-                  </span>
-                </td>
-                <td data-label="Actions">
-                  <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                    <button class="btn btn-primary btn-sm open-workspace-btn" data-project-id="${p.id}">Open Workspace</button>
-                    <button class="btn btn-secondary btn-sm assoc-repo-btn" data-project-id="${p.id}" data-project-name="${escapeHtml(p.name)}">+ Repository</button>
-                    <button class="btn btn-danger btn-sm delete-project-btn" data-project-id="${p.id}" data-project-name="${escapeHtml(p.name)}">Delete</button>
-                  </div>
-                </td>
-              </tr>
-              <tr class="repo-detail-row" id="repos-row-${p.id}" hidden>
-                <td colspan="5" style="background:var(--bg-tertiary);">
-                  <div class="repo-detail-body" data-project-id="${p.id}">
-                    <div style="color:var(--text-muted);font-size:13px;">Loading repositories...</div>
-                  </div>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
+      <div class="proj-toolbar">
+        <span class="proj-count">${state.projects.length} project${state.projects.length === 1 ? '' : 's'}</span>
+        ${state.projects.length >= 6 ? '<input type="search" class="form-input" id="proj-search" placeholder="Filter projects…" autocomplete="off">' : ''}
+      </div>
+      <div class="proj-list" id="proj-list">
+        ${state.projects.map(projectRow).join('')}
       </div>
     `;
+
+    document.getElementById('proj-search')?.addEventListener('input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      document.querySelectorAll('#proj-list .proj-item').forEach((el) => {
+        el.hidden = Boolean(q) && !el.getAttribute('data-proj-search').includes(q);
+      });
+    });
 
     document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
       btn.onclick = () => {
@@ -1518,47 +1512,51 @@
         const row = document.getElementById(`repos-row-${btn.getAttribute('data-project-id')}`);
         if (!row) return;
         row.hidden = !row.hidden;
+        btn.setAttribute('aria-expanded', row.hidden ? 'false' : 'true');
+        btn.classList.toggle('open', !row.hidden);
         if (!row.hidden) loadProjectRepos(btn.getAttribute('data-project-id'));
       };
     });
 
-    document.querySelectorAll('.assoc-repo-btn').forEach((btn) => {
-      btn.onclick = () => {
-        const id = btn.getAttribute('data-project-id');
-        const project = state.projects.find((p) => p.id === id);
-        showAssociateRepoModal(project);
-      };
-    });
-
-    document.querySelectorAll('.delete-project-btn').forEach((btn) => {
+    document.querySelectorAll('.proj-menu-btn').forEach((btn) => {
       btn.onclick = () => {
         const id = btn.getAttribute('data-project-id');
         const name = btn.getAttribute('data-project-name');
-        openModal({
-          title: `Delete Project "${name}"`,
-          bodyHtml: `
-            <p style="margin-bottom:12px;color:var(--text-secondary);">
-              Do you want to unlink this project from Citadel?
-            </p>
-            <div style="background:var(--bg-tertiary);padding:12px;border-radius:6px;margin-bottom:12px;">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                <input type="checkbox" id="del-files-check">
-                <span style="color:var(--danger-color);font-weight:600;">Also delete the files from disk</span>
-              </label>
-              <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
-                By default, your files are preserved untouched on the VPS.
-              </div>
-            </div>
-          `,
-          confirmText: 'Delete Project',
-          onConfirm: async () => {
-            const delFiles = document.getElementById('del-files-check')?.checked || false;
-            await api(`/api/projects/${id}?deleteFiles=${delFiles}`, { method: 'DELETE' });
-            showToast('Project deleted.', 'success');
-            renderProjectsView();
-          },
-        });
+        const project = state.projects.find((p) => p.id === id);
+        openContextMenu(btn, [
+          { label: 'Associate a folder…', onSelect: () => showAssociateRepoModal(project) },
+          { label: 'Clone a repository here…', onSelect: () => showCloneRepoModal(project) },
+          { sep: true },
+          { label: 'Delete project…', danger: true, onSelect: () => showDeleteProjectModal(id, name) },
+        ]);
       };
+    });
+  }
+
+  function showDeleteProjectModal(id, name) {
+    openModal({
+      title: `Delete Project "${name}"`,
+      bodyHtml: `
+        <p style="margin-bottom:12px;color:var(--text-secondary);">
+          Do you want to unlink this project from Citadel?
+        </p>
+        <div style="background:var(--bg-tertiary);padding:12px;border-radius:6px;margin-bottom:12px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" id="del-files-check">
+            <span style="color:var(--danger-color);font-weight:600;">Also delete the files from disk</span>
+          </label>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
+            By default, your files are preserved untouched on the VPS.
+          </div>
+        </div>
+      `,
+      confirmText: 'Delete Project',
+      onConfirm: async () => {
+        const delFiles = document.getElementById('del-files-check')?.checked || false;
+        await api(`/api/projects/${id}?deleteFiles=${delFiles}`, { method: 'DELETE' });
+        showToast('Project deleted.', 'success');
+        renderProjectsView();
+      },
     });
   }
 
@@ -1859,16 +1857,16 @@
     const configured = providers.filter((p) => p.configured);
 
     content.innerHTML = `
-      <div style="margin-bottom:24px;">
-        <h2 style="font-size:18px;margin-bottom:6px;">Git Repositories</h2>
-        <p style="color:var(--text-secondary);">
-          Connect a provider with a personal access token to browse and clone your private repositories.
-          Tokens are encrypted at rest on the server.
-        </p>
+      <div class="proj-subhead">
+        <button class="top-bar-back" id="repos-back-btn"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg><span>Projects</span></button>
+        <div>
+          <h2 style="font-size:18px;">Git providers</h2>
+          <p class="mon-muted">Connect a provider with a personal access token to browse and clone your private repositories. Tokens are encrypted at rest.</p>
+        </div>
       </div>
 
       <div class="card" style="margin-bottom:24px;">
-        <h3 style="font-size:15px;font-weight:600;margin-bottom:14px;">Provider Connections</h3>
+        <h3 style="font-size:15px;font-weight:600;margin-bottom:14px;">Connections</h3>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;">
           ${providers.map((p) => renderProviderCard(p)).join('')}
         </div>
@@ -1894,6 +1892,10 @@
       </div>
     `;
 
+    document.getElementById('repos-back-btn').onclick = () => {
+      content.style.padding = '';
+      renderProjectsView();
+    };
     document.querySelectorAll('.provider-connect-btn').forEach((btn) => {
       btn.onclick = () => connectProvider(btn.getAttribute('data-provider'));
     });
