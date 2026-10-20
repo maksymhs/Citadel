@@ -193,13 +193,66 @@
   }
 
   // API helper with cookie credentials
+  // --- Connection awareness ---------------------------------------------------
+  // A gateway error page (Cloudflare 502...) or a network failure means this
+  // panel cannot be reached. Show a banner and keep probing until it is back.
+  // JSON errors are the panel's own answers (e.g. a paired machine being down)
+  // and do not count.
+  const conn = { up: true, timer: null };
+
+  function looksDown(res) {
+    const type = (res.headers && res.headers.get('content-type')) || '';
+    return [502, 503, 504, 530].includes(res.status) && !type.includes('application/json');
+  }
+
+  function noteConnection(up) {
+    if (up === conn.up) return;
+    conn.up = up;
+    let banner = document.getElementById('conn-banner');
+    if (!up) {
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'conn-banner';
+        banner.className = 'conn-banner';
+        banner.setAttribute('role', 'status');
+        document.body.appendChild(banner);
+      }
+      banner.innerHTML = '<span class="conn-spinner"></span><span>Connection lost — retrying…</span>';
+      banner.hidden = false;
+      clearInterval(conn.timer);
+      conn.timer = setInterval(async () => {
+        try {
+          const res = await fetch('/api/system/version', { cache: 'no-store', credentials: 'same-origin' });
+          if (!looksDown(res)) noteConnection(true);
+        } catch { /* still down */ }
+      }, 4000);
+    } else {
+      clearInterval(conn.timer);
+      conn.timer = null;
+      if (banner) banner.hidden = true;
+      showToast('Connection restored.', 'success');
+    }
+  }
+
+  async function netFetch(url, opts) {
+    let res;
+    try {
+      res = await fetch(url, opts);
+    } catch (err) {
+      noteConnection(false);
+      throw new Error('Cannot reach the server. Check your connection.');
+    }
+    noteConnection(!looksDown(res));
+    return res;
+  }
+
   async function api(path, options = {}) {
     const opts = { ...options, headers: { ...(options.headers || {}) } };
     if (opts.body && typeof opts.body === 'object') {
       opts.body = JSON.stringify(opts.body);
       opts.headers['Content-Type'] = 'application/json';
     }
-    const res = await fetch(hostApiPath(path), opts);
+    const res = await netFetch(hostApiPath(path), opts);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.error || data.message || `Request failed (${res.status})`);
@@ -214,7 +267,7 @@
       opts.body = JSON.stringify(opts.body);
       opts.headers['Content-Type'] = 'application/json';
     }
-    const res = await fetch(path, opts);
+    const res = await netFetch(path, opts);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.error || data.message || `Request failed (${res.status})`);
@@ -582,6 +635,9 @@
               <div class="top-bar-title" id="top-bar-title">Dashboard</div>
             </div>
             <div class="top-bar-actions" id="top-bar-actions"></div>
+            <button class="top-bar-icon" id="palette-btn" type="button" aria-label="Search (Ctrl+K)" title="Search (Ctrl+K)">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"/></svg>
+            </button>
           </header>
           <main class="content-body" id="main-content"></main>
         </div>
@@ -604,6 +660,7 @@
     renderSidebarNav();
     bindSidebarNav(closeSidebar);
 
+    document.getElementById('palette-btn').onclick = openCommandPalette;
     document.getElementById('theme-btn').onclick = () => {
       const mode = currentThemeMode();
       setTheme(THEME_ORDER[(THEME_ORDER.indexOf(mode) + 1) % THEME_ORDER.length]);
@@ -1933,12 +1990,93 @@
   // detaches their DOM containers. Returning to the view re-mounts the existing
   // containers into the new viewport and re-fits them, while the server keeps the
   // tmux/PTY session running, so nothing is lost.
+  // Terminal text size: A-/A+ in the toolbar, remembered per browser.
+  function terminalFontSize(mobile = document.documentElement.classList.contains('is-mobile-ui')) {
+    let saved = NaN;
+    try { saved = parseInt(localStorage.getItem('citadel.termFont'), 10); } catch { /* ignore */ }
+    return Number.isFinite(saved) ? Math.min(Math.max(saved, 8), 24) : (mobile ? 10 : 12);
+  }
+
+  function changeTerminalFont(delta) {
+    const size = Math.min(Math.max(terminalFontSize() + delta, 8), 24);
+    try { localStorage.setItem('citadel.termFont', String(size)); } catch { /* ignore */ }
+    for (const item of [...state.terminals.values(), ...state.sysTerminals.values()]) {
+      if (item.disposed) continue;
+      item.term.options.fontSize = size;
+      fitTerminalItem(item);
+    }
+    showToast(`Terminal text size ${size}.`, 'info');
+  }
+
+  function fontButtonsHtml(prefix) {
+    return `<button class="btn btn-secondary btn-sm" style="margin-left:auto;" id="${prefix}-font-dec" title="Smaller text" aria-label="Smaller text">A&minus;</button>
+          <button class="btn btn-secondary btn-sm" id="${prefix}-font-inc" title="Larger text" aria-label="Larger text">A+</button>`;
+  }
+
+  // On-screen keys for touch devices (hidden on desktop by CSS): the keys a
+  // phone keyboard lacks. Ctrl is sticky: it applies to the next typed letter.
+  const TERM_KEYS = [
+    ['esc', 'Esc'], ['tab', 'Tab'], ['ctrl', 'Ctrl'], ['up', '↑'], ['down', '↓'], ['left', '←'], ['right', '→'],
+    ['pipe', '|'], ['tilde', '~'], ['slash', '/'], ['dash', '-'], ['home', 'Home'], ['end', 'End'],
+  ];
+  const TERM_KEY_SEQ = {
+    esc: '\x1b', tab: '\t', pipe: '|', tilde: '~', slash: '/', dash: '-',
+    up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D', home: '\x1b[H', end: '\x1b[F',
+  };
+
+  function termKeysHtml(id) {
+    return `<div class="term-keys" id="${id}" role="toolbar" aria-label="Extra terminal keys">${TERM_KEYS.map(([key, label]) => `<button type="button" class="term-key" data-key="${key}">${label}</button>`).join('')}</div>`;
+  }
+
+  function bindTerminalKeys(id, getItem) {
+    const bar = document.getElementById(id);
+    if (!bar) return;
+    const sync = syncCtrlKeys;
+    bar.querySelectorAll('.term-key').forEach((btn) => {
+      // Keep focus (and the on-screen keyboard) on the terminal.
+      btn.addEventListener('pointerdown', (e) => e.preventDefault());
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+      btn.onclick = () => {
+        const item = getItem();
+        if (!item || item.disposed) return;
+        const key = btn.getAttribute('data-key');
+        if (key === 'ctrl') {
+          item.ctrl = !item.ctrl;
+          sync();
+          return;
+        }
+        let seq = TERM_KEY_SEQ[key];
+        if (item.term.modes && item.term.modes.applicationCursorKeysMode && /^\x1b\[[ABCD]$/.test(seq)) {
+          seq = `\x1bO${seq.slice(-1)}`;
+        }
+        if (item.ctrl && seq.length === 1) {
+          const code = seq.toUpperCase().charCodeAt(0);
+          if (code >= 64 && code <= 95) seq = String.fromCharCode(code - 64);
+          item.ctrl = false;
+          sync();
+        }
+        if (item.ws && item.ws.readyState === WebSocket.OPEN) {
+          item.ws.send(JSON.stringify({ type: 'input', data: seq }));
+        }
+        item.term.focus();
+      };
+    });
+  }
+
+  // Highlight Ctrl on whichever key bars exist, from the state of their terminals.
+  function syncCtrlKeys() {
+    document.querySelectorAll('.term-keys').forEach((bar) => {
+      const item = bar.id.startsWith('sys') ? state.sysTerminals.get(state.activeSysTerminalId) : state.terminals.get(state.activeTerminalId);
+      bar.querySelector('[data-key="ctrl"]')?.classList.toggle('active', Boolean(item && item.ctrl));
+    });
+  }
+
   function createXterm() {
     // Smaller font on phones/tablets so more columns and rows fit on screen.
     const mobile = document.documentElement.classList.contains('is-mobile-ui');
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: mobile ? 10 : 12,
+      fontSize: terminalFontSize(mobile),
       lineHeight: 1.0,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       theme: {
@@ -1978,6 +2116,13 @@
     };
 
     term.onData((data) => {
+      // Sticky Ctrl from the on-screen keys turns the next letter into a control key.
+      if (item.ctrl && data.length === 1) {
+        const code = data.toUpperCase().charCodeAt(0);
+        if (code >= 64 && code <= 95) data = String.fromCharCode(code - 64);
+        item.ctrl = false;
+        syncCtrlKeys();
+      }
       if (item.ws && item.ws.readyState === WebSocket.OPEN) {
         item.ws.send(JSON.stringify({ type: 'input', data }));
       }
@@ -2842,7 +2987,8 @@
       <div class="workspace-container">
         <div class="terminal-tabs-bar" id="sys-terminal-tabs-container">
           <span class="badge badge-muted" id="sys-host-badge" style="margin-right:6px;">Host shell</span>
-          <button class="btn btn-secondary btn-sm select-btn" style="margin-left:auto;" id="sys-select-btn" title="Select and copy text (screen and history)">
+          ${fontButtonsHtml('sys')}
+          <button class="btn btn-secondary btn-sm select-btn" id="sys-select-btn" title="Select and copy text (screen and history)">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7V5a1 1 0 011-1h2M4 17v2a1 1 0 001 1h2m10-16h2a1 1 0 011 1v2m0 10v2a1 1 0 01-1 1h-2M9 12h6"/></svg>
             <span class="paste-label">Select</span>
           </button>
@@ -2860,12 +3006,16 @@
           </button>
         </div>
         <div class="terminal-view-wrapper" id="sys-terminal-viewport"></div>
+        ${termKeysHtml('sys-term-keys')}
       </div>
     `;
 
     document.getElementById('sys-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.sysTerminals.get(state.activeSysTerminalId), 'sys-copy-mode-btn');
     };
+    document.getElementById('sys-font-dec').onclick = () => changeTerminalFont(-1);
+    document.getElementById('sys-font-inc').onclick = () => changeTerminalFont(1);
+    bindTerminalKeys('sys-term-keys', () => state.sysTerminals.get(state.activeSysTerminalId));
     document.getElementById('sys-select-btn').onclick = () => {
       openTerminalSelect(() => state.sysTerminals.get(state.activeSysTerminalId));
     };
@@ -3116,7 +3266,8 @@
         <!-- Toolbar (terminal switching lives in the sidebar) -->
         <div class="terminal-tabs-bar" id="terminal-tabs-container">
           <span class="badge badge-muted ws-context-badge">${escapeHtml(currentProject.name)}</span>
-          <button class="btn btn-secondary btn-sm select-btn" style="margin-left:auto;" id="ws-select-btn" title="Select and copy text (screen and history)">
+          ${fontButtonsHtml('ws')}
+          <button class="btn btn-secondary btn-sm select-btn" id="ws-select-btn" title="Select and copy text (screen and history)">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7V5a1 1 0 011-1h2M4 17v2a1 1 0 001 1h2m10-16h2a1 1 0 011 1v2m0 10v2a1 1 0 01-1 1h-2M9 12h6"/></svg>
             <span class="paste-label">Select</span>
           </button>
@@ -3135,12 +3286,16 @@
         </div>
         <!-- Terminal Body -->
         <div class="terminal-view-wrapper" id="terminal-viewport"></div>
+        ${termKeysHtml('ws-term-keys')}
       </div>
     `;
 
     document.getElementById('ws-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
     };
+    document.getElementById('ws-font-dec').onclick = () => changeTerminalFont(-1);
+    document.getElementById('ws-font-inc').onclick = () => changeTerminalFont(1);
+    bindTerminalKeys('ws-term-keys', () => state.terminals.get(state.activeTerminalId));
     document.getElementById('ws-select-btn').onclick = () => {
       openTerminalSelect(() => state.terminals.get(state.activeTerminalId));
     };
@@ -5304,6 +5459,148 @@
   }
 
   // Modules & Extensions management, rendered inside the Settings screen.
+  // --- Command palette (Ctrl+K) ------------------------------------------------
+  // One box to jump anywhere: screens, Settings sections, machines, projects and
+  // common actions. Ctrl/Cmd+K opens it outside the terminal (inside it Ctrl+K
+  // belongs to the shell); the search button in the top bar works everywhere.
+  function paletteItems() {
+    const items = [];
+    const add = (group, label, hint, run) => items.push({ group, label, hint: hint || '', run });
+    const go = (view) => () => navigateTo(view);
+
+    add('Go to', 'Dashboard', 'Active machine overview', go('dashboard'));
+    add('Go to', 'Projects', 'Projects and repositories', go('projects'));
+    add('Go to', 'Workspace', 'Terminals', go('workspace'));
+    add('Go to', 'Files', 'File explorer', go('files'));
+    add('Go to', 'Settings', 'Home', () => openSettingsAt(null));
+    for (const [id, def] of Object.entries(SETTINGS_SECTIONS)) {
+      add('Settings', def.title, def.desc.split('. ')[0].slice(0, 70), () => openSettingsAt(id));
+    }
+    add('Settings', 'Service log', 'Citadel service log', () => { state.activityTab = 'service'; navigateTo('activity'); });
+    add('Settings', 'Audit trail', 'Security audit', () => { state.activityTab = 'audit'; navigateTo('activity'); });
+    for (const item of OPTIONAL_NAV) {
+      if (moduleEnabled(item.module)) add('Go to', item.label, 'Module', go(item.view));
+    }
+
+    const hosts = [{ id: 'local', name: (state.hostIdentity && state.hostIdentity.name) || 'This machine' }, ...state.hosts];
+    for (const h of hosts) {
+      if (h.id !== state.activeHostId) add('Machines', `Switch to ${h.name}`, h.id === 'local' ? 'This machine' : 'Paired machine', () => switchHost(h.id));
+    }
+    for (const p of state.projects.slice(0, 60)) {
+      add('Projects', `Open ${p.name}`, p.path, () => openProjectOn(state.activeHostId, p.id));
+    }
+
+    add('Actions', 'Pair a machine', 'Scan or paste a pairing code', () => showPairModal());
+    add('Actions', 'New project', '', () => { navigateTo('projects'); setTimeout(showCreateProjectModal, 50); });
+    add('Actions', 'Check machines now', 'Refresh health of every machine', async () => {
+      try { await localApi('/api/monitor/refresh', { method: 'POST' }); showToast('Machines checked.', 'success'); } catch (err) { showToast(err.message, 'error'); }
+    });
+    add('Actions', 'Theme: Dark', '', () => setTheme('dark'));
+    add('Actions', 'Theme: Light', '', () => setTheme('light'));
+    add('Actions', 'Theme: Match system', '', () => setTheme('auto'));
+    add('Actions', 'Reload page', '', () => window.location.reload());
+    add('Actions', 'Log out', '', () => document.getElementById('logout-btn')?.click());
+    return items;
+  }
+
+  // Subsequence match with a small score: earlier and tighter matches rank first.
+  function paletteScore(text, query) {
+    if (!query) return 1;
+    const t = text.toLowerCase();
+    const direct = t.indexOf(query);
+    if (direct !== -1) return 1000 - direct;
+    let pos = 0;
+    let score = 0;
+    for (const ch of query) {
+      const found = t.indexOf(ch, pos);
+      if (found === -1) return 0;
+      score += 10 - Math.min(found - pos, 9);
+      pos = found + 1;
+    }
+    return score;
+  }
+
+  function openCommandPalette() {
+    if (document.getElementById('cmd-palette') || !state.user) return;
+    const items = paletteItems();
+    const overlay = document.createElement('div');
+    overlay.id = 'cmd-palette';
+    overlay.className = 'cmd-overlay';
+    overlay.innerHTML = `
+      <div class="cmd-box" role="dialog" aria-modal="true" aria-label="Command palette">
+        <input type="text" class="cmd-input" id="cmd-input" placeholder="Search screens, machines, projects, actions…" autocomplete="off" spellcheck="false">
+        <div class="cmd-list" id="cmd-list" role="listbox"></div>
+        <div class="cmd-foot"><span>↑↓ move</span><span>Enter open</span><span>Esc close</span></div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector('#cmd-input');
+    const list = overlay.querySelector('#cmd-list');
+    let shown = [];
+    let active = 0;
+
+    const draw = () => {
+      const q = input.value.trim().toLowerCase();
+      shown = items
+        .map((it) => ({ it, score: Math.max(paletteScore(it.label, q), q ? paletteScore(`${it.group} ${it.hint}`, q) / 2 : 0) }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => (q ? b.score - a.score : 0))
+        .slice(0, 40)
+        .map((x) => x.it);
+      active = Math.min(active, Math.max(shown.length - 1, 0));
+      let lastGroup = null;
+      list.innerHTML = shown.length ? shown.map((it, i) => {
+        const head = !q && it.group !== lastGroup ? `<div class="cmd-group">${escapeHtml(it.group)}</div>` : '';
+        lastGroup = it.group;
+        return `${head}<div class="cmd-item${i === active ? ' active' : ''}" role="option" data-i="${i}">
+          <span class="cmd-label">${escapeHtml(it.label)}</span>
+          <span class="cmd-hint">${escapeHtml(q ? it.group : it.hint)}</span>
+        </div>`;
+      }).join('') : '<div class="cmd-empty">Nothing matches.</div>';
+      list.querySelector('.cmd-item.active')?.scrollIntoView({ block: 'nearest' });
+    };
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey, true);
+    };
+    const run = (i) => {
+      const it = shown[i];
+      if (!it) return;
+      close();
+      Promise.resolve().then(() => it.run());
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, shown.length - 1); draw(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); draw(); }
+      else if (e.key === 'Enter') { e.preventDefault(); run(active); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    input.addEventListener('input', () => { active = 0; draw(); });
+    list.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-i]');
+      if (row) run(Number(row.getAttribute('data-i')));
+    });
+    list.addEventListener('mousemove', (e) => {
+      const row = e.target.closest('[data-i]');
+      if (row && Number(row.getAttribute('data-i')) !== active) {
+        active = Number(row.getAttribute('data-i'));
+        list.querySelectorAll('.cmd-item').forEach((el, i) => el.classList.toggle('active', i === active));
+      }
+    });
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+    draw();
+    input.focus();
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'k') return;
+    // Inside a terminal Ctrl+K belongs to the shell.
+    if (e.target && e.target.closest && e.target.closest('.terminal-element, .xterm')) return;
+    e.preventDefault();
+    openCommandPalette();
+  });
+
   // Run on page load
   document.addEventListener('DOMContentLoaded', init);
 })();
