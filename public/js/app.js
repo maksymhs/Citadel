@@ -4500,17 +4500,12 @@
               </div>` : ''}
               ${canPair && state.hosts.length > 0 ? `
               <div id="update-propagate" style="margin-top:12px;font-size:13px;">
-                <div style="font-size:12px;color:var(--text-muted);line-height:1.5;">
-                  Updating this machine also updates your paired machines, one at a time. Each must come back healthy on the new version before the next one starts; the rollout stops at the first one that does not.
-                </div>
-                <div style="margin:6px 0 0;">
-                  <button class="btn btn-secondary btn-sm" id="update-rollout-now">Update paired machines now</button>
-                </div>
-                <div id="update-rollout-status" style="margin:6px 0 0;font-size:12px;color:var(--text-muted);"></div>
+                <div id="update-rollout-status" style="font-size:12px;color:var(--text-muted);"></div>
               </div>` : ''}
             </div>
             <div style="display:flex;gap:8px;flex-shrink:0;">
               <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
+              ${canPair && state.hosts.length > 0 ? '<button class="btn btn-secondary btn-sm" id="update-rollout-now">Update paired machines</button>' : ''}
               ${ver.canUpdate ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
             </div>
           </div>
