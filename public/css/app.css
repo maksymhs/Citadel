@@ -2152,3 +2152,50 @@ html.is-mobile-ui .data-table tr:hover td {
   .mon-detail-grid, .mon-charts { grid-template-columns: 1fr; }
   .mon-alert .mon-muted { margin-left: 0; }
 }
+
+/* Settings: compact "this machine" header (QR left, details right) */
+.settings-hero {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 24px;
+  padding: 16px 18px;
+}
+.settings-hero-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.settings-hero-qr .connect-qr { padding: 6px; border-radius: 6px; }
+.settings-hero-qr .connect-qr svg { width: 128px; }
+.settings-hero-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  font-size: 13px;
+}
+.settings-hero-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.settings-hero-title strong { font-size: 16px; }
+.settings-hero-title span { color: var(--text-muted); font-size: 12px; }
+.settings-hero-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.settings-hero-line select { padding: 2px 6px; font-size: 12px; }
+.settings-hero-status { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.settings-hero-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-hero-address {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding-top: 8px; border-top: 1px solid var(--border-muted);
+}
+.settings-hero-address a {
+  color: var(--accent-color); font-family: var(--font-mono); font-size: 12px;
+  word-break: break-all; margin-right: auto; min-width: 0;
+}
+@media (max-width: 600px) {
+  .settings-hero { flex-direction: column; align-items: stretch; }
+  .settings-hero-qr { align-self: center; }
+}

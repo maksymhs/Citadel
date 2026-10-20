@@ -50,7 +50,7 @@
     dashboardPaused: false,
     tmuxAvailable: false,
     filesPath: '/',
-    filesMode: 'list', // 'list' (tree) | 'grid' (folder view)
+    filesMode: 'grid', // 'grid' (folder view, default) | 'list' (tree); list only lasts until you leave Files
     dashboardWidgets: null, // ordered widget ids, persisted per browser
   };
 
@@ -934,7 +934,6 @@
     state.workspaceNavOpen = ui.workspaceNavOpen !== false;
     state.workspaceNavContexts = Array.isArray(ui.workspaceNavContexts) ? ui.workspaceNavContexts.slice() : [];
     state.activityTab = ui.activityTab === 'audit' ? 'audit' : 'activity';
-    state.filesMode = ui.filesMode === 'grid' ? 'grid' : 'list';
     state.dashboardWidgets = Array.isArray(ui.dashboardWidgets) ? ui.dashboardWidgets.slice() : null;
     state.activeHostId = typeof ui.activeHostId === 'string' && ui.activeHostId ? ui.activeHostId : 'local';
     await loadLocalModules();
@@ -1001,6 +1000,8 @@
     view = resolveView(view);
     const from = state.currentView;
     if (from !== view && !Object.prototype.hasOwnProperty.call(DETAIL_VIEWS, from)) state.backView = from;
+    // Files always opens as a grid; the list toggle only lasts while you stay in Files.
+    if (view === 'files' && from !== 'files') state.filesMode = 'grid';
     state.currentView = view;
     updateBackButton(view);
     saveUiState({ currentView: view });
@@ -2417,7 +2418,6 @@
         const mode = btn.getAttribute('data-mode');
         if (mode === state.filesMode) return;
         state.filesMode = mode;
-        saveUiState({ filesMode: mode });
         renderFilesView();
       };
     });
@@ -4464,50 +4464,52 @@
         <div style="margin-bottom:24px;">
           <h2 style="font-size:20px;margin-bottom:6px;">Settings${activeHost ? ` · ${escapeHtml(activeHost)}` : ''}</h2>
           <p style="color:var(--text-secondary);font-size:13px;">
-            Updates, paired machines, how this host is reached, credentials and modules.
+            This machine, paired machines, how this host is reached and credentials.
           </p>
         </div>
 
-        <div style="margin-top:0;margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Updates</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">Keep this machine and the machines paired with it on the latest version.</p>
-        </div>
-
-        <div class="card" style="margin-bottom:24px;">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
-            <div>
-              <h3 style="font-size:16px;font-weight:600;">Version &amp; updates</h3>
-              <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
-                Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
-                ${ver.commit ? `<span style="color:var(--text-muted);">(${escapeHtml(ver.commit)})</span>` : ''}
-                ${ver.repo ? `· <code>${escapeHtml(ver.repo)}</code>` : ''}
-                ${ver.branch ? `· branch <code>${escapeHtml(ver.branch)}</code>` : ''}
-              </p>
-              <div id="update-status" style="margin-top:8px;font-size:13px;color:var(--text-muted);">
-                ${ver.updateMode === 'helper'
-                  ? 'The in-panel updater is enabled.'
-                  : ver.updateMode === 'self'
-                    ? 'Built-in updater enabled — updates run as the service user, no root helper required.'
-                    : `Automatic updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
-              </div>
-              ${canPair ? `
-              <div style="margin-top:12px;font-size:13px;">
-                <label for="update-channel" style="font-weight:600;">Update channel</label>
-                <select id="update-channel" class="input" style="margin-left:8px;">
-                  <option value="stable"${ver.channel === 'stable' ? ' selected' : ''}>Stable (latest release)</option>
-                  <option value="main"${ver.channel !== 'stable' ? ' selected' : ''}>Main (latest commit, may be unstable)</option>
-                </select>
-              </div>` : ''}
-              ${canPair && state.hosts.length > 0 ? `
-              <div id="update-propagate" style="margin-top:12px;font-size:13px;">
-                <div id="update-rollout-status" style="font-size:12px;color:var(--text-muted);"></div>
-              </div>` : ''}
+        <div class="card settings-hero">
+          ${qrSvg ? `<div class="settings-hero-qr" title="Scan to open this panel, or pair from another Citadel">
+            <div class="connect-qr">${qrSvg}</div>
+            <span>Scan to open or pair</span>
+          </div>` : ''}
+          <div class="settings-hero-body">
+            <div class="settings-hero-title">
+              <strong>${escapeHtml(node.hostname || panelHost)}</strong>
+              <span>${escapeHtml(node.platform || '')} ${escapeHtml(node.release || '')} · Node ${escapeHtml(node.nodeVersion || '')}${node.uptimeSeconds ? ` · up ${Math.round(node.uptimeSeconds / 3600)} h` : ''}</span>
             </div>
-            <div style="display:flex;gap:8px;flex-shrink:0;">
+            <div class="settings-hero-line">
+              Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
+              ${ver.commit ? `<span class="mon-muted">(${escapeHtml(ver.commit)})</span>` : ''}
+              ${canPair ? `<select id="update-channel" class="input" title="Update channel">
+                <option value="stable"${ver.channel === 'stable' ? ' selected' : ''}>Stable</option>
+                <option value="main"${ver.channel !== 'stable' ? ' selected' : ''}>Main (latest commit)</option>
+              </select>` : ''}
+            </div>
+            <div id="update-status" class="settings-hero-status">
+              ${ver.updateMode === 'helper'
+                ? 'The in-panel updater is enabled.'
+                : ver.updateMode === 'self'
+                  ? 'Built-in updater enabled.'
+                  : `Automatic updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
+            </div>
+            <div class="settings-hero-actions">
               <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
               ${canPair && state.hosts.length > 0 ? '<button class="btn btn-secondary btn-sm" id="update-rollout-now">Update paired machines</button>' : ''}
               ${ver.canUpdate ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
             </div>
+            ${canPair && state.hosts.length > 0 ? '<div id="update-rollout-status" class="settings-hero-status"></div>' : ''}
+            <div class="settings-hero-address">
+              <a href="${escapeHtml(qrAddress || '#')}" target="_blank" rel="noopener">${escapeHtml(qrAddress)}</a>
+              <button class="btn btn-secondary btn-sm" id="settings-copy-url">Copy link</button>
+              ${invite ? '<button class="btn btn-secondary btn-sm" id="settings-new-code">New code</button>' : ''}
+              <button class="btn btn-secondary btn-sm" id="connect-help-btn">Remote access help</button>
+            </div>
+            ${invite
+              ? `<div class="settings-hero-status">Pairing code works once · expires ${escapeHtml(new Date(invite.expiresAt).toLocaleTimeString())}.${invite.reachableWarning ? ` <span style="color:var(--warning-color);">${escapeHtml(invite.reachableWarning)}</span>` : ''}</div>`
+              : inviteError
+                ? `<div class="settings-hero-status" style="color:var(--danger-color);">Could not create a pairing code: ${escapeHtml(inviteError)}. Reload Settings to retry.</div>`
+                : '<div class="settings-hero-status">Sign in as an administrator to generate a pairing code.</div>'}
           </div>
         </div>
 
@@ -4554,35 +4556,6 @@
                 </div>`).join('')}
           </div>
           <div id="settings-suggestions" style="margin-top:6px;"></div>
-        </div>
-
-        <div class="card" style="margin-bottom:24px;">
-          <h3 class="widget-heading">Pairing code</h3>
-          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;line-height:1.6;">
-            Scan this code with any camera to open the panel on another device.
-            From another Citadel, open <strong>Pair a machine</strong> and scan the
-            same code to pair both machines.
-          </p>
-          <div class="connect-grid">
-            <div class="connect-qr">${qrSvg}</div>
-            <div style="min-width:0;flex:1;">
-              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Address</div>
-              <a href="${escapeHtml(qrAddress || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(qrAddress)}</a>
-              <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                <button class="btn btn-secondary btn-sm" id="settings-copy-url">Copy link</button>
-                ${invite ? '<button class="btn btn-secondary btn-sm" id="settings-new-code">New code</button>' : ''}
-                <button class="btn btn-secondary btn-sm" id="connect-help-btn">Remote access help</button>
-              </div>
-              ${invite
-                ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);line-height:1.5;">
-                    This pairing code works once and expires ${escapeHtml(new Date(invite.expiresAt).toLocaleTimeString())}.
-                    ${invite.reachableWarning ? `<span style="color:var(--warning-color);display:block;margin-top:4px;">${escapeHtml(invite.reachableWarning)}</span>` : ''}
-                  </div>`
-                : inviteError
-                  ? `<div style="margin-top:10px;font-size:12px;color:var(--danger-color);">Could not create a pairing code: ${escapeHtml(inviteError)}. Reload Settings to retry.</div>`
-                  : '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Sign in as an administrator to generate a pairing code.</div>'}
-            </div>
-          </div>
         </div>
 
         <div style="margin-top:28px;margin-bottom:20px;">
@@ -4638,33 +4611,6 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="activity">Open Activity</button>
             <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="audit">Open Audit</button>
-          </div>
-        </div>
-
-        <div style="margin-top:28px;margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">System</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">Details of this host.</p>
-        </div>
-
-        <div class="card" style="margin-bottom:24px;">
-          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">About this host</h3>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;font-size:13px;">
-            <div>
-              <span style="color:var(--text-muted);">Hostname:</span>
-              <strong style="display:block;margin-top:2px;">${escapeHtml(node.hostname || '')}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Operating System:</span>
-              <strong style="display:block;margin-top:2px;">${escapeHtml(node.platform || '')} ${escapeHtml(node.release || '')}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Node.js Runtime:</span>
-              <strong style="display:block;margin-top:2px;color:var(--accent-color);">${escapeHtml(node.nodeVersion || '')}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Uptime:</span>
-              <strong style="display:block;margin-top:2px;">${node.uptimeSeconds ? `${Math.round(node.uptimeSeconds / 3600)} hours` : '—'}</strong>
-            </div>
           </div>
         </div>
       `;
