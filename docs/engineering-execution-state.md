@@ -1599,3 +1599,10 @@ README/.env.example/architecture. No commits/pushes/deploys.
   terminal QR is still printed. The page is mode 0600 because it holds the
   single-use invitation (valid 10 minutes).
 - Version bumped to `0.36.5`; asset cache-buster token moved to `v0365`.
+
+## 96. Own-domain tunnel setup on macOS (v0.36.6)
+- Settings -> Tunnel now works on macOS: `scripts/tunnel-macos.sh` runs as the
+  user (no root helper), cloudflared is downloaded on demand and installed by the
+  macOS installer. Releasing it so existing installs stop showing "only available
+  on Linux hosts".
+- Version bumped to `0.36.6`; asset cache-buster token moved to `v0366`.
