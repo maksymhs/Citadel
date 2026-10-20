@@ -248,6 +248,35 @@ class TerminalManager {
   }
 
   /**
+   * Plain text of a session's screen plus scrollback, read from tmux. Lets the
+   * panel offer text selection (especially on phones) without relying on the
+   * browser terminal, which only holds the visible screen when tmux is in use.
+   */
+  captureSession(sessionId, lines = 1000) {
+    if (!this.isTmuxAvailable()) {
+      return { success: false, error: 'tmux is not available on this host.' };
+    }
+    const target = this._resolveTmuxSessionName(sessionId);
+    if (!target || !this.hasTmuxSession(target)) {
+      return { success: false, error: 'This session is not backed by an active tmux session.' };
+    }
+    const count = Math.min(Math.max(parseInt(lines, 10) || 1000, 20), 5000);
+    try {
+      // -J joins wrapped lines so copied commands are not broken at the width.
+      const res = spawnSync(this.getTmuxPath(), ['capture-pane', '-p', '-J', '-t', target, '-S', `-${count}`], {
+        encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+      });
+      if (res.status !== 0) {
+        return { success: false, error: (res.stderr || '').trim() || 'tmux command failed.' };
+      }
+      const text = String(res.stdout || '').replace(/\s+$/, '');
+      return { success: true, text, lines: text ? text.split('\n').length : 0 };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Get or create a terminal session for a project
    */
   createSession({ projectId = null, repoId = null, name = 'Terminal', cwd = null, agentId = null, cols = 80, rows = 24, command = null, args = [] }) {
@@ -493,6 +522,10 @@ class TerminalManager {
       // server; the per-session option makes sure a stale server-level value
       // can never win.
       spawnSync(tmuxBin, ['set-option', '-g', 'mouse', 'on'], { stdio: 'ignore' });
+      // Selecting text with the mouse in tmux also copies it to the browser's
+      // clipboard (OSC 52), so copying works from any device.
+      spawnSync(tmuxBin, ['set-option', '-g', 'set-clipboard', 'on'], { stdio: 'ignore' });
+      spawnSync(tmuxBin, ['set-option', '-ga', 'terminal-features', ',xterm*:clipboard'], { stdio: 'ignore' });
       if (sessionName) {
         spawnSync(tmuxBin, ['set-option', '-t', sessionName, 'mouse', 'on'], { stdio: 'ignore' });
       }

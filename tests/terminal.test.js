@@ -25,6 +25,12 @@ describe('Terminal & Persistent Session Tests', () => {
     if (fs.existsSync(projectDir2)) fs.rmSync(projectDir2, { recursive: true, force: true });
   });
 
+  test('captureSession reports an error for a session that does not exist', () => {
+    const res = terminalManager.captureSession('does-not-exist', 100);
+    assert.equal(res.success, false);
+    assert.ok(res.error);
+  });
+
   test('tmux availability check should return boolean', () => {
     const avail = terminalManager.isTmuxAvailable();
     assert.equal(typeof avail, 'boolean');

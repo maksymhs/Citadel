@@ -2379,3 +2379,24 @@ label.mon-row:hover { border-color: #444c56; }
 .mon-tile-text b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mon-tile-text i { font-style: normal; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mon-tile-live { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--success-color); box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.2); }
+
+/* Terminal: Select view and copy prompt */
+.term-select {
+  position: fixed; inset: 0; z-index: 300; display: flex; flex-direction: column;
+  background: var(--bg-primary);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.term-select-head, .term-select-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px;
+  background: var(--bg-secondary); border-bottom: 1px solid var(--border-color);
+}
+.term-select-head .act-chips { flex: 1; }
+.term-select-foot { border-bottom: 0; border-top: 1px solid var(--border-color); }
+.term-select-foot .mon-muted { flex: 1; min-width: 160px; }
+.term-select-text {
+  flex: 1; min-height: 0; width: 100%; resize: none; border: 0; outline: none; padding: 12px 14px;
+  background: #000; color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; line-height: 1.45;
+  white-space: pre; overflow: auto; -webkit-user-select: text; user-select: text;
+}
+.toast-copy { display: flex; align-items: center; gap: 12px; }
+.toast-copy .btn { flex-shrink: 0; }

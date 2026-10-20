@@ -83,6 +83,23 @@ async function terminalRoutes(fastify) {
     return result;
   });
 
+  // Text of the screen plus scrollback (used by the "Select" view in the panel)
+  fastify.get('/api/terminals/:id/capture', async (request, reply) => {
+    const sessionId = request.params.id;
+    const result = terminalManager.captureSession(sessionId, request.query?.lines);
+    if (!result.success) {
+      return reply.status(400).send({ error: result.error });
+    }
+    auditService.logAction({
+      userId: request.user.id,
+      action: 'terminal_captured',
+      targetType: 'terminal',
+      targetId: sessionId,
+      ip: request.ip,
+    });
+    return result;
+  });
+
   // Kill terminal session
   fastify.delete('/api/terminals/:id', async (request, reply) => {
     const sessionId = request.params.id;

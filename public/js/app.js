@@ -1936,6 +1936,7 @@
     });
 
     enableTouchScroll(containerEl, term, () => item);
+    installTerminalClipboard(item);
     connectTerminalSocket(item);
     return item;
   }
@@ -2787,7 +2788,11 @@
       <div class="workspace-container">
         <div class="terminal-tabs-bar" id="sys-terminal-tabs-container">
           <span class="badge badge-muted" id="sys-host-badge" style="margin-right:6px;">Host shell</span>
-          <button class="btn btn-secondary btn-sm copy-btn" id="sys-copy-btn" style="margin-left:auto;" title="Copy the selection (or the whole terminal) to the clipboard">
+          <button class="btn btn-secondary btn-sm select-btn" style="margin-left:auto;" id="sys-select-btn" title="Select and copy text (screen and history)">
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7V5a1 1 0 011-1h2M4 17v2a1 1 0 001 1h2m10-16h2a1 1 0 011 1v2m0 10v2a1 1 0 01-1 1h-2M9 12h6"/></svg>
+            <span class="paste-label">Select</span>
+          </button>
+          <button class="btn btn-secondary btn-sm copy-btn" id="sys-copy-btn" title="Copy the selection (or the whole terminal) to the clipboard">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             <span class="paste-label">Copy</span>
           </button>
@@ -2806,6 +2811,9 @@
 
     document.getElementById('sys-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.sysTerminals.get(state.activeSysTerminalId), 'sys-copy-mode-btn');
+    };
+    document.getElementById('sys-select-btn').onclick = () => {
+      openTerminalSelect(() => state.sysTerminals.get(state.activeSysTerminalId));
     };
     document.getElementById('sys-copy-btn').onclick = () => {
       copyFromTerminal(() => state.sysTerminals.get(state.activeSysTerminalId));
@@ -3054,7 +3062,11 @@
         <!-- Toolbar (terminal switching lives in the sidebar) -->
         <div class="terminal-tabs-bar" id="terminal-tabs-container">
           <span class="badge badge-muted ws-context-badge">${escapeHtml(currentProject.name)}</span>
-          <button class="btn btn-secondary btn-sm copy-btn" id="ws-copy-btn" style="margin-left:auto;" title="Copy the selection (or the whole terminal) to the clipboard">
+          <button class="btn btn-secondary btn-sm select-btn" style="margin-left:auto;" id="ws-select-btn" title="Select and copy text (screen and history)">
+            <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7V5a1 1 0 011-1h2M4 17v2a1 1 0 001 1h2m10-16h2a1 1 0 011 1v2m0 10v2a1 1 0 01-1 1h-2M9 12h6"/></svg>
+            <span class="paste-label">Select</span>
+          </button>
+          <button class="btn btn-secondary btn-sm copy-btn" id="ws-copy-btn" title="Copy the selection (or the whole terminal) to the clipboard">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             <span class="paste-label">Copy</span>
           </button>
@@ -3074,6 +3086,9 @@
 
     document.getElementById('ws-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
+    };
+    document.getElementById('ws-select-btn').onclick = () => {
+      openTerminalSelect(() => state.terminals.get(state.activeTerminalId));
     };
     document.getElementById('ws-copy-btn').onclick = () => {
       copyFromTerminal(() => state.terminals.get(state.activeTerminalId));
@@ -3311,6 +3326,155 @@
     }
   }
 
+  // --- Terminal clipboard integration ---------------------------------------
+  // • OSC 52: when tmux (or any app) copies text, it arrives here and goes to the
+  //   browser clipboard, so selecting with the mouse in tmux "just copies".
+  //   Browsers may refuse a write that does not follow a user gesture; in that
+  //   case a one-tap prompt finishes the job.
+  // • Ctrl+C copies instead of interrupting while text is selected (like
+  //   Windows Terminal); with nothing selected it still sends Ctrl+C.
+  function installTerminalClipboard(item) {
+    const { term } = item;
+    term.parser.registerOscHandler(52, (data) => {
+      const b64 = String(data).split(';').pop();
+      if (!b64 || b64 === '?') return true; // clipboard read requests are not served
+      let text = '';
+      try {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        text = new TextDecoder().decode(bytes);
+      } catch {
+        return true;
+      }
+      if (text) copyFromApp(text);
+      return true;
+    });
+
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey
+        && (e.key === 'c' || e.key === 'C') && term.hasSelection()) {
+        const selected = term.getSelection();
+        term.clearSelection();
+        writeClipboard(selected).then((ok) => {
+          if (ok) showToast('Selection copied.', 'success');
+          else showCopyPrompt(selected);
+        });
+        return false;
+      }
+      return true;
+    });
+  }
+
+  async function copyFromApp(text) {
+    if (await writeClipboard(text)) {
+      showToast(`Copied ${text.length > 60 ? `${text.length} characters` : 'to clipboard'}.`, 'success');
+    } else {
+      showCopyPrompt(text);
+    }
+  }
+
+  // The browser blocked an automatic clipboard write: keep the text and let one
+  // tap (a real gesture) copy it.
+  function showCopyPrompt(text) {
+    const root = document.getElementById('toast-root');
+    if (!root) return;
+    root.querySelectorAll('.toast-copy').forEach((el) => el.remove());
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-info toast-copy';
+    toast.innerHTML = `<span>Copied in the terminal (${text.length} characters).</span><button class="btn btn-primary btn-sm" type="button">Copy</button>`;
+    root.appendChild(toast);
+    const done = () => toast.remove();
+    toast.querySelector('button').onclick = async () => {
+      if (await writeClipboard(text)) {
+        showToast('Copied to clipboard.', 'success');
+      } else {
+        showToast('The browser blocked copying. Use Select to copy manually.', 'error');
+      }
+      done();
+    };
+    setTimeout(done, 12000);
+  }
+
+  // Full-screen "Select" view: the terminal text (screen + scrollback) in a
+  // native text box, so long-press selection handles and the system copy menu
+  // work on phones and tablets. Also handy on desktop for grabbing old output.
+  async function openTerminalSelect(getItem) {
+    const item = getItem ? getItem() : null;
+    if (!item || item.disposed) return;
+
+    let lines;
+    let fromTmux = false;
+    try {
+      const res = await api(`/api/terminals/${item.sessionId}/capture?lines=2000`);
+      lines = String(res.text || '').split('\n');
+      fromTmux = true;
+    } catch {
+      lines = terminalText(item.term).split('\n');
+    }
+    const rows = item.term.rows || 24;
+    const scopes = [
+      { id: 'screen', label: 'Screen', count: rows },
+      { id: '300', label: 'Last 300', count: 300 },
+      { id: 'all', label: fromTmux ? 'All history' : 'All', count: Infinity },
+    ];
+    let scope = 'screen';
+    const textFor = (id) => {
+      const def = scopes.find((x) => x.id === id);
+      return lines.slice(Math.max(0, lines.length - def.count)).join('\n');
+    };
+
+    const overlay = document.createElement('div');
+    overlay.className = 'term-select';
+    overlay.innerHTML = `
+      <div class="term-select-head">
+        <strong>Select text</strong>
+        <div class="act-chips">${scopes.map((x) => `<button type="button" class="act-chip${x.id === scope ? ' active' : ''}" data-scope="${x.id}">${x.label}</button>`).join('')}</div>
+        <button type="button" class="btn btn-secondary btn-sm" id="term-select-close">Close</button>
+      </div>
+      <textarea class="term-select-text" id="term-select-text" readonly wrap="off" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+      <div class="term-select-foot">
+        <span class="mon-muted" id="term-select-hint">Long-press the text to select it, or tap Copy for everything shown.</span>
+        <button type="button" class="btn btn-secondary btn-sm" id="term-select-all">Select all</button>
+        <button type="button" class="btn btn-primary btn-sm" id="term-select-copy">Copy</button>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const ta = overlay.querySelector('#term-select-text');
+    const load = () => {
+      ta.value = textFor(scope);
+      ta.scrollTop = ta.scrollHeight;
+    };
+    load();
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+      if (!item.disposed) item.term.focus();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    overlay.querySelector('#term-select-close').onclick = close;
+    overlay.querySelectorAll('[data-scope]').forEach((b) => {
+      b.onclick = () => {
+        scope = b.getAttribute('data-scope');
+        overlay.querySelectorAll('[data-scope]').forEach((x) => x.classList.toggle('active', x === b));
+        load();
+      };
+    });
+    overlay.querySelector('#term-select-all').onclick = () => { ta.focus(); ta.select(); };
+    overlay.querySelector('#term-select-copy').onclick = async () => {
+      const picked = ta.value.substring(ta.selectionStart, ta.selectionEnd);
+      const text = picked || ta.value;
+      if (!text) return;
+      if (await writeClipboard(text)) {
+        showToast(picked ? 'Selection copied.' : 'Copied everything shown.', 'success');
+        close();
+      } else {
+        ta.focus();
+        if (!picked) ta.select();
+        document.getElementById('term-select-hint').textContent = 'The browser blocked copying: use the system Copy on the selected text.';
+      }
+    };
+  }
+
   // Copy button for the terminal toolbars: copies the current selection, or the
   // whole terminal buffer (scrollback included) when nothing is selected. The
   // Clipboard API needs a secure origin, so plain-HTTP panels fall back to a
@@ -3395,11 +3559,18 @@
     const item = getItem ? getItem() : null;
     if (!item || item.disposed) return;
 
-    const send = (value) => {
+    const send = (value, enter = false) => {
       if (!value || item.disposed) return;
       item.term.paste(value);
+      // Enter goes as a separate keystroke: bracketed paste would otherwise
+      // treat it as part of the pasted text.
+      if (enter && item.ws && item.ws.readyState === WebSocket.OPEN) {
+        item.ws.send(JSON.stringify({ type: 'input', data: '\r' }));
+      }
       item.term.focus();
     };
+    let pasteEnter = false;
+    try { pasteEnter = localStorage.getItem('citadel.pasteEnter') === '1'; } catch { /* ignore */ }
 
     // iOS shows a native "Paste" callout and the promise never settles if the
     // user ignores it, which made the button look dead. Race it against a
@@ -3432,11 +3603,14 @@
           <label class="form-label" for="terminal-paste-input">Long-press the box below and choose Paste</label>
           <textarea id="terminal-paste-input" class="form-input" rows="5" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="Paste here..."></textarea>
         </div>
+        <label class="act-live" style="margin-top:4px;"><input type="checkbox" id="terminal-paste-enter" ${pasteEnter ? 'checked' : ''}> Press Enter after pasting</label>
       `,
       confirmText: 'Send to terminal',
       onConfirm: async () => {
         const el = document.getElementById('terminal-paste-input');
-        send(el ? el.value : '');
+        const enter = Boolean(document.getElementById('terminal-paste-enter')?.checked);
+        try { localStorage.setItem('citadel.pasteEnter', enter ? '1' : '0'); } catch { /* ignore */ }
+        send(el ? el.value : '', enter);
       },
     });
 
@@ -3447,9 +3621,11 @@
         const pasted = event.clipboardData && event.clipboardData.getData('text');
         if (!pasted) return;
         event.preventDefault();
+        const enter = Boolean(document.getElementById('terminal-paste-enter')?.checked);
+        try { localStorage.setItem('citadel.pasteEnter', enter ? '1' : '0'); } catch { /* ignore */ }
         const closeBtn = document.getElementById('modal-close-btn');
         if (closeBtn) closeBtn.click();
-        send(pasted);
+        send(pasted, enter);
       });
       input.focus();
     }
