@@ -1122,7 +1122,7 @@
   // Shared helpers handed to monitor.js (the Machines screen and dashboard widget).
   function monitorCtx() {
     return {
-      localApi, escapeHtml, showToast, openModal,
+      localApi, escapeHtml, showToast, openModal, reloadWhenServerReady,
       isAdmin: Boolean(state.user && state.user.role === 'admin'),
       switchHost: (id) => (id === state.activeHostId ? navigateTo('dashboard') : switchHost(id)),
     };
@@ -4956,6 +4956,37 @@
     }
   }
 
+  // Reload only once the service answers again. Reloading while it restarts
+  // lands on a proxy error page (Cloudflare 502). We wait until the server has
+  // gone down and come back (or enough time has passed for a fast restart),
+  // then require two consecutive healthy answers before reloading.
+  async function reloadWhenServerReady(onWait) {
+    const started = Date.now();
+    let sawDown = false;
+    let healthy = 0;
+    while (Date.now() - started < 120000) {
+      await new Promise((r) => setTimeout(r, 1000));
+      let ok = false;
+      try {
+        const res = await fetch('/api/system/version', { cache: 'no-store', credentials: 'same-origin' });
+        ok = res.ok || res.status === 401;
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        sawDown = true;
+        healthy = 0;
+        if (onWait) onWait('Service restarting...');
+        continue;
+      }
+      healthy += 1;
+      if (healthy >= 2 && (sawDown || Date.now() - started >= 8000)) break;
+    }
+    // Small grace so the proxy has the new origin ready before the page loads.
+    await new Promise((r) => setTimeout(r, 1500));
+    location.reload();
+  }
+
   // Follow a running update across the service restart, then reload the panel.
   async function pollUpdateStatus(statusEl, applyBtn) {
     for (let i = 0; i < 60; i += 1) {
@@ -4966,7 +4997,7 @@
         if (s.state === 'success') {
           statusEl.style.color = 'var(--success-color)';
           statusEl.textContent = `Update complete${s.toCommit ? ` (${String(s.toCommit).slice(0, 7)})` : ''}. Reloading...`;
-          setTimeout(() => location.reload(), 2500);
+          reloadWhenServerReady((msg) => { statusEl.textContent = msg; });
           return;
         }
         if (s.state === 'failed') {

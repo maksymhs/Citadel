@@ -324,7 +324,7 @@
       onConfirm: async () => {
         await localApi(remotePath(host, '/system/restart'), { method: 'POST' });
         showToast(`Restarting ${host.name}…`, 'success');
-        if (host.isLocal) setTimeout(() => window.location.reload(), 8000);
+        if (host.isLocal) ctx.reloadWhenServerReady();
         else setTimeout(() => { if (typeof onChange === 'function') onChange(); }, 9000);
       },
     });
