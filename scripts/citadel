@@ -191,8 +191,8 @@ case "$cmd" in
 
   tunnel)
     if [ "$OS" = "Darwin" ]; then
-      echo "Cloudflare Quick Tunnel setup is currently supported by the Linux installer only. Use Tailscale or configure a tunnel manually." >&2
-      exit 1
+      exec env CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" PORT="$PORT" \
+        bash "$APP_DIR/scripts/tunnel-macos.sh" "$@"
     fi
     as_root bash "$APP_DIR/scripts/tunnel.sh" "$@"
     ;;

@@ -1554,3 +1554,18 @@ README/.env.example/architecture. No commits/pushes/deploys.
   platform scripts. Verified by stubbing `uname` as Darwin (no arguments, `--uninstall`,
   `--lan`); the macOS scripts contain no other bash ≥4 constructs.
 - Version bumped to `0.36.1`; asset cache-buster token moved to `v0361`.
+
+## 92. macOS installer: minimal output, public tunnel and one QR (v0.36.2)
+- `install-macos.sh` now matches the Linux installer: a single spinner line, a
+  status line and one QR printed last (log file shown only on failure;
+  `CITADEL_VERBOSE=1` shows everything; `--no-tunnel` skips the tunnel).
+- New `scripts/tunnel-macos.sh` (also behind `citadel tunnel` on macOS): downloads
+  the right `cloudflared` build for the CPU, runs `tunnel-run.sh` through a
+  `com.citadel.tunnel` launchd agent and records the URL in `data/tunnel-url`.
+  `--domain/--token` and `--quick` work like on Linux; an existing tunnel keeps
+  its URL on update. Uninstall also removes the tunnel agent.
+- The QR encodes a single-use pairing invitation for the public address, so a
+  phone camera opens the panel and another Citadel's "Pair a machine" pairs.
+- Verified on Linux with stubs for `uname`, `launchctl` and `cloudflared` (flow,
+  output and QR); `mktemp` uses a portable template. Not run on a real Mac.
+- Version bumped to `0.36.2`; asset cache-buster token moved to `v0362`.

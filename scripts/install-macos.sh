@@ -24,12 +24,15 @@ CLI="$CLI_DIR/citadel"
 REPO_URL="${CITADEL_REPO_URL:-https://github.com/maksymhs/Citadel.git}"
 REPO_BRANCH="${CITADEL_REPO_BRANCH:-main}"
 UPDATE_MODE=false
+TUNNEL=true
 
 for arg in "$@"; do
   case "$arg" in
     --update|--upgrade) UPDATE_MODE=true ;;
+    --no-tunnel|--local) TUNNEL=false ;;
+    --tunnel) TUNNEL=true ;;
     --help|-h)
-      echo "Usage: bash scripts/install-macos.sh [--update]"
+      echo "Usage: bash scripts/install-macos.sh [--update] [--no-tunnel]"
       exit 0
       ;;
     *)
@@ -39,6 +42,55 @@ for arg in "$@"; do
   esac
 done
 
+# Minimal output by default: one self-updating line with a spinner, then a status
+# and a single QR. CITADEL_VERBOSE=1 shows everything. Noisy tools log to a file
+# that is printed only on failure. (Written for the bash 3.2 that ships with macOS.)
+VERBOSE="${CITADEL_VERBOSE:-0}"
+INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/citadel-install.XXXXXX")"
+PROGRESS=false
+CLR=""
+if [ "$VERBOSE" != "1" ] && [ -t 1 ]; then
+  PROGRESS=true
+  CLR=$'\r\033[K'
+fi
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+  *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) FRAMES='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' ;;
+  *) FRAMES='|/-\' ;;
+esac
+STEP_LINE=""
+step() {
+  if [ "$PROGRESS" = true ]; then
+    STEP_LINE="Installing Citadel · $*"
+    printf '\r\033[K  %s %s' "${FRAMES:0:1}" "$STEP_LINE"
+  elif [ "$VERBOSE" = "1" ]; then
+    echo "==> $*"
+  fi
+}
+# quiet_run <command...>: spinner while it runs, log to a file, tail on failure.
+quiet_run() {
+  if [ "$VERBOSE" = "1" ]; then "$@"; return $?; fi
+  local rc=0
+  if [ "$PROGRESS" = true ]; then
+    ( "$@" ) >>"$INSTALL_LOG" 2>&1 &
+    local pid=$! i=0 n=${#FRAMES}
+    while kill -0 "$pid" 2>/dev/null; do
+      printf '\r\033[K  %s %s' "${FRAMES:i++%n:1}" "$STEP_LINE"
+      sleep 0.1
+    done
+    wait "$pid" || rc=$?
+    printf '\r\033[K  %s %s' "${FRAMES:0:1}" "$STEP_LINE"
+  else
+    "$@" >>"$INSTALL_LOG" 2>&1 || rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    printf '%s' "$CLR"
+    echo "Command failed: $*" >&2
+    tail -n 20 "$INSTALL_LOG" >&2
+  fi
+  return "$rc"
+}
+
+step "Checking requirements"
 if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 18 ]; then
   echo "ERROR: Node.js 18 or newer is required. Install it with: brew install node" >&2
   exit 1
@@ -56,14 +108,15 @@ if [ -n "${BASH_SOURCE[0]:-}" ]; then
   SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 
+step "Fetching Citadel"
 if [ -d "$APP_DIR/.git" ]; then
-  git -C "$APP_DIR" fetch --depth 1 origin "$REPO_BRANCH"
-  git -C "$APP_DIR" reset --hard "origin/$REPO_BRANCH"
+  quiet_run git -C "$APP_DIR" fetch -q --depth 1 origin "$REPO_BRANCH"
+  quiet_run git -C "$APP_DIR" reset -q --hard "origin/$REPO_BRANCH"
 elif [ -n "$SOURCE_DIR" ] && [ -f "$SOURCE_DIR/package.json" ] && [ "$SOURCE_DIR" != "$APP_DIR" ]; then
   mkdir -p "$APP_DIR"
   cp -R "$SOURCE_DIR"/. "$APP_DIR"/
 elif [ ! -f "$APP_DIR/package.json" ]; then
-  git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$APP_DIR"
+  quiet_run git clone -q --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$APP_DIR"
 elif [ "$UPDATE_MODE" = true ]; then
   echo "ERROR: $APP_DIR is not a Git checkout; update it from its original source." >&2
   exit 1
@@ -74,7 +127,8 @@ if [ ! -f "$APP_DIR/.env" ] && [ -f "$APP_DIR/.env.example" ]; then
 fi
 
 cd "$APP_DIR"
-npm install --omit=dev
+step "Installing dependencies"
+quiet_run npm install --omit=dev --no-fund --no-audit --loglevel=error
 
 NODE_BIN="$(command -v node)"
 plist_escape() {
@@ -107,15 +161,61 @@ exec bash "$APP_DIR/scripts/citadel" "\$@"
 EOF
 chmod 0755 "$CLI"
 
+step "Starting the service"
 DOMAIN="gui/$(id -u)"
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 launchctl bootstrap "$DOMAIN" "$PLIST"
 launchctl enable "$DOMAIN/$LABEL"
 launchctl kickstart -k "$DOMAIN/$LABEL"
 
-echo "Citadel is running as $LABEL."
-echo "Panel: http://127.0.0.1:3000"
-echo "CLI:   $CLI (add $CLI_DIR to PATH if needed)"
-if ! command -v tmux >/dev/null 2>&1; then
-  echo "Note: install tmux (brew install tmux) for persistent terminal sessions."
+PORT_NUM=3000
+HEALTH_OK=false
+for _ in $(seq 1 30); do
+  if curl -fsS --max-time 2 "http://127.0.0.1:$PORT_NUM/api/auth/status" >/dev/null 2>&1; then
+    HEALTH_OK=true
+    break
+  fi
+  sleep 1
+done
+
+# Public tunnel (Cloudflare Quick Tunnel, no account): gives the QR a global
+# address. Skipped with --no-tunnel; an existing tunnel keeps its URL on update.
+PUBLIC_URL=""
+if [ "$TUNNEL" = true ] && [ "$HEALTH_OK" = true ] && [ -f "$APP_DIR/scripts/tunnel-macos.sh" ]; then
+  step "Opening a public tunnel"
+  quiet_run env CITADEL_QUIET=1 CITADEL_TARGET_DIR="$TARGET_DIR" CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" \
+    bash "$APP_DIR/scripts/tunnel-macos.sh" up || true
+  PUBLIC_URL="$(head -n1 "$DATA_DIR/tunnel-url" 2>/dev/null || true)"
 fi
+
+VERSION="$(node -p "require('$APP_DIR/package.json').version" 2>/dev/null || true)"
+ACCESS_URL="${PUBLIC_URL:-http://127.0.0.1:$PORT_NUM}"
+
+printf '%s' "$CLR"
+if [ "$HEALTH_OK" = true ]; then
+  if [ "$UPDATE_MODE" = true ]; then
+    echo "✔ Citadel ${VERSION:+v$VERSION }updated"
+  else
+    echo "✔ Citadel ${VERSION:+v$VERSION }running"
+  fi
+else
+  echo "… Citadel ${VERSION:+v$VERSION }is still starting (check: citadel status, log: $LOGS_DIR/citadel.log)"
+fi
+echo "  $ACCESS_URL"
+
+# One QR, last: opens the panel from a phone camera and pairs from another
+# Citadel's "Pair a machine" screen (single-use invitation for this address).
+if [ -n "$PUBLIC_URL" ] && [ "$UPDATE_MODE" = false ]; then
+  PAIR_LINK="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" node scripts/pair-qr.js "$PUBLIC_URL" 2>/dev/null | tail -n1 || true)"
+  QR_TEXT="$PUBLIC_URL"
+  case "$PAIR_LINK" in "$PUBLIC_URL"*"#pair="*) QR_TEXT="$PAIR_LINK" ;; esac
+  echo "  Create your admin account now: until then the first visitor can claim it."
+  echo "  Scan to open on your phone, or to pair from another Citadel."
+  (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$PUBLIC_URL") || true
+elif [ -z "$PUBLIC_URL" ] && [ "$TUNNEL" = true ] && [ "$UPDATE_MODE" = false ]; then
+  echo "  No public tunnel yet. Try: citadel tunnel"
+fi
+if ! command -v tmux >/dev/null 2>&1; then
+  echo "  Note: install tmux (brew install tmux) for persistent terminal sessions."
+fi
+echo "  Manage with: citadel status | qr | update | tunnel   (add $CLI_DIR to PATH if needed)"

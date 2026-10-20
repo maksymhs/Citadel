@@ -61,7 +61,7 @@ if [ ! -f "$APP_DIR/package.json" ] || ! grep -q '"name"[[:space:]]*:[[:space:]]
 fi
 
 if [ "$DRY_RUN" = true ]; then
-  echo "Would unload $LABEL and remove $PLIST and $CLI."
+  echo "Would unload $LABEL and com.citadel.tunnel and remove $PLIST and $CLI."
   if [ "$KEEP_DATA" = true ]; then
     echo "Would preserve $TARGET_DIR/data and remove only the application files."
   else
@@ -71,7 +71,8 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
-rm -f "$PLIST"
+launchctl bootout "gui/$(id -u)/com.citadel.tunnel" >/dev/null 2>&1 || true
+rm -f "$PLIST" "$HOME/Library/LaunchAgents/com.citadel.tunnel.plist"
 rm -f "$CLI"
 if [ "$KEEP_DATA" = true ]; then
   rm -rf "$APP_DIR" "$TARGET_DIR/agents"
