@@ -27,8 +27,11 @@ fi
 if [ -s "$TOKEN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
   domain="$(head -n1 "$DOMAIN_FILE" | tr -d '[:space:]')"
   # The token goes through the environment so it never shows up in `ps`.
+  # --url is the catch-all ingress for tunnels created from the CLI/panel
+  # (locally managed: without it cloudflared answers every request with 503).
+  # Dashboard-managed tunnels ignore it and use their own public hostnames.
   TUNNEL_TOKEN="$(head -n1 "$TOKEN_FILE" | tr -d '[:space:]')" \
-    "$CLOUDFLARED" tunnel --no-autoupdate run &
+    "$CLOUDFLARED" tunnel --no-autoupdate --url "$TARGET" run &
   cf_pid=$!
   printf 'https://%s\n' "$domain" > "$URL_FILE"
   trap 'kill "$cf_pid" 2>/dev/null' TERM INT

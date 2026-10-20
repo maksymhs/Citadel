@@ -1459,3 +1459,14 @@ README/.env.example/architecture. No commits/pushes/deploys.
   explicit "timed out waiting for Cloudflare (check outbound access to
   api.cloudflare.com)" instead of "unknown error".
 - Version bumped to `0.33.10`; asset cache-buster token moved to `v03310`.
+
+## 85. Named tunnel answered 503 (v0.33.11)
+- **Bug.** A tunnel created from Settings → Tunnel (`cloudflared tunnel create`)
+  is locally managed. `tunnel run` with only the token has no ingress rules, so
+  Cloudflare returned HTTP 503 for every request while the temporary URL had
+  already been replaced (Error 1033 on the old address).
+- **Fix.** `tunnel-run.sh` passes `--url <panel>` as the catch-all ingress.
+  Dashboard-managed tunnels (token from Zero Trust) ignore it and keep their own
+  public hostnames. Existing installs pick it up on `citadel update` followed by
+  `sudo systemctl restart citadel-tunnel`.
+- Version bumped to `0.33.11`; asset cache-buster token moved to `v03311`.
