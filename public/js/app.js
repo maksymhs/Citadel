@@ -269,7 +269,7 @@
     menu.className = 'ctx-menu';
     menu.innerHTML = items.map((it, i) => (it.sep
       ? '<div class="ctx-sep"></div>'
-      : `<button type="button" class="ctx-item${it.danger ? ' ctx-danger' : ''}" data-ctx-idx="${i}">${escapeHtml(it.label)}</button>`)).join('');
+      : `<button type="button" class="ctx-item${it.danger ? ' ctx-danger' : ''}" data-ctx-idx="${i}">${escapeHtml(it.label)}${it.detail ? `<span class="ctx-detail" title="${escapeHtml(it.detail)}">${escapeHtml(it.detail)}</span>` : ''}</button>`)).join('');
     document.body.appendChild(menu);
     contextMenuEl = menu;
 
@@ -628,12 +628,33 @@
     return host ? host.name : 'Unknown host';
   }
 
+  // Address shown under a machine name: no scheme, no trailing slash. The CSS
+  // ellipsis shortens it when it does not fit, the full value is in the tooltip.
+  function hostAddress(url) {
+    return String(url || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  }
+
+  function localHostAddress() {
+    const identity = state.hostIdentity || {};
+    return hostAddress((identity.urls && identity.urls[0]) || identity.url || location.host);
+  }
+
+  function activeHostAddress() {
+    if (state.activeHostId === 'local') return localHostAddress();
+    const host = state.hosts.find((h) => h.id === state.activeHostId);
+    return host ? hostAddress(host.baseUrl) : '';
+  }
+
   function hostSelectorHtml() {
+    const address = activeHostAddress();
     return `
       <div class="host-selector">
-        <button class="host-current" id="host-selector-btn" title="Switch machine">
+        <button class="host-current" id="host-selector-btn" title="Switch machine${address ? ` — ${escapeHtml(address)}` : ''}">
           <span class="host-dot${hostStatusClass(state.activeHostId)}"></span>
-          <span class="host-current-name">${escapeHtml(activeHostName())}</span>
+          <span class="host-current-text">
+            <span class="host-current-name">${escapeHtml(activeHostName())}</span>
+            ${address ? `<span class="host-current-url">${escapeHtml(address)}</span>` : ''}
+          </span>
           <span class="host-chevron">▾</span>
         </button>
       </div>`;
@@ -642,6 +663,7 @@
   function openHostMenu(anchorEl) {
     const items = [{
       label: `${state.activeHostId === 'local' ? '● ' : '○ '}${(state.hostIdentity && state.hostIdentity.name) || 'This machine'} (local)`,
+      detail: localHostAddress(),
       onSelect: () => switchHost('local'),
     }];
     for (const host of state.hosts) {
@@ -649,6 +671,7 @@
       const dot = online === true ? '● ' : online === false ? '○ ' : '◌ ';
       items.push({
         label: `${dot}${host.name}`,
+        detail: hostAddress(host.baseUrl),
         onSelect: () => switchHost(host.id),
       });
     }
@@ -4434,6 +4457,7 @@
                   </div>
                 </div>`).join('')}
           </div>
+          <div id="settings-suggestions" style="margin-top:6px;"></div>
         </div>
 
         <div class="card" style="margin-bottom:24px;">
@@ -4643,6 +4667,30 @@
           }
         };
       });
+
+      // Machines my paired hosts know about but I am not paired with yet.
+      const suggestionsEl = document.getElementById('settings-suggestions');
+      if (canPair && suggestionsEl && state.hosts.length > 0) {
+        api('/api/hosts/suggestions').then((res) => {
+          const list = (res && res.suggestions) || [];
+          if (!list.length || !document.getElementById('settings-suggestions')) return;
+          suggestionsEl.innerHTML = `
+            <div style="font-size:12px;color:var(--text-muted);margin:10px 0 6px;">Known by your other machines, not paired with this one</div>
+            ${list.map((m) => `
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;border:1px dashed var(--border-color);border-radius:6px;margin-bottom:6px;">
+                <div style="min-width:0;">
+                  <strong>${escapeHtml(m.name)}</strong>
+                  <span style="font-size:11px;color:var(--text-muted);"> via ${escapeHtml(m.via.join(', '))}</span>
+                  <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(m.urls[0])}">${escapeHtml(hostAddress(m.urls[0]))}</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" data-suggest-pair="${escapeHtml(m.urls[0])}">Pair</button>
+              </div>`).join('')}
+            <div style="font-size:11px;color:var(--text-muted);">Pairing needs that machine's own QR: open its Settings → Connection and scan or paste the code.</div>`;
+          suggestionsEl.querySelectorAll('[data-suggest-pair]').forEach((btn) => {
+            btn.onclick = () => showPairModal();
+          });
+        }).catch(() => { /* discovery is best-effort */ });
+      }
 
       if (canPair) {
         window.CitadelTunnelCard.init({

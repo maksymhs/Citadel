@@ -73,6 +73,12 @@ async function hostRoutes(fastify) {
     return { hosts };
   });
 
+  // Machines known by my paired hosts that I am not paired with. Discovery
+  // only: pairing each one still needs that machine's own invitation.
+  fastify.get('/api/hosts/suggestions', { preHandler: [requireSessionAuth, requireAdmin] }, async () => ({
+    suggestions: await hostService.discoverSuggestions(),
+  }));
+
   // Manual address repair. Needed only in the worst case: both machines use
   // ephemeral Cloudflare tunnels and both URLs rotated while offline, so no
   // announcement could get through. Entering one reachable address is enough;
@@ -199,6 +205,12 @@ async function hostRoutes(fastify) {
     if (!host) return reply.status(404).send({ error: 'Host not found.' });
     return { host };
   });
+
+  // A peer asks which other machines we are paired with (identity and
+  // addresses only, no credentials) so its admin can pair with them directly.
+  fastify.get('/api/host/peers/known', { preHandler: requirePeerAuth }, async (request) => ({
+    peers: hostService.listKnownPeers(request.user.peerHostId),
+  }));
 
   // A peer asks us to forget it (the other half of unpair). We remove the row
   // for that instance and revoke its inbound token, which is this very token.

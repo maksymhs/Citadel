@@ -691,6 +691,56 @@ function wsCandidates(hostId, wsPath) {
 }
 
 /**
+ * Peers this host is paired with, as seen by `requesterHostId`: identity and
+ * addresses only, never a credential. Lets another machine discover who else
+ * exists without gaining any access to them.
+ */
+function listKnownPeers(requesterHostId) {
+  return listHostRows()
+    .filter((row) => row.instance_id && row.id !== requesterHostId)
+    .map((row) => ({
+      instanceId: row.instance_id,
+      name: row.name,
+      url: row.base_url,
+      urls: candidateUrls(row),
+    }));
+}
+
+/**
+ * Machines my paired hosts know that I am not paired with yet. Pairing still
+ * needs the other machine's own invitation (an admin scans its QR): discovery
+ * grants nothing.
+ */
+async function discoverSuggestions() {
+  const identity = getIdentity();
+  const rows = listHostRows().filter((row) => row.instance_id);
+  const paired = new Set(rows.map((row) => row.instance_id));
+  paired.add(identity.instanceId);
+
+  const found = new Map();
+  await Promise.allSettled(rows.map(async (row) => {
+    const res = await requestHost(row.id, '/api/host/peers/known', { timeout: 5000, maxCandidates: 3 });
+    if (!res.ok || !res.data || !Array.isArray(res.data.peers)) return;
+    for (const peer of res.data.peers) {
+      if (!peer || typeof peer.instanceId !== 'string' || paired.has(peer.instanceId)) continue;
+      const urls = (Array.isArray(peer.urls) ? peer.urls : [peer.url])
+        .map(normalizeUrl).filter(Boolean);
+      if (urls.length === 0) continue;
+      const entry = found.get(peer.instanceId) || {
+        instanceId: peer.instanceId,
+        name: String(peer.name || 'citadel').slice(0, 64),
+        urls: [],
+        via: [],
+      };
+      for (const url of urls) if (!entry.urls.includes(url)) entry.urls.push(url);
+      if (!entry.via.includes(row.name)) entry.via.push(row.name);
+      found.set(peer.instanceId, entry);
+    }
+  }));
+  return Array.from(found.values());
+}
+
+/**
  * Announce this host's current addresses to every paired peer. Best-effort:
  * an offline peer never blocks the others. Called periodically so a Cloudflare
  * URL rotation is picked up without user action.
@@ -779,6 +829,8 @@ module.exports = {
   openHostStream,
   wsCandidates,
   announceToPeers,
+  listKnownPeers,
+  discoverSuggestions,
   unpairHost,
   _resetInvites: () => getDatabase().prepare('DELETE FROM pairing_invites').run(),
 };

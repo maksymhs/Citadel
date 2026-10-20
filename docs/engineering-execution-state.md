@@ -1486,3 +1486,20 @@ README/.env.example/architecture. No commits/pushes/deploys.
   entering one reachable address (Hosts → address), which heals the other side.
 - Settings → Connection no longer calls a custom domain a "Quick Tunnel".
 - Version bumped to `0.33.13`; asset cache-buster token moved to `v03313`.
+
+## 88. Machine addresses in the selector and peer discovery (v0.34.0)
+- **Selector.** The machine dropdown under the logo shows each machine's name
+  with its address underneath (no scheme; long values are cut with an ellipsis
+  and shown in full on hover). The menu lists every machine with its address.
+- **Discovery.** Paired hosts expose `GET /api/host/peers/known` (peer token
+  only): identity and addresses of their other peers, never credentials.
+  `GET /api/hosts/suggestions` merges them and Settings → Machines shows the
+  ones not yet paired with a "Pair" button.
+- **Deliberately not transitive.** Peer tokens are admin-equivalent for proxied
+  APIs and are intentionally unable to create invitations or manage the peer
+  list (`requireSessionAuth`). Discovery therefore grants nothing: pairing a
+  suggested machine still needs that machine's own QR/invitation approved by an
+  administrator. Automatic mesh pairing would relax that boundary and was not
+  implemented.
+- Tests: `tests/known-peers.test.js`. Version bumped to `0.34.0`; cache-buster
+  token moved to `v0340`.
