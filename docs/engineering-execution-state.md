@@ -1450,3 +1450,12 @@ README/.env.example/architecture. No commits/pushes/deploys.
   refreshes itself at the end of a run, so the drop-in lands on the second run
   from an older install.
 - Version bumped to `0.33.9`; asset cache-buster token moved to `v0339`.
+
+## 84. Tunnel setup diagnostics (v0.33.10)
+- Settings → Tunnel stayed on "Pointing <host> at the tunnel…" with no way to see
+  why. Each `cloudflared` step now streams its last output line into the card,
+  is logged to `logs/tunnel-setup.log` (secrets are never printed; long token-like
+  arguments are filtered), and a step that exceeds its 90 s limit fails with an
+  explicit "timed out waiting for Cloudflare (check outbound access to
+  api.cloudflare.com)" instead of "unknown error".
+- Version bumped to `0.33.10`; asset cache-buster token moved to `v03310`.

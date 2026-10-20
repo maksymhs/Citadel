@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { DATA_DIR } = require('../config');
+const { DATA_DIR, LOGS_DIR } = require('../config');
 const { getTunnelUrl } = require('./tunnelService');
 
 const CLOUDFLARED = process.env.CLOUDFLARED_PATH || '/usr/local/bin/cloudflared';
@@ -25,11 +25,12 @@ const CERT_FILE = path.join(CF_HOME, 'cert.pem');
 // certificate to $HOME/.cloudflared/cert.pem; the other steps read CERT_FILE.
 const LOGIN_CERT_FILE = path.join(CF_HOME, '.cloudflared', 'cert.pem');
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
-const STEP_TIMEOUT_MS = 60 * 1000;
+const STEP_TIMEOUT_MS = 90 * 1000;
+const SETUP_LOG = path.join(LOGS_DIR, 'tunnel-setup.log');
 
 const HOSTNAME_RE = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
-let job = { phase: 'idle', message: '', loginUrl: null, domain: null };
+let job = { phase: 'idle', message: '', detail: '', loginUrl: null, domain: null };
 let loginProc = null;
 
 function normalizeDomain(raw) {
@@ -58,20 +59,41 @@ function cfEnv() {
   return { ...process.env, HOME: CF_HOME, TUNNEL_ORIGIN_CERT: CERT_FILE, NO_COLOR: '1' };
 }
 
+function logSetup(line) {
+  try {
+    fs.mkdirSync(LOGS_DIR, { recursive: true });
+    fs.appendFileSync(SETUP_LOG, `${new Date().toISOString()} ${line}\n`);
+  } catch { /* logging is best-effort */ }
+}
+
 function run(args, timeout = STEP_TIMEOUT_MS) {
   return new Promise((resolve) => {
+    const label = `cloudflared ${args.filter((a) => !/^[A-Za-z0-9_-]{30,}$/.test(a)).join(' ')}`;
+    logSetup(`> ${label}`);
     const child = spawn(CLOUDFLARED, args, { env: cfEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr += d; });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeout);
+    const seen = (d) => {
+      const line = String(d).split('\n').map((l) => l.trim()).filter(Boolean).pop();
+      if (line) {
+        logSetup(`  ${line}`);
+        setJob({ detail: line.slice(0, 200) });
+      }
+    };
+    child.stdout.on('data', (d) => { stdout += d; seen(d); });
+    child.stderr.on('data', (d) => { stderr += d; seen(d); });
     child.on('error', (err) => {
       clearTimeout(timer);
       resolve({ code: -1, stdout, stderr: err.message });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (timedOut) {
+        stderr += `\nTimed out after ${Math.round(timeout / 1000)}s waiting for Cloudflare (check this server's outbound access to api.cloudflare.com)`;
+      }
+      logSetup(`  exit ${code}${timedOut ? ' (timeout)' : ''}`);
       resolve({ code, stdout, stderr });
     });
   });
@@ -125,7 +147,7 @@ async function finishSetup(domain) {
     throw new Error(`Creating the tunnel failed: ${lastLine(created.stderr || created.stdout)}`);
   }
 
-  setJob({ message: `Pointing ${domain} at the tunnel…` });
+  setJob({ message: `Pointing ${domain} at the tunnel…`, detail: '' });
   const routed = await run(['tunnel', 'route', 'dns', name, domain]);
   if (routed.code !== 0) {
     throw new Error(`Creating the DNS record failed: ${lastLine(routed.stderr || routed.stdout)}`);
