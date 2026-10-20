@@ -75,7 +75,7 @@
     { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
   ];
   const KNOWN_VIEWS = [
-    ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity', 'processes', 'machines',
+    ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity', 'processes', 'machines', 'terminals',
     ...OPTIONAL_NAV.map((n) => n.view),
   ];
   // Legacy view ids → current ids, so a persisted view still resolves.
@@ -986,7 +986,7 @@
   // Secondary screens reached from another one get a Back button at the top
   // left. It returns to the screen the user came from, or to a sensible parent
   // when the page was opened directly on it.
-  const DETAIL_VIEWS = { processes: 'dashboard', activity: 'settings', machines: 'dashboard' };
+  const DETAIL_VIEWS = { processes: 'dashboard', activity: 'settings', machines: 'dashboard', terminals: 'dashboard' };
 
   function updateBackButton(view) {
     const btn = document.getElementById('top-bar-back');
@@ -1036,6 +1036,9 @@
     } else if (view === 'machines') {
       titleEl.textContent = 'Machines';
       window.CitadelMonitor.renderView(monitorCtx());
+    } else if (view === 'terminals') {
+      titleEl.textContent = 'Persistent terminals';
+      renderTerminalsView();
     } else if (view === 'processes') {
       titleEl.textContent = 'Top processes';
       renderProcessesView();
@@ -1293,8 +1296,8 @@
       showToast(err.message, 'error');
     }
   }
-  // Window listing every persistent terminal on the active machine, to pick
-  // some and kill them (tmux session and PTY are removed).
+  // Screen listing every persistent terminal on the active machine, to select
+  // some and kill them (the tmux session and PTY are removed).
   async function killTerminals(ids) {
     for (const id of ids) {
       disposeTerminalItem(state.terminals.get(id) || state.sysTerminals.get(id));
@@ -1303,62 +1306,104 @@
       await api(`/api/terminals/${id}`, { method: 'DELETE' }).catch(() => {});
     }
     await loadSessions();
-    if (state.currentView === 'dashboard') renderDashboardView();
   }
 
-  async function showTerminalsModal() {
-    let sessions;
-    try {
-      const res = await api('/api/terminals');
-      sessions = (res.sessions || []).filter((t) => t.isAlive || t.status === 'active');
-    } catch (err) {
-      showToast(err.message, 'error');
-      return;
-    }
+  async function renderTerminalsView() {
+    const content = document.getElementById('main-content');
+    const actions = document.getElementById('top-bar-actions');
+    actions.innerHTML = `
+      <button class="btn btn-secondary btn-sm" id="term-refresh-btn">Refresh</button>
+      <button class="btn btn-danger btn-sm" id="term-kill-selected" disabled>Kill selected</button>`;
+    content.innerHTML = '<div class="mon-muted">Loading terminals…</div>';
+
     const projectName = (id) => {
       if (!id) return 'System';
       const p = state.projects.find((x) => x.id === id);
       return p ? p.name : 'Unknown project';
     };
-    const rowHtml = (t) => `
-      <label class="term-row">
-        <input type="checkbox" class="term-check" value="${escapeHtml(t.id)}">
-        <span class="term-info">
-          <strong>${escapeHtml(t.name)}</strong>
-          <span class="mon-muted">${escapeHtml(projectName(t.project_id))} · started ${escapeHtml(new Date(t.created_at).toLocaleString())}${t.connectedClients ? ` · ${t.connectedClients} viewing` : ''}</span>
-        </span>
-        <span class="badge ${t.isAlive ? 'badge-success' : 'badge-danger'}">${t.isAlive ? 'running' : 'dead'}</span>
-        <button type="button" class="btn btn-danger btn-sm term-kill-one" data-id="${escapeHtml(t.id)}">Kill</button>
-      </label>`;
-    openModal({
-      title: `Persistent terminals (${sessions.length})`,
-      confirmText: 'Kill selected',
-      bodyHtml: sessions.length === 0
-        ? '<div class="mon-muted">No persistent terminals are running.</div>'
-        : `<div class="term-toolbar">
-            <label><input type="checkbox" id="term-select-all"> Select all</label>
-            <span class="mon-muted">Killing a terminal ends its tmux session and everything running in it.</span>
-          </div>
-          <div class="term-list">${sessions.map(rowHtml).join('')}</div>`,
-      onConfirm: async () => {
-        const ids = Array.from(document.querySelectorAll('.term-check:checked')).map((c) => c.value);
-        if (ids.length === 0) throw new Error('Select at least one terminal.');
-        await killTerminals(ids);
-        showToast(`${ids.length} terminal${ids.length === 1 ? '' : 's'} killed.`, 'success');
-      },
-    });
-    document.getElementById('term-select-all')?.addEventListener('change', (e) => {
-      document.querySelectorAll('.term-check').forEach((c) => { c.checked = e.target.checked; });
-    });
-    document.querySelectorAll('.term-kill-one').forEach((btn) => {
-      btn.onclick = async (e) => {
-        e.preventDefault();
-        btn.disabled = true;
-        await killTerminals([btn.getAttribute('data-id')]);
-        showToast('Terminal killed.', 'success');
-        showTerminalsModal();
+
+    const load = async () => {
+      let sessions;
+      try {
+        const res = await api('/api/terminals');
+        sessions = (res.sessions || []).filter((t) => t.isAlive || t.status === 'active');
+      } catch (err) {
+        content.innerHTML = `<div style="color:var(--danger-color);">${escapeHtml(err.message)}</div>`;
+        return;
+      }
+      if (state.currentView !== 'terminals') return;
+      content.innerHTML = `
+        <div style="margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">Persistent terminals (${sessions.length})</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">
+            Terminals keep running on the machine after you close the browser. Select the ones you no longer need and kill them;
+            this ends their tmux session and everything running inside.
+          </p>
+        </div>
+        <div class="card">
+          ${sessions.length === 0 ? '<div class="mon-muted">No persistent terminals are running.</div>' : `
+          <div class="table-container">
+            <table class="data-table">
+              <thead><tr>
+                <th style="width:36px;"><input type="checkbox" id="term-select-all" aria-label="Select all"></th>
+                <th>Terminal</th><th>Project</th><th>Started</th><th style="width:110px;">Status</th><th style="width:90px;"></th>
+              </tr></thead>
+              <tbody>
+                ${sessions.map((t) => `
+                  <tr>
+                    <td data-label="Select"><input type="checkbox" class="term-check" value="${escapeHtml(t.id)}" aria-label="Select ${escapeHtml(t.name)}"></td>
+                    <td data-label="Terminal"><strong>${escapeHtml(t.name)}</strong></td>
+                    <td data-label="Project">${escapeHtml(projectName(t.project_id))}</td>
+                    <td data-label="Started" style="font-size:12px;color:var(--text-secondary);">${escapeHtml(new Date(t.created_at).toLocaleString())}${t.connectedClients ? ` · ${t.connectedClients} viewing` : ''}</td>
+                    <td data-label="Status"><span class="badge ${t.isAlive ? 'badge-success' : 'badge-danger'}">${t.isAlive ? 'running' : 'dead'}</span></td>
+                    <td data-label="Action"><button class="btn btn-danger btn-sm term-kill-one" data-id="${escapeHtml(t.id)}">Kill</button></td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`}
+        </div>`;
+
+      const killBtn = document.getElementById('term-kill-selected');
+      const checks = () => Array.from(document.querySelectorAll('.term-check'));
+      const sync = () => {
+        const n = checks().filter((c) => c.checked).length;
+        killBtn.disabled = n === 0;
+        killBtn.textContent = n ? `Kill selected (${n})` : 'Kill selected';
+        const all = document.getElementById('term-select-all');
+        if (all) all.checked = n > 0 && n === checks().length;
       };
-    });
+      checks().forEach((c) => { c.onchange = sync; });
+      document.getElementById('term-select-all')?.addEventListener('change', (e) => {
+        checks().forEach((c) => { c.checked = e.target.checked; });
+        sync();
+      });
+      sync();
+      killBtn.onclick = () => {
+        const ids = checks().filter((c) => c.checked).map((c) => c.value);
+        if (ids.length === 0) return;
+        openModal({
+          title: `Kill ${ids.length} terminal${ids.length === 1 ? '' : 's'}?`,
+          confirmText: 'Kill',
+          bodyHtml: '<p>This ends the selected terminals and everything running inside them. It cannot be undone.</p>',
+          onConfirm: async () => {
+            await killTerminals(ids);
+            showToast(`${ids.length} terminal${ids.length === 1 ? '' : 's'} killed.`, 'success');
+            load();
+          },
+        });
+      };
+      document.querySelectorAll('.term-kill-one').forEach((btn) => {
+        btn.onclick = async () => {
+          btn.disabled = true;
+          await killTerminals([btn.getAttribute('data-id')]);
+          showToast('Terminal killed.', 'success');
+          load();
+        };
+      });
+    };
+
+    document.getElementById('term-refresh-btn').onclick = load;
+    await load();
   }
 
   async function renderDashboardView() {
@@ -1400,8 +1445,7 @@
       document.querySelectorAll('.dash-widget-clickable[data-target-view]').forEach((el) => {
         const go = () => {
           const target = el.getAttribute('data-target-view');
-          if (target === 'terminals') showTerminalsModal();
-          else navigateTo(target);
+          navigateTo(target);
         };
         el.onclick = go;
         el.onkeydown = (e) => {
