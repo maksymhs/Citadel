@@ -1235,13 +1235,7 @@
               </div>`).join('')}
           </div>`);
       case 'machines':
-        return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;">
-            <div>
-              <h3 class="widget-heading">Machines</h3>
-              <div id="dash-machines-summary" class="mon-muted" style="margin-top:2px;">Checking…</div>
-            </div>
-          </div>
-          <div id="dash-machines-body"><div class="mon-muted">Loading…</div></div>`);
+        return card(`<div id="dash-machines-body"><div class="mon-muted">Loading…</div></div>`);
       case 'fleet':
         return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
             <div>
