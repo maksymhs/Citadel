@@ -1613,3 +1613,26 @@ README/.env.example/architecture. No commits/pushes/deploys.
   retries once with `--overwrite-dns` in that case, since the user chose the
   hostname for the panel.
 - Version bumped to `0.36.7`; asset cache-buster token moved to `v0367`.
+
+## 98. Fleet monitor, dashboard and Settings redesign, terminal copy/paste, themes (v0.40.0)
+- **Machines monitoring.** `GET /api/system/health` plus a per-panel monitor
+  that probes every paired machine each 60 s (history in `host_checks`, 30 days),
+  raises offline / disk / memory / CPU alerts and notifies a webhook, ntfy or
+  Telegram (secrets encrypted). Admin actions: service log tail
+  (`/api/system/logs`) and remote restart (`/api/system/restart`). Common tools
+  detection (`/api/system/tools`).
+- **Dashboard.** Reduced to the active machine's panel (Overview, Projects,
+  Terminals, Processes, Tools) plus a cross-machine alerts strip. Settings is a
+  hub of screens (Updates, Machines, Network & access, Alerts, Credentials,
+  Activity & Audit). Projects and Activity & Audit screens redesigned.
+- **Paired machines.** Update propagation and mesh pairing are always on (the
+  opt-in switches were removed). Private display names for paired machines
+  (`fleet_hosts.alias`, migration 009) and renaming this machine.
+- **Terminal.** Select view with tmux history (`GET /api/terminals/:id/capture`),
+  OSC 52 copy from tmux, Ctrl+C copies a selection, optional Enter after paste,
+  on-screen keys and A-/A+ on touch devices.
+- **UI.** Light / dark / system theme, favicon and web app manifest, command
+  palette (Ctrl/Cmd+K), connection-lost banner, focus rings. The panel waits
+  for the service to answer again before reloading after an update (no more
+  Cloudflare 502 page).
+- Version bumped to `0.40.0`; asset cache-buster token moved to `v0400`.
