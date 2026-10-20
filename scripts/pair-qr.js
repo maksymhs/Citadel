@@ -6,7 +6,8 @@ const hostService = require('../server/services/hostService');
 
 try {
   initDatabase();
-  process.stdout.write(hostService.createInvite({ userId: null }).compactLink);
+  const url = (process.argv[2] || '').trim() || undefined;
+  process.stdout.write(hostService.createInvite({ userId: null, url }).compactLink);
 } finally {
   closeDatabase();
 }

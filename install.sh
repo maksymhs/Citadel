@@ -780,7 +780,14 @@ else
   # the plain URL when it is unavailable (for example in check-only mode).
   QR_TEXT="$ACCESS_URL"
   PAIR_QR=false
-  if [ -n "$DATA_DIR" ]; then
+  # Mint the invitation for exactly the address shown below, so the code can
+  # always pair (never depends on a stale connect-qr file or a different
+  # primary address than the one the user sees).
+  PAIR_LINK="$(run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' DATABASE_PATH='$DATA_DIR/citadel.db' node scripts/pair-qr.js '$ACCESS_URL'" 2>/dev/null | tail -n1 || true)"
+  case "$PAIR_LINK" in
+    "${ACCESS_URL%/}"*"#pair="*) QR_TEXT="$PAIR_LINK"; PAIR_QR=true ;;
+  esac
+  if [ "$PAIR_QR" != true ] && [ -n "$DATA_DIR" ]; then
     # The service writes the invitation just after it starts; give it a moment
     # so the post-install banner can show the dual-purpose code.
     for _ in 1 2 3 4 5 6 7 8 9 10; do

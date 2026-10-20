@@ -1404,3 +1404,13 @@ README/.env.example/architecture. No commits/pushes/deploys.
   `[n/8]` lines; `CITADEL_VERBOSE=1` and `--check-only` keep the full trace.
   Tool output goes to a temp log that is printed only on failure.
 - Version bumped to `0.33.5`; asset cache-buster token moved to `v0335`.
+
+## 80. Installer QR always pairs (v0.33.6)
+- **Bug.** The final installer QR sometimes encoded only the plain panel address
+  ("plain panel address" error when scanned from Pair a machine): the installer
+  reused the server's `connect-qr` file and fell back to the bare URL whenever
+  its invitation was missing or started with a different primary address.
+- **Fix.** `scripts/pair-qr.js` takes the address to pin; the installer (and
+  `citadel qr`) mint the invitation for exactly the URL being displayed, so the
+  single QR is always the dual-purpose open + pair code.
+- Version bumped to `0.33.6`; asset cache-buster token moved to `v0336`.
