@@ -1395,3 +1395,12 @@ README/.env.example/architecture. No commits/pushes/deploys.
   accepts a bare `pair=` fragment and explains how to get a real pairing code
   when given a plain address.
 - Version bumped to `0.33.4`; asset cache-buster token moved to `v0334`.
+
+## 79. One-line installer progress (v0.33.5)
+- The default install output is a single self-updating line
+  (`Citadel ████░░░░ 4/8 message` plus a spinner while apt/npm/tunnel run),
+  then a status line (`✔ Citadel vX running · URL`) and the single QR last.
+  Warnings clear the progress line first. Non-terminal output keeps plain
+  `[n/8]` lines; `CITADEL_VERBOSE=1` and `--check-only` keep the full trace.
+  Tool output goes to a temp log that is printed only on failure.
+- Version bumped to `0.33.5`; asset cache-buster token moved to `v0335`.

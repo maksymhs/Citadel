@@ -12,24 +12,57 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}"
-echo "=================================================================="
-echo "          Citadel — System Installer                             "
-echo "=================================================================="
-echo -e "${NC}"
-
-# Minimal output by default: sub-steps print only with CITADEL_VERBOSE=1, and
-# noisy tools (apt, npm, doctor, tunnel) log to a file shown only on failure.
+# Minimal output by default: one self-updating progress line, then a status and
+# a single QR. CITADEL_VERBOSE=1 shows every step; noisy tools (apt, npm, doctor,
+# tunnel) log to a file that is shown only on failure.
 VERBOSE="${CITADEL_VERBOSE:-0}"
 INSTALL_LOG="$(mktemp -t citadel-install.XXXXXX 2>/dev/null || echo /tmp/citadel-install.log)"
 detail() { [ "$VERBOSE" = "1" ] && echo "$@" || true; }
-# quiet_run <command...>: hide output unless verbose; on failure show the tail.
+
+PROGRESS=false          # decided after argument parsing (needs CHECK_ONLY)
+CLR=""                  # clears the progress line before a warning is printed
+STEP_LINE=""
+init_progress() {
+  if [ "$VERBOSE" != "1" ] && [ "$CHECK_ONLY" != true ] && [ -t 1 ]; then
+    PROGRESS=true
+    CLR=$'\r\033[K'
+  fi
+}
+# step <n> <message>: self-updating "Citadel ████░░░░ 3/8 message" line.
+step() {
+  local n="$1"; shift
+  if [ "$PROGRESS" = true ]; then
+    local bar="" i
+    for i in 1 2 3 4 5 6 7 8; do [ "$i" -le "$n" ] && bar="${bar}█" || bar="${bar}░"; done
+    STEP_LINE="  Citadel ${bar} ${n}/8 $*"
+    printf '\r\033[K%s' "$STEP_LINE"
+  else
+    echo "[$n/8] $*"
+  fi
+}
+# quiet_run <command...>: hide output (animated spinner on a terminal) unless
+# verbose; on failure show the tail of the log.
 quiet_run() {
   if [ "$VERBOSE" = "1" ]; then "$@"; return $?; fi
-  if "$@" >>"$INSTALL_LOG" 2>&1; then return 0; fi
-  echo -e "${YELLOW}      Command failed: $*${NC}" >&2
-  tail -n 15 "$INSTALL_LOG" >&2
-  return 1
+  if [ "$PROGRESS" = true ]; then
+    ( "$@" ) >>"$INSTALL_LOG" 2>&1 &
+    local pid=$! frames='|/-\' i=0
+    while kill -0 "$pid" 2>/dev/null; do
+      printf '\r\033[K%s %s' "$STEP_LINE" "${frames:i++%4:1}"
+      sleep 0.15
+    done
+    printf '\r\033[K%s' "$STEP_LINE"
+    wait "$pid"
+    local rc=$?
+  else
+    "$@" >>"$INSTALL_LOG" 2>&1
+    local rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo -e "${CLR}${YELLOW}      Command failed: $*${NC}" >&2
+    tail -n 15 "$INSTALL_LOG" >&2
+  fi
+  return "$rc"
 }
 
 CHECK_ONLY=false
@@ -158,18 +191,19 @@ fi
 if [ -n "$ADMIN_TERMINAL_USER" ]; then
   case "$ADMIN_TERMINAL_USER" in
     *[!A-Za-z0-9_.-]*|[-.]*)
-      echo -e "${RED}[ERROR] Invalid --admin-terminal user: '$ADMIN_TERMINAL_USER'${NC}"
+      echo -e "${CLR}${RED}[ERROR] Invalid --admin-terminal user: '$ADMIN_TERMINAL_USER'${NC}"
       exit 1
       ;;
   esac
   if [ "$CHECK_ONLY" = false ] && ! id "$ADMIN_TERMINAL_USER" >/dev/null 2>&1; then
-    echo -e "${RED}[ERROR] --admin-terminal user '$ADMIN_TERMINAL_USER' does not exist on this host.${NC}"
+    echo -e "${CLR}${RED}[ERROR] --admin-terminal user '$ADMIN_TERMINAL_USER' does not exist on this host.${NC}"
     exit 1
   fi
 fi
 
+init_progress
 if [ "$CHECK_ONLY" = true ]; then
-  echo -e "${YELLOW}[CHECK MODE] No changes will be applied to the system.${NC}\n"
+  echo -e "${CLR}${YELLOW}[CHECK MODE] No changes will be applied to the system.${NC}\n"
 fi
 
 NOTES=""
@@ -178,7 +212,7 @@ NOTES=""
 [ "$LAN_ACCESS" = true ] && NOTES="$NOTES lan"
 [ "$TUNNEL" = true ] && NOTES="$NOTES tunnel"
 [ "$KEEP_AWAKE" = true ] && NOTES="$NOTES 24/7"
-[ -n "$NOTES" ] && echo -e "${YELLOW}  Options:${NOTES}${NC}  (details: CITADEL_VERBOSE=1)\n"
+[ "$VERBOSE" = "1" ] && [ -n "$NOTES" ] && echo -e "${CLR}${YELLOW}  Options:${NOTES}${NC}  (details: CITADEL_VERBOSE=1)\n"
 
 # Official Citadel repository (enables one-line install via curl | bash)
 REPO_URL="${CITADEL_REPO_URL:-https://github.com/maksymhs/Citadel.git}"
@@ -223,16 +257,16 @@ run_as_service_user() {
 ARCH=$(uname -m)
 OS=$(uname -s)
 
-echo "[1/8] Checking Operating System and Architecture..."
+step 1 "Checking Operating System and Architecture..."
 detail "      OS: $OS, Architecture: $ARCH"
 
 if [ "$OS" != "Linux" ] && [ "$OS" != "Darwin" ]; then
-  echo -e "${RED}[ERROR] Unsupported operating system: $OS${NC}"
+  echo -e "${CLR}${RED}[ERROR] Unsupported operating system: $OS${NC}"
   exit 1
 fi
 
 if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ] && [ "$ARCH" != "arm64" ]; then
-  echo -e "${RED}[ERROR] Unsupported architecture: $ARCH (x86_64 or arm64/aarch64 required)${NC}"
+  echo -e "${CLR}${RED}[ERROR] Unsupported architecture: $ARCH (x86_64 or arm64/aarch64 required)${NC}"
   exit 1
 fi
 
@@ -250,12 +284,12 @@ AGENTS_DIR="${CITADEL_AGENTS_DIR:-/opt/citadel/agents}"
 # is not a dedicated absolute directory.
 case "$AGENTS_DIR" in
   *..*|/|/bin|/bin/*|/boot|/boot/*|/dev|/dev/*|/etc|/etc/*|/home|/lib*|/opt|/proc|/proc/*|/root|/run|/sbin|/sbin/*|/srv|/sys|/sys/*|/tmp|/usr|/usr/*|/var)
-    echo -e "${RED}[ERROR] Refusing unsafe CITADEL_AGENTS_DIR: $AGENTS_DIR${NC}"
+    echo -e "${CLR}${RED}[ERROR] Refusing unsafe CITADEL_AGENTS_DIR: $AGENTS_DIR${NC}"
     exit 1
     ;;
   /*) : ;;
   *)
-    echo -e "${RED}[ERROR] CITADEL_AGENTS_DIR must be an absolute path: $AGENTS_DIR${NC}"
+    echo -e "${CLR}${RED}[ERROR] CITADEL_AGENTS_DIR must be an absolute path: $AGENTS_DIR${NC}"
     exit 1
     ;;
 esac
@@ -286,19 +320,19 @@ if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ "$CHECK_ONLY" = false ] \
 fi
 
 # 3. Resource Check (Memory and Disk Space)
-echo "[2/8] Checking VPS resources..."
+step 2 "Checking VPS resources..."
 if [ "$OS" = "Linux" ]; then
   MEM_TOTAL_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
   MEM_TOTAL_MB=$((MEM_TOTAL_KB / 1024))
   if [ "$MEM_TOTAL_MB" -lt 450 ]; then
-    echo -e "${YELLOW}[WARNING] Low RAM: ${MEM_TOTAL_MB} MB. Adding a swap file is recommended.${NC}"
+    echo -e "${CLR}${YELLOW}[WARNING] Low RAM: ${MEM_TOTAL_MB} MB. Adding a swap file is recommended.${NC}"
   else
     detail "      Available RAM: ${MEM_TOTAL_MB} MB (OK)"
   fi
 fi
 
 # 4. Base package and build dependency installation
-echo "[3/8] Checking system packages..."
+step 3 "Checking system packages..."
 if [ "$OS" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
   if [ "$CHECK_ONLY" = false ] && [ "$HAS_SUDO" = true ]; then
     detail "      Installing/updating base packages (curl, git, tmux, build-essential, python3)..."
@@ -308,7 +342,7 @@ if [ "$OS" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
 fi
 
 # 5. Node.js Check
-echo "[4/8] Checking Node.js runtime..."
+step 4 "Checking Node.js runtime..."
 NODE_INSTALLED=false
 if command -v node >/dev/null 2>&1; then
   NODE_VER=$(node -v | sed 's/v//')
@@ -317,13 +351,13 @@ if command -v node >/dev/null 2>&1; then
     detail "      Node.js v$NODE_VER detected (compatible)."
     NODE_INSTALLED=true
   else
-    echo -e "${YELLOW}[WARNING] Node.js version (v$NODE_VER) is lower than v18.${NC}"
+    echo -e "${CLR}${YELLOW}[WARNING] Node.js version (v$NODE_VER) is lower than v18.${NC}"
   fi
 fi
 
 if [ "$NODE_INSTALLED" = false ]; then
   if [ "$CHECK_ONLY" = true ]; then
-    echo -e "${YELLOW}[WARNING] Installing Node.js LTS (>= 18.x) is required.${NC}"
+    echo -e "${CLR}${YELLOW}[WARNING] Installing Node.js LTS (>= 18.x) is required.${NC}"
   elif [ "$OS" = "Linux" ] && command -v apt-get >/dev/null 2>&1 && [ "$HAS_SUDO" = true ]; then
     detail "      Installing Node.js 22 LTS via NodeSource..."
     # `$SUDO` is empty when the installer already runs as root; passing `-E`
@@ -336,13 +370,13 @@ if [ "$NODE_INSTALLED" = false ]; then
     fi
     $SUDO apt-get install -y -qq nodejs
   else
-    echo -e "${RED}[ERROR] Node.js is not installed. Please install Node.js >= 18 LTS manually.${NC}"
+    echo -e "${CLR}${RED}[ERROR] Node.js is not installed. Please install Node.js >= 18 LTS manually.${NC}"
     exit 1
   fi
 fi
 
 # 6. Directory and User Setup
-echo "[5/8] Preparing directory structure and permissions..."
+step 5 "Preparing directory structure and permissions..."
 if [ "$CHECK_ONLY" = true ]; then
   detail "      Directories to check: $TARGET_DIR (app, data, projects, logs)"
 else
@@ -364,9 +398,9 @@ else
   # Re-running the installer upgrades an existing installation in place: it pulls
   # the latest code, reinstalls dependencies and restarts the service.
   if $SUDO test -d "$APP_DIR/.git" || $SUDO test -f "$APP_DIR/package.json"; then
-    echo -e "${BLUE}      Existing installation detected — updating in place.${NC}"
+    echo -e "${CLR}${BLUE}      Existing installation detected — updating in place.${NC}"
   elif [ "$UPDATE_MODE" = true ]; then
-    echo -e "${YELLOW}      Nothing to update yet; performing a fresh installation.${NC}"
+    echo -e "${CLR}${YELLOW}      Nothing to update yet; performing a fresh installation.${NC}"
   fi
 
   # Obtain the source code: from a local checkout or by cloning the official repository.
@@ -472,9 +506,9 @@ fi
 
 # 7. Dependency installation and local asset build
 if [ "$CHECK_ONLY" = true ]; then
-  echo "[6/8] Native dependencies and local assets: skipped (check mode)."
+  step 6 "Native dependencies and local assets: skipped (check mode)."
 else
-  echo "[6/8] Installing native dependencies and local assets (0 CDNs)..."
+  step 6 "Installing native dependencies and local assets (0 CDNs)..."
   # Run as the service user so node_modules/vendor files are owned by the same
   # account that systemd runs the server as, and so the working directory is
   # accessible even when its parent is not world-traversable.
@@ -482,8 +516,8 @@ else
   if [ "$VERBOSE" = "1" ]; then
     run_as_service_user "cd '$APP_DIR' && npm install --omit=dev"
   else
-    run_as_service_user "cd '$APP_DIR' && npm install --omit=dev --no-fund --no-audit --loglevel=error" >>"$INSTALL_LOG" 2>&1 \
-      || { echo -e "${RED}[ERROR] npm install failed:${NC}" >&2; tail -n 20 "$INSTALL_LOG" >&2; exit 1; }
+    quiet_run run_as_service_user "cd '$APP_DIR' && npm install --omit=dev --no-fund --no-audit --loglevel=error" \
+      || { echo -e "${CLR}${RED}[ERROR] npm install failed (log: $INSTALL_LOG)${NC}" >&2; exit 1; }
   fi
   # Diagnostics are informational during installation: a failed check (for
   # example, memory pressure or a failed system unit) must not abort a valid
@@ -492,8 +526,8 @@ else
     run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' node scripts/doctor.js" \
       || echo "      Diagnostics reported issues; installation continues. Review the output above."
   else
-    run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' node scripts/doctor.js" >>"$INSTALL_LOG" 2>&1 \
-      || echo -e "${YELLOW}      Diagnostics reported warnings; run: citadel doctor${NC}"
+    quiet_run run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' node scripts/doctor.js" \
+      || echo -e "${CLR}${YELLOW}      Diagnostics reported warnings; run: citadel doctor${NC}"
   fi
   # Re-assert ownership in case anything above was created with different perms.
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
@@ -503,9 +537,9 @@ fi
 
 # 8. systemd service configuration and startup
 if [ "$CHECK_ONLY" = true ]; then
-  echo "[7/8] systemd service configuration: skipped (check mode)."
+  step 7 "systemd service configuration: skipped (check mode)."
 else
-  echo "[7/8] Configuring systemd service..."
+  step 7 "Configuring systemd service..."
   if [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$HAS_SUDO" = true ]; then
     SERVICE_FILE="/etc/systemd/system/citadel.service"
     $SUDO cp "$APP_DIR/scripts/citadel.service" "$SERVICE_FILE"
@@ -561,7 +595,7 @@ EOF
       $SUDO systemctl restart citadel.service
       detail "      System Terminal will run as '$ADMIN_TERMINAL_USER'."
     else
-      echo -e "${YELLOW}      Skipping privileged System Terminal (requires Linux + systemd + sudo).${NC}"
+      echo -e "${CLR}${YELLOW}      Skipping privileged System Terminal (requires Linux + systemd + sudo).${NC}"
     fi
   fi
 
@@ -578,7 +612,7 @@ EOF
       $SUDO visudo -cf "$UPDATER_SUDOERS" >/dev/null
       detail "      In-panel updater enabled (System → Update)."
     else
-      echo -e "${YELLOW}      Skipping privileged updater (requires Linux + sudo).${NC}"
+      echo -e "${CLR}${YELLOW}      Skipping privileged updater (requires Linux + sudo).${NC}"
     fi
   fi
 
@@ -586,7 +620,7 @@ EOF
   # panel (root-owned copy of tunnel.sh + a sudoers rule scoped to it).
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && command -v systemctl >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/tunnel.sh" ]; then
     $SUDO env CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" CITADEL_RUN_USER="$RUN_USER" PORT="$PANEL_PORT" \
-      bash "$APP_DIR/scripts/tunnel.sh" setup >>"$INSTALL_LOG" 2>&1 || echo -e "${YELLOW}      Tunnel helper skipped.${NC}"
+      bash "$APP_DIR/scripts/tunnel.sh" setup >>"$INSTALL_LOG" 2>&1 || echo -e "${CLR}${YELLOW}      Tunnel helper skipped.${NC}"
   fi
 
   # Git credential helper: lets project terminals reuse the provider tokens
@@ -650,10 +684,10 @@ EOF
     # CITADEL_QUIET: tunnel.sh must not print its own URL/QR; the single QR is
     # shown at the very end of this installer.
     if [ "$VERBOSE" = "1" ]; then
-      $SUDO env CITADEL_QUIET=1 bash "$APP_DIR/scripts/tunnel.sh" up || echo -e "${YELLOW}      Tunnel setup skipped (see errors above).${NC}"
+      $SUDO env CITADEL_QUIET=1 bash "$APP_DIR/scripts/tunnel.sh" up || echo -e "${CLR}${YELLOW}      Tunnel setup skipped (see errors above).${NC}"
     else
-      $SUDO env CITADEL_QUIET=1 bash "$APP_DIR/scripts/tunnel.sh" up >>"$INSTALL_LOG" 2>&1 \
-        || { echo -e "${YELLOW}      Tunnel setup skipped:${NC}"; tail -n 8 "$INSTALL_LOG"; }
+      quiet_run $SUDO env CITADEL_QUIET=1 bash "$APP_DIR/scripts/tunnel.sh" up \
+        || echo -e "${CLR}${YELLOW}      Tunnel setup skipped (log: $INSTALL_LOG)${NC}"
     fi
     # Re-generate connect-qr with the public tunnel URL so the QR code uses the public URL
     if $SUDO test -f "$DATA_DIR/tunnel-url"; then
@@ -666,30 +700,33 @@ EOF
   if [ "$KEEP_AWAKE" = true ]; then
     if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/power.sh" ]; then
       detail "      Enabling 24/7 mode (ignore lid close, block sleep)..."
-      $SUDO bash "$APP_DIR/scripts/power.sh" on || echo -e "${YELLOW}      24/7 mode could not be enabled (see errors above).${NC}"
+      $SUDO bash "$APP_DIR/scripts/power.sh" on || echo -e "${CLR}${YELLOW}      24/7 mode could not be enabled (see errors above).${NC}"
     else
-      echo -e "${YELLOW}      24/7 mode skipped (requires Linux + systemd + sudo).${NC}"
+      echo -e "${CLR}${YELLOW}      24/7 mode skipped (requires Linux + systemd + sudo).${NC}"
     fi
   fi
 fi
 
 # 9. Health check
+HEALTH_OK=unknown
 if [ "$CHECK_ONLY" = true ]; then
-  echo "[8/8] API health check: skipped (check mode)."
+  step 8 "API health check: skipped (check mode)."
 else
-  echo "[8/8] Checking API health..."
+  step 8 "Checking API health..."
   if command -v curl >/dev/null 2>&1; then
     sleep 2
     if curl -s -f http://127.0.0.1:3000/api/auth/status >/dev/null 2>&1; then
-      echo -e "${GREEN}      API responding correctly (HTTP 200).${NC}"
+      HEALTH_OK=true
+      detail "      API responding correctly (HTTP 200)."
     else
-      echo -e "${YELLOW}      Warning: The service is still starting. Check with: curl http://127.0.0.1:3000/api/auth/status${NC}"
+      HEALTH_OK=false
+      detail "      Warning: the service is still starting. Check: curl http://127.0.0.1:3000/api/auth/status"
     fi
   fi
 fi
 
 if [ "$CHECK_ONLY" = true ]; then
-  echo -e "\n${BLUE}=================================================================="
+  echo -e "\n${CLR}${BLUE}=================================================================="
   echo "          Citadel Check Complete — No Changes Applied            "
   echo "=================================================================="
   echo -e "${NC}"
@@ -700,15 +737,13 @@ if [ "$CHECK_ONLY" = true ]; then
   echo "    4. Register and start the systemd service."
   echo ""
   if [ "$NODE_INSTALLED" = false ]; then
-    echo -e "${YELLOW}  Prerequisite missing: Node.js >= 18 LTS (it will be installed automatically).${NC}"
+    echo -e "${CLR}${YELLOW}  Prerequisite missing: Node.js >= 18 LTS (it will be installed automatically).${NC}"
   fi
   echo "  Run the installer without --check-only to perform the installation."
   echo "=================================================================="
 else
-  echo -e "\n${GREEN}=================================================================="
-  echo "          Citadel Installation Completed Successfully             "
-  echo "=================================================================="
-  echo -e "${NC}"
+  printf '%s' "$CLR"
+  CITADEL_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$APP_DIR/package.json" 2>/dev/null | head -n1)"
 
   # Best URL for a phone: explicit public URL > Cloudflare tunnel > Tailscale
   # (*.ts.net) > LAN IP. Each branch also sets a human label.
@@ -739,9 +774,6 @@ else
     ACCESS_LABEL="Panel (this machine)"
   fi
 
-  echo "  $ACCESS_LABEL:  $ACCESS_URL"
-  [ -n "$ADMIN_TERMINAL_USER" ] && echo "  System Terminal:  $ADMIN_TERMINAL_USER (root-capable)"
-  echo "  Manage: citadel status | qr | update | doctor"
   # Scan-to-start: one QR for both jobs. A normal camera opens the panel; the
   # same code scanned from another Citadel's Pair screen pairs the two hosts.
   # The server writes the current single-use invitation at startup; fall back to
@@ -766,18 +798,19 @@ else
       fi
     fi
   fi
-  echo ""
+  case "$HEALTH_OK" in
+    true) STATUS_MARK="${GREEN}✔${NC}"; STATUS_TEXT="running" ;;
+    false) STATUS_MARK="${YELLOW}…${NC}"; STATUS_TEXT="still starting (check: citadel status)" ;;
+    *) STATUS_MARK="${GREEN}✔${NC}"; STATUS_TEXT="installed" ;;
+  esac
+  echo -e "  ${STATUS_MARK} Citadel ${CITADEL_VERSION:+v$CITADEL_VERSION }${STATUS_TEXT} · $ACCESS_URL"
   if [ "$TUNNEL" = true ] || [ "$LAN_EXPOSED" = true ]; then
-    echo -e "${YELLOW}  Create your admin account NOW: until then the first visitor can claim it.${NC}"
-  else
-    echo "  Open the panel and create your admin account."
+    echo -e "  ${YELLOW}Create your admin account now: until then the first visitor can claim it.${NC}"
   fi
-  echo "=================================================================="
-  # The QR goes last so it stays on screen on a console without scrollback.
   if [ "$PAIR_QR" = true ]; then
-    echo -e "${BLUE}  One QR: scan with a phone to open the panel, or from another Citadel's Pair screen:${NC}"
+    echo "  Scan: opens the panel from a phone, or pairs from another Citadel (Pair a machine)."
   else
-    echo -e "${BLUE}  Scan with your phone to open the panel:${NC}"
+    echo "  Scan with your phone to open the panel."
   fi
   if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
     (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$ACCESS_URL") || true
@@ -789,5 +822,5 @@ else
       qrencode -t ANSIUTF8 -m 2 "$QR_TEXT" || true
     fi
   fi
-  echo "  $ACCESS_URL"
+  echo "  citadel status | qr | update | doctor    (details: CITADEL_VERBOSE=1)"
 fi
