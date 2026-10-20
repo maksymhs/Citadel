@@ -569,6 +569,37 @@ html.is-mobile-ui #app-container {
   flex-shrink: 0;
 }
 
+.top-bar-lead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.top-bar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px 5px 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.top-bar-back:hover,
+.top-bar-back:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.top-bar-back[hidden] {
+  display: none;
+}
+
 .top-bar-title {
   font-size: 16px;
   font-weight: 600;
@@ -1060,6 +1091,18 @@ html.is-mobile-ui #app-container {
   .sidebar {
     padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .top-bar-lead {
+    flex: 1;
+  }
+
+  .top-bar-back span {
+    display: none;
+  }
+
+  .top-bar-back {
+    padding: 5px 6px;
   }
 
   .top-bar-title {

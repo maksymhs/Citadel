@@ -63,7 +63,6 @@
   // gone: host diagnostics/updates and Activity & Audit live in Settings.
   const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace'];
   const CORE_NAV = [
-    { view: 'machines', label: 'Machines', icon: 'machines' },
     { view: 'files', label: 'Files', icon: 'files' },
     { view: 'settings', label: 'Settings', icon: 'settings' },
   ];
@@ -76,7 +75,7 @@
     { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
   ];
   const KNOWN_VIEWS = [
-    ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity', 'processes',
+    ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity', 'processes', 'machines',
     ...OPTIONAL_NAV.map((n) => n.view),
   ];
   // Legacy view ids → current ids, so a persisted view still resolves.
@@ -168,7 +167,6 @@
     files: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6"/>',
     proxy: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
     docker: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>',
-    machines: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>',
     fleet: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.003 0 003 15z"/>',
   };
 
@@ -527,7 +525,13 @@
             <button class="hamburger-btn" id="mobile-menu-btn" aria-label="Toggle navigation">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
-            <div class="top-bar-title" id="top-bar-title">Dashboard</div>
+            <div class="top-bar-lead">
+              <button class="top-bar-back" id="top-bar-back" hidden aria-label="Back" title="Back">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                <span>Back</span>
+              </button>
+              <div class="top-bar-title" id="top-bar-title">Dashboard</div>
+            </div>
             <div class="top-bar-actions" id="top-bar-actions"></div>
           </header>
           <main class="content-body" id="main-content"></main>
@@ -678,6 +682,7 @@
       });
     }
     items.push({ sep: true });
+    items.push({ label: 'Machines overview…', onSelect: () => navigateTo('machines') });
     items.push({ label: 'Pair a machine…', onSelect: showPairModal });
     items.push({ label: 'Manage machines…', onSelect: () => navigateTo('settings') });
     openContextMenu(anchorEl, items);
@@ -979,9 +984,25 @@
     });
   }
 
+  // Secondary screens reached from another one get a Back button at the top
+  // left. It returns to the screen the user came from, or to a sensible parent
+  // when the page was opened directly on it.
+  const DETAIL_VIEWS = { processes: 'dashboard', activity: 'settings', machines: 'dashboard' };
+
+  function updateBackButton(view) {
+    const btn = document.getElementById('top-bar-back');
+    if (!btn) return;
+    const isDetail = Object.prototype.hasOwnProperty.call(DETAIL_VIEWS, view);
+    btn.hidden = !isDetail;
+    btn.onclick = isDetail ? () => navigateTo(state.backView && state.backView !== view ? state.backView : DETAIL_VIEWS[view]) : null;
+  }
+
   function navigateTo(view) {
     view = resolveView(view);
+    const from = state.currentView;
+    if (from !== view && !Object.prototype.hasOwnProperty.call(DETAIL_VIEWS, from)) state.backView = from;
     state.currentView = view;
+    updateBackButton(view);
     saveUiState({ currentView: view });
     if (state.dashboardTimer) {
       clearInterval(state.dashboardTimer);
@@ -4497,7 +4518,7 @@
 
         <div style="margin-top:28px;margin-bottom:20px;">
           <h2 style="font-size:18px;margin-bottom:6px;">Machines</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">Pair other Citadels to reach them from this panel, with live health and alerts under Machines.</p>
+          <p style="color:var(--text-secondary);font-size:13px;">Pair other Citadels to reach them from this panel, with live health and alerts in the machine selector → Machines overview.</p>
         </div>
 
         <div class="card" style="margin-bottom:24px;">
