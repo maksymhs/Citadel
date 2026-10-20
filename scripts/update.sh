@@ -313,6 +313,14 @@ if [ "$(id -u)" -eq 0 ] && service_manager_available \
   sys daemon-reload
 fi
 
+# Keep the Settings → Tunnel helper (root-owned copy of tunnel.sh + sudoers
+# rule) in sync so panels installed before it existed gain it on update.
+if [ "$(id -u)" -eq 0 ] && service_manager_available && [ -f "$APP_DIR/scripts/tunnel.sh" ]; then
+  CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR_RESOLVED" CITADEL_RUN_USER="$RUN_USER" PORT="$PORT" \
+    bash "$APP_DIR/scripts/tunnel.sh" setup >/dev/null 2>&1 \
+    || echo "[citadel-update] WARNING: could not refresh the tunnel helper." >&2
+fi
+
 # Persistent drop-in: guarantee detached tmux terminals (and the opencode
 # sessions running inside them) survive every service restart/update, even if
 # the main unit is later replaced by an older copy. Idempotent: never clobbers

@@ -10,7 +10,8 @@
     "doctor": "node scripts/doctor.js",
     "sentinel": "node scripts/sentinel.js",
     "mcp": "node scripts/citadel-mcp.js",
-    "postinstall": "node scripts/copy-vendor.js"
+    "postinstall": "node scripts/copy-vendor.js",
+    "lint": "eslint ."
   },
   "keywords": [
     "citadel",
@@ -42,5 +43,8 @@
     "qrcode-generator": "^2.0.4",
     "ws": "^8.22.0",
     "wunderbaum": "^0.14.1"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5"
   }
 }

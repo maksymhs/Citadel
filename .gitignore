@@ -11,3 +11,6 @@ logs/
 *.log
 .DS_Store
 dist/
+
+# Regenerated from node_modules by `npm install` (scripts/copy-vendor.js)
+public/vendor/

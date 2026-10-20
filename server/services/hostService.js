@@ -778,5 +778,5 @@ module.exports = {
   wsCandidates,
   announceToPeers,
   unpairHost,
-  _resetInvites: () => invites.clear(),
+  _resetInvites: () => getDatabase().prepare('DELETE FROM pairing_invites').run(),
 };

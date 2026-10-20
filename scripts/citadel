@@ -55,7 +55,7 @@ Citadel CLI
   citadel power on       Ignore lid close and block sleep for 24/7 operation
   citadel power off      Restore the system sleep defaults
   citadel url            Print the panel URL
-  citadel qr             Print a scannable pairing QR code
+  citadel qr [--url]     Print a scannable pairing QR code (--url: short, panel address only)
   citadel logs           Follow the service logs
   citadel restart        Restart the service
   citadel update         Update to the latest version
@@ -117,9 +117,19 @@ case "$cmd" in
 
   qr)
     p_url="$(panel_url)"
+    if [ "${1:-}" = "--url" ]; then
+      # Short code for small terminals: just the panel address, no pairing secret.
+      echo "Panel QR:"
+      (cd "$APP_DIR" && node scripts/print-qr.js "$p_url")
+      echo "Panel URL: $p_url"
+      exit 0
+    fi
     pair_link="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" PORT="$PORT" node scripts/pair-qr.js 2>/dev/null || true)"
     echo "Pairing QR (valid for 10 minutes):"
-    (cd "$APP_DIR" && node scripts/print-qr.js "${pair_link:-$p_url}" "$p_url")
+    (cd "$APP_DIR" && node scripts/print-qr.js "${pair_link:-$p_url}" "$p_url") || {
+      echo "Tip: the pairing code does not fit this terminal. Try: citadel qr --url (short code) or run it over SSH." >&2
+      exit 1
+    }
     echo "Panel URL: $p_url"
     ;;
 

@@ -193,56 +193,9 @@ CITADEL_PEER_TOKEN=<long-random-shared-secret>
 
 When set, triggering an update also asks every peer to update itself. The peer endpoint is token-authenticated (constant-time) and never fans out again, so there are no update loops. Keep the token out of version control.
 
-### Distributed task mesh (parallel work across nodes)
+### Distributed task mesh
 
-The simplest and most solid way to spread work is a **pull queue**: the orchestrator (a smart agent) decides *what* and *how much*; each node is dumb and only pulls when it has a free slot, so load balancing is emergent and no node is a scheduler. A short lease, renewed by the sentinel heartbeat, means a crashed worker's task is retried automatically up to `maxAttempts` (default 3) and then fails explicitly. The heartbeat reports the attempts the node is actually executing, with their claim tokens, and only those are renewed: a task whose process disappeared while the node keeps beating stops being renewed and is reclaimed at lease expiry instead of holding `running` forever.
-
-**Control plane (HTTP).** Orchestrator routes need an authenticated session; worker routes (claim/result/heartbeat) also accept the scoped `X-Citadel-Node-Token` header when `CITADEL_NODE_TOKEN` is set on the server:
-
-```
-POST /api/tasks              {cmd,args} OR {agent,prompt} + projectPath?, priority?, node?, maxAttempts?  # enqueue
-POST /api/tasks/claim        {node, protocol?}                            # pull one (204 if none) → returns claimToken
-POST /api/tasks/:id/result   {status, exitCode?, resultRef?, error?, result?, claimToken, execId?}  # report + captured output
-POST /api/tasks/:id/reconcile {state: alive|terminated|unknown, claimToken, execId, exitCode?, signal?, pid?, pgid?, startedAt?}  # worker-only
-POST /api/tasks/:id/cancel                                                # request cancel (queued or running, idempotent)
-GET  /api/tasks?status=&node=                                             # progress
-POST /api/nodes/heartbeat    {node, capacity, active, load, tags?, running?: [{id, claimToken, execId?, pid?, pgid?, startedAt?}]}  # liveness + lease renewal
-GET  /api/nodes                                                           # list nodes and load
-```
-
-The heartbeat `running` list is a *witness list*: the server renews exactly those attempts and only while the reported claim token still matches the stored one. A running task that stops being reported is not renewed and expires through the normal reclaim path; a delayed or duplicated heartbeat cannot resurrect a finished task or extend an older attempt. For compatibility, plain id strings (or objects without `claimToken`) are still accepted, but their guarantee is explicitly weaker — renewal binds only id/node/status, so a delayed beat from an earlier attempt of the same node can extend a newer one. Expired attempts are still safe (reclaim runs before renewal, so they cannot be resurrected) and a task re-claimed by another node is protected by the node guard; the server emits a one-time `node_heartbeat_unbound` warning so operators know to upgrade the client. An omitted `running` list is treated as a legacy client and renews node-wide (with a one-time `node_heartbeat_legacy` warning), because refusing to renew would requeue tasks that are still executing.
-
-**Claim tokens and retries.** Every claim mints a random `claimToken` and bumps `attempt`; reporting a result requires that exact token, so a worker whose lease expired (and whose task was retried elsewhere) can never overwrite the newer attempt's result. Expired leases requeue the task while attempts remain (`task_lease_expired` event) and mark it failed once `maxAttempts` is reached (`task_attempts_exhausted`).
-
-**Tracked executions (sentinel protocol 2).** A sentinel that sends `protocol: 2` promises a durable local journal and process-level reconciliation. The claim records the protocol, every spawned execution gets a random `execId` and its PID/PGID/start token are reported in the heartbeat, and an expired lease no longer implies "nothing is running": an attempt with execution evidence becomes `reconcile_state='uncertain'` instead of being requeued. The owning node then calls `POST /api/tasks/:id/reconcile` with the attempt's `claimToken` and `execId` and the observed `state`: `alive` re-authorizes the same execution and renews its lease, `terminated` finalises it (with an exit code) or requeues it safely (outcome unknown but the process is provably gone), and `unknown` keeps it blocked for an operator. A late or foreign execution can never resolve a newer attempt, and reconciliation is idempotent. Once a lease has expired, the attempt loses authority even if no one has reclaimed it yet; a result arriving after expiry is rejected and must use the reconcile path.
-
-**Execution authority.** A result is accepted only while the attempt still holds a valid lease *and* presents the current claim token; both checks and the write happen atomically with the ownership guard. Once the lease has expired the attempt has no authority even if nobody has reclaimed the task yet: the result is rejected (`task_result_rejected_expired` event) and the task is requeued — or failed when `maxAttempts` is reached — in the same transaction. A running row whose lease is missing (NULL/empty — only possible from a manually repaired or legacy database) is treated the same way and rejected with `task_result_rejected_no_lease`; a null lease is never read as an indefinite one, and the same reclaim path recovers the row. A tracked attempt whose lease expired is not finalised by time alone: it stays `running` (or `cancelling`) with `reconcile_state='uncertain'` until its node proves the process outcome. Cancelling a running task whose lease already expired (or is missing) finalises it as `cancelled` immediately when there is no execution evidence; with a tracked execution it remains a request. A late result can never reopen a terminal state.
-
-**Agent tasks.** Instead of a raw command, enqueue `{"agent":"claude|codex|opencode","prompt":"..."}` and Citadel builds the headless invocation from the agent registry (`opencode run`, `claude -p --output-format json`, `codex exec --json`), so the orchestrator never needs to know each CLI's flags.
-
-**Result and cancellation.** The sentinel captures a bounded tail of the task's stdout/stderr and stores it in `result` (readable via `GET /api/tasks/:id`), and exports `CITADEL_TASK_ID`, `CITADEL_TASK_NODE`, `CITADEL_TASK_PROJECT` and `CITADEL_EXEC_ID` to the child so agents can name worktrees/branches idempotently. Executions are spawned detached in their own process group, so cancellation reaches descendants too. Cancelling a running task is a *request*: the task moves to `cancelling`, the sentinel receives it on the next heartbeat (SIGTERM, then SIGKILL after a bounded grace period, default 10 s), and the task becomes `cancelled` only when the worker confirms that the process tree is gone. Cancellation is idempotent: repeating it on `cancelling`/`cancelled` returns the current state (HTTP 200) instead of an error. If termination cannot be confirmed, the task is reported as `unknown` and is never marked cancelled falsely. A journaled execution that outlives a sentinel restart is re-adopted; one that is provably gone is reported terminated; one that cannot be verified stays blocked for an operator.
-
-**Sentinel (one per node).** Run it inside a Citadel terminal so tmux keeps it alive across restarts, or as a systemd unit. The journal lives in `CITADEL_SENTINEL_STATE_DIR` (default `~/.citadel/sentinel`, directory `0700`, file `0600`) and contains per-claim tokens — never log or copy it to a world-readable location. A lock file per node/state directory prevents two sentinels from adopting the same executions; a lock left by a dead process is reclaimed. Tune the escalation with `CITADEL_KILL_GRACE_MS` (default 10000) and `CITADEL_KILL_CONFIRM_MS` (default 5000), and the HTTP bound with `CITADEL_HTTP_TIMEOUT_MS`. Prefer **per-node credentials**: set `CITADEL_NODE_TOKENS="vps-2:<random>,vps-3:<random>"` on the server and give each sentinel its own value in `CITADEL_NODE_TOKEN`. The credential is bound to that node id, so a node cannot claim, heartbeat, report or reconcile as another node, and the shared token is ignored while per-node tokens are configured (no silent downgrade). If the variable is set but every entry is malformed (short token, missing separator, invalid node id), the server **fails closed**: worker node-token auth is disabled — the shared token is *not* used as a fallback — and a clear error is logged until the value is fixed. Leave the variable unset (or empty) to keep the legacy installation-wide `CITADEL_NODE_TOKEN` shared by every node — any holder may declare any node id — which is only appropriate when all nodes are inside the same operator's trust perimeter. `CITADEL_TOKEN=<session id>` also still works but grants the node a full panel session. Rotate or revoke by editing the map and restarting the server:
-
-```
-CITADEL_URL=https://panel.example.com \
-CITADEL_NODE_TOKEN=<this node's secret> \
-CITADEL_NODE=vps-2 \
-CITADEL_CAPACITY=2 \
-node scripts/sentinel.js
-```
-
-**Tracking limits.** Process attribution is strongest on Linux (`/proc` start time plus `CITADEL_EXEC_ID` in the inherited environment). On macOS the start token and process group are still verified, but descendants that outlive their leader cannot be found by environment scanning; the sentinel reports `unknown` rather than relaunching. The legacy shared token does not give per-node cryptographic identity, and pre-protocol-2 clients keep the older expiry/requeue semantics (an expired lease is assumed to mean the process is gone). A node that never returns leaves its tracked attempt `uncertain` until an operator reconciles it.
-
-`cmd` is executed directly (no shell); for shell one-liners use `{"cmd":"bash","args":["-lc","..."]}`. Leave `node` off a task to let any free node pull it, or pin it to place work manually. Data/artifacts stay on your own transport (git branches, an object store) — the queue only carries small JSON.
-
-**MCP server.** Any MCP-capable agent can drive the mesh with the tools `citadel_nodes`, `citadel_node_load`, `citadel_enqueue_task`, `citadel_tasks`, `citadel_task` and `citadel_cancel_task`:
-
-```
-CITADEL_URL=https://panel.example.com CITADEL_TOKEN=<session id> node scripts/citadel-mcp.js
-```
-
-It is dependency-free: newline-delimited JSON-RPC 2.0 on stdio. To distribute load-aware, the agent reads `citadel_nodes`/`citadel_node_load` and either enqueues unpinned (any idle node) or pins to the least busy one.
+Parallel work across paired nodes. See [docs/task-mesh.md](docs/task-mesh.md).
 
 ### Observability (logs & metrics)
 
@@ -266,71 +219,9 @@ Retention is configurable: `CITADEL_LOG_RETENTION_DAYS` (default `30`), sampler 
 
 The **Files** view browses the host filesystem: navigate directories, read and edit text files, create folders/files, rename, delete and download. When the panel is configured with an admin user (`--admin-terminal`), it can reach the **whole host** (the operations run as that user through the existing scoped `sudo` rule, with paths passed as data — never interpolated into a shell). Without an admin user it is limited to what the service user can access. Write operations are recorded in the audit log.
 
-### Access from your phone (no domain needed)
+### Remote access, pairing and tunnels
 
-The installer and `citadel qr` print a scannable one-time pairing QR code, and **Settings → Connection** shows a fresh pairing code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise an active **Cloudflare Quick Tunnel**, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
-
-The same code does both jobs: scanning it with any camera app opens the panel, while scanning it from another Citadel's **Pair a machine** screen pairs the two hosts. **Settings → Connection** always shows a fresh single-use pairing code (it expires in 10 minutes); use **New code** to generate another one.
-
-> **Camera on a phone:** the live in-browser camera requires HTTPS (or `localhost`). When the panel is opened over plain HTTP, or in a browser without live QR support, pairing still works with **Take a photo of the QR** (native camera capture) or by pasting the link.
-
-### Switching between paired machines
-
-The machine selector above the sidebar lists this host plus every paired machine with a live status dot. **Pair a machine…** accepts a scanned or pasted code:
-
-1. On machine A: open **Settings → Connection** to show the dual-purpose QR.
-2. On machine B: sidebar → machine selector → **Pair a machine…**, then scan the code (live camera or photo) or paste its link.
-3. Both sides store each other. Use the selector to jump between them; the browser URL never changes.
-
-Pairing stores a stable instance id and **every candidate address** the host reports. A Cloudflare Quick Tunnel URL changes on every restart, so paired hosts re-announce their current addresses right after boot and every five minutes; the proxy tries each candidate until one answers. If an address is stale, the next announcement repairs it — no re-pairing needed. Because every peer request and response carries the sender's identity and current addresses, a single successful call in either direction repairs both sides. The browser also caches addresses it has seen and syncs them back on load, which covers the case where only the panel's own tunnel rotated. Unpair from **Settings → Machines** (or the selector's **Manage machines…**): it always removes the machine locally, and revokes the token on the remote side when that machine can be reached.
-
-Peer credentials are separate per direction: the inbound token is stored only as a SHA-256 hash, the outbound token is encrypted at rest with the existing vault key, and neither is ever exposed to the browser. Pairing links carry the secret in the URL fragment (`#pair=…`), so it is not sent to the server or written to proxy logs.
-
-### Credentials follow the pairing
-
-A pairing code created in **Settings → Connection** (the startup/installer QR does not, as it has no administrator attached) also merges the encrypted credential vault in both directions: environment variables, GitHub/GitLab tokens and the other vault entries (SSH keys, files). The merge runs server-to-server with the paired peer token, so values never reach the browser. The newest `updated_at` wins, equal values are skipped, and deletions stay local. For safety it only runs over HTTPS (or loopback); pairing over a plain-HTTP LAN address still succeeds but skips the merge. Use **Settings → Machines → Sync credentials** to merge again after adding or rotating a token.
-
-### Stable URL on your own domain (named tunnel)
-
-With a domain on Cloudflare (e.g. `citadel.example.com`): in Zero Trust → Networks → Tunnels create a tunnel, add a *Public hostname* pointing to `http://localhost:3000`, and copy its token. Then:
-
-```bash
-citadel tunnel --domain=citadel.example.com --token=<TOKEN>
-citadel tunnel --quick     # back to a random trycloudflare.com URL
-```
-
-**From the panel:** run `sudo citadel tunnel setup` once (installs `cloudflared` and a scoped root helper; the installer already does it), then open **Settings → Tunnel (your own domain)**, enter the hostname and click *Connect domain*. You authorize once in Cloudflare and the panel creates the tunnel, the DNS record and starts the service; the login certificate is deleted afterwards and only the tunnel token is kept.
-
-The URL survives restarts and reboots, and the panel, QR and pairing use it automatically. The token is stored in `data/tunnel-token` (mode 600).
-
-### Global URL with a Cloudflare Quick Tunnel (no account, no domain)
-
-To reach the panel from **any network with a single command**, start a Cloudflare Quick Tunnel:
-
-```bash
-citadel tunnel          # installs cloudflared, starts the tunnel, prints the URL + QR
-citadel tunnel stop     # stop it
-citadel tunnel remove   # stop and delete the service
-```
-
-It gives you a public `https://<random>.trycloudflare.com` URL that works everywhere. The installer no longer starts it by default: pass `--tunnel` at install time, or run `citadel tunnel` afterwards. The URL **changes on every restart**, so the panel reads it dynamically and the QR always shows the current one (no need to touch `.env`). If two machines are paired **only** through Quick Tunnels and both restart at the same time, neither can reach the other until one address is supplied again (switch to that panel once, or enter the new address in Settings → Machines). Giving at least one machine a stable address — Tailscale, a named tunnel or `CITADEL_PUBLIC_URL` — makes recovery fully automatic. Because it is a **public** URL, create your administrator account before starting the tunnel and use a strong password.
-
-A Quick Tunnel URL is disposable: when `cloudflared` disconnects or restarts, the old hostname stops working permanently and is not reassigned to you. Nothing is lost — the panel simply follows the URL currently written to `data/tunnel-url` — but bookmarks, phone home-screen shortcuts and the old QR stop working. For a stable address use one of these instead:
-
-- **Tailscale** (recommended for a personal laptop): stable `https://<host>.<tailnet>.ts.net`, no public exposure, no domain or port forwarding.
-- **Named Cloudflare Tunnel**: create a tunnel and DNS route for a domain you own (`cloudflared tunnel login`, `cloudflared tunnel create citadel`, `cloudflared tunnel route dns citadel citadel.example.com`), run it as a service, then set `CITADEL_PUBLIC_URL=https://citadel.example.com` in `.env` and restart Citadel.
-- **VPS with a public IP**: point a DNS record at the VPS, put Caddy/Nginx with TLS in front of `127.0.0.1:3000`, and set `CITADEL_PUBLIC_URL` to that HTTPS address. Do not expose port 3000 directly over plain HTTP.
-
-On a laptop, 24/7 mode is enabled during installation by default. Run `sudo citadel power on` to re-enable it later if it was disabled. A laptop behind NAT should use Tailscale or a named tunnel rather than depending on a Quick Tunnel URL.
-
-
-To reach the panel privately instead (only your own devices), use Tailscale:
-
-1. Install Tailscale on the host and on your phone, signing in to the same account.
-2. On the host, proxy the panel onto your tailnet: `tailscale serve https / http://127.0.0.1:3000`.
-3. Reload the panel — the QR now points at `https://<host>.<tailnet>.ts.net` and works everywhere, without exposing anything to the public Internet.
-
-Set `CITADEL_PUBLIC_URL` in `.env` to pin any other address (e.g. a named Cloudflare tunnel).
+Scan a QR from your phone, pair several Citadel machines and expose the panel globally (Cloudflare Quick Tunnel, or a stable URL on your own domain from **Settings → Tunnel**). Quick start: `citadel qr` (or `citadel qr --url` on small terminals), `citadel tunnel`, `citadel tunnel --domain=HOST --token=TOKEN`. Full details: [docs/remote-access.md](docs/remote-access.md).
 
 ### Git credentials for terminals
 
