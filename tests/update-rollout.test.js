@@ -123,13 +123,8 @@ describe('Staged update propagation', () => {
     }
   });
 
-  test('propagation runs only after an upgrade, when enabled, and not for propagated updates', async () => {
+  test('propagation runs only after an upgrade, always on, and not for propagated updates', async () => {
     const { APP_VERSION } = require('../server/config');
-    rollout.setPropagationEnabled(false);
-    hostService.writeConfig('update.last_version', '0.0.1');
-    assert.equal(await rollout.maybePropagateAfterUpdate(), null, 'disabled');
-
-    rollout.setPropagationEnabled(true);
     hostService.writeConfig('update.last_version', APP_VERSION);
     assert.equal(await rollout.maybePropagateAfterUpdate(), null, 'no version change');
 

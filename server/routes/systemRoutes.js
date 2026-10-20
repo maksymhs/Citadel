@@ -191,14 +191,10 @@ async function systemRoutes(fastify) {
     }
   });
 
-  // Staged update propagation to the machines paired with this one (opt-in).
+  // Staged update propagation to the machines paired with this one. Always on:
+  // this only reports the last rollout.
   fastify.get('/api/system/update/propagate', { preHandler: requireAdmin }, async () => ({
-    enabled: updateRolloutService.isPropagationEnabled(),
     lastRollout: updateRolloutService.getLastRollout(),
-  }));
-
-  fastify.put('/api/system/update/propagate', { preHandler: requireAdmin }, async (request) => ({
-    enabled: updateRolloutService.setPropagationEnabled(Boolean(request.body && request.body.enabled)),
   }));
 
   // Update the paired machines that are behind this one, now. Runs in the

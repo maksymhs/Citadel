@@ -4526,16 +4526,13 @@
               </div>` : ''}
               ${canPair && state.hosts.length > 0 ? `
               <div id="update-propagate" style="margin-top:12px;font-size:13px;">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                  <input type="checkbox" id="update-propagate-toggle" /> After this machine updates, update my paired machines one at a time
-                </label>
-                <div style="font-size:12px;color:var(--text-muted);line-height:1.5;margin:4px 0 0 24px;">
-                  Each machine must come back healthy on the new version before the next one starts; the rollout stops at the first one that does not.
+                <div style="font-size:12px;color:var(--text-muted);line-height:1.5;">
+                  Updating this machine also updates your paired machines, one at a time. Each must come back healthy on the new version before the next one starts; the rollout stops at the first one that does not.
                 </div>
-                <div style="margin:6px 0 0 24px;">
+                <div style="margin:6px 0 0;">
                   <button class="btn btn-secondary btn-sm" id="update-rollout-now">Update paired machines now</button>
                 </div>
-                <div id="update-rollout-status" style="margin:6px 0 0 24px;font-size:12px;color:var(--text-muted);"></div>
+                <div id="update-rollout-status" style="margin:6px 0 0;font-size:12px;color:var(--text-muted);"></div>
               </div>` : ''}
             </div>
             <div style="display:flex;gap:8px;flex-shrink:0;">
@@ -4729,10 +4726,9 @@
       });
 
       // Staged update propagation.
-      const propToggle = document.getElementById('update-propagate-toggle');
-      if (canPair && propToggle) {
+      const nowBtn = document.getElementById('update-rollout-now');
+      if (canPair && nowBtn) {
         const statusEl = document.getElementById('update-rollout-status');
-        const nowBtn = document.getElementById('update-rollout-now');
         const showRollout = (r) => {
           if (!statusEl) return;
           if (!r || !r.hosts) { statusEl.textContent = ''; return; }
@@ -4743,7 +4739,6 @@
         const load = async () => {
           try {
             const res = await api('/api/system/update/propagate');
-            propToggle.checked = Boolean(res.enabled);
             showRollout(res.lastRollout);
             clearTimeout(rolloutPoll);
             if (res.lastRollout && !res.lastRollout.finishedAt && document.getElementById('update-rollout-status')) {
@@ -4752,16 +4747,6 @@
           } catch { /* optional */ }
         };
         load();
-        propToggle.onchange = async () => {
-          try {
-            const res = await api('/api/system/update/propagate', { method: 'PUT', body: { enabled: propToggle.checked } });
-            propToggle.checked = Boolean(res.enabled);
-            showToast(res.enabled ? 'Updates will propagate to paired machines.' : 'Update propagation off.', 'success');
-          } catch (err) {
-            propToggle.checked = !propToggle.checked;
-            showToast(err.message, 'error');
-          }
-        };
         nowBtn.onclick = async () => {
           nowBtn.disabled = true;
           try {

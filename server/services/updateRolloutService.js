@@ -1,5 +1,5 @@
 /**
- * Staged update propagation across paired machines (opt-in).
+ * Staged update propagation across paired machines.
  *
  * After this machine has been updated and restarted healthy, it updates the
  * machines paired with it one at a time: ask the next peer to update, wait for
@@ -12,7 +12,6 @@ const updateService = require('./updateService');
 const logService = require('./logService');
 const { APP_VERSION } = require('../config');
 
-const PROPAGATE_KEY = 'update.propagate';
 const LAST_VERSION_KEY = 'update.last_version';
 const SKIP_KEY = 'update.skip_propagation';
 const ROLLOUT_KEY = 'update.rollout';
@@ -24,15 +23,6 @@ const COME_BACK_TIMEOUT_MS = 6 * 60 * 1000;
 let running = false;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function isPropagationEnabled() {
-  return hostService.readConfig(PROPAGATE_KEY) === '1';
-}
-
-function setPropagationEnabled(enabled) {
-  hostService.writeConfig(PROPAGATE_KEY, enabled ? '1' : '0');
-  return isPropagationEnabled();
-}
 
 function getLastRollout() {
   try {
@@ -221,8 +211,8 @@ async function maybePropagateAfterUpdate() {
   hostService.writeConfig(LAST_VERSION_KEY, APP_VERSION);
 
   // "Update now" asked for the whole fleet: this machine went first (it is the
-  // canary), so now update every paired machine regardless of the opt-in
-  // toggle or of whether the version number changed.
+  // canary), so now update every paired machine regardless
+  // of whether the version number changed.
   const pending = hostService.readConfig(PENDING_KEY) === '1';
   hostService.writeConfig(PENDING_KEY, '0');
   if (pending) {
@@ -237,13 +227,11 @@ async function maybePropagateAfterUpdate() {
 
   const skip = hostService.readConfig(SKIP_KEY) === '1';
   hostService.writeConfig(SKIP_KEY, '0');
-  if (skip || !isPropagationEnabled()) return null;
+  if (skip) return null;
   return rollout({ target: APP_VERSION });
 }
 
 module.exports = {
-  isPropagationEnabled,
-  setPropagationEnabled,
   getLastRollout,
   markPropagatedUpdate,
   clearPropagatedUpdate,
