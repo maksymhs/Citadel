@@ -4340,7 +4340,10 @@
   }
 
   // Human-readable explanation of where the connect URL came from.
-  function connectSourceNote(source) {
+  function connectSourceNote(source, url = '') {
+    if (source === 'tunnel' && url && !/\.trycloudflare\.com(\/|$)/i.test(url)) {
+      return 'Cloudflare Tunnel on your own domain — works from anywhere and the address is stable across restarts.';
+    }
     return {
       configured: 'Using the public URL configured in Settings — works from anywhere it points to.',
       tunnel: 'Public Cloudflare Quick Tunnel — works from anywhere. The URL changes when the tunnel restarts.',
@@ -4495,7 +4498,7 @@
           <div style="margin-top:18px;">
             <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Effective address</div>
             <a href="${escapeHtml(connect.url || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(connect.url || '')}</a>
-            <div style="margin-top:8px;font-size:12px;color:var(--text-secondary);line-height:1.5;">${connectSourceNote(connect.source)}</div>
+            <div style="margin-top:8px;font-size:12px;color:var(--text-secondary);line-height:1.5;">${connectSourceNote(connect.source, connect.url)}</div>
           </div>
         </div>
 

@@ -204,6 +204,15 @@ async function startServer() {
       fastify.log.debug(`[Citadel] Peer announce failed: ${err.message}`);
     });
   };
+  // When this host's own address changes (tunnel started, rotated, or switched
+  // to a domain) tell the peers right away instead of waiting for the 5-minute
+  // cycle, and retry a few times because the peer may be mid-restart too.
+  const announceSoon = () => {
+    for (const delay of [1500, 20000, 60000]) {
+      const t = setTimeout(announce, delay);
+      if (typeof t.unref === 'function') t.unref();
+    }
+  };
   const announceStartup = setTimeout(announce, 5000);
   const announceTimer = setInterval(announce, 5 * 60 * 1000);
   if (typeof announceStartup.unref === 'function') announceStartup.unref();
@@ -270,6 +279,7 @@ async function startServer() {
         if (current && current !== lastTunnelUrl) {
           lastTunnelUrl = current;
           connectService._reset();
+          announceSoon();
           try {
             const invite = hostService.createInvite({ userId: null });
             fs.writeFileSync(path.join(DATA_DIR, 'connect-qr'), `${invite.compactLink}\n`, { mode: 0o600 });

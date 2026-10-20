@@ -1477,3 +1477,12 @@ README/.env.example/architecture. No commits/pushes/deploys.
   the temporary Quick Tunnel is restored automatically and the card explains
   why, so a failed domain setup can no longer leave the panel unreachable.
 - Version bumped to `0.33.12`; asset cache-buster token moved to `v03312`.
+
+## 87. Instant peer announce on address change (v0.33.13)
+- A paired host now announces its new address to every peer as soon as its
+  tunnel URL file changes (Quick Tunnel rotation, or switching to a domain),
+  retrying after 20 s and 60 s, instead of waiting for the 5-minute cycle. Two
+  machines whose addresses both change while offline can still be reconnected by
+  entering one reachable address (Hosts → address), which heals the other side.
+- Settings → Connection no longer calls a custom domain a "Quick Tunnel".
+- Version bumped to `0.33.13`; asset cache-buster token moved to `v03313`.
