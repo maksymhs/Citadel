@@ -1371,3 +1371,16 @@ README/.env.example/architecture. No commits/pushes/deploys.
   textarea; a system Paste in that textarea now sends immediately, closes the
   dialog and returns focus to the terminal.
 - Version bumped to `0.33.2`; asset cache-buster token moved to `v0332`.
+
+## 77. Minimal installer output, single QR (v0.33.3)
+- **Problem.** A fresh install printed several QR codes: `tunnel.sh up` printed
+  its own QR and URL block, then the installer printed another at the end, amid
+  verbose apt/npm/doctor output.
+- **Fix.** `tunnel.sh` honours `CITADEL_QUIET=1` (no URL block, no QR; it still
+  writes `connect-qr`). The installer sets it, logs apt/npm/doctor/tunnel output
+  to a temp file shown only on failure, collapses the option banners into one
+  `Options:` line and turns sub-step lines into `detail()` (visible with
+  `CITADEL_VERBOSE=1`). The only QR is the last thing printed: one code that
+  opens the panel from a phone camera and pairs from another Citadel's Pair
+  screen. `citadel tunnel` run by hand still prints its QR.
+- Version bumped to `0.33.3`; asset cache-buster token moved to `v0333`.

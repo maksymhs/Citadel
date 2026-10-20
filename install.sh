@@ -18,6 +18,20 @@ echo "          Citadel — System Installer                             "
 echo "=================================================================="
 echo -e "${NC}"
 
+# Minimal output by default: sub-steps print only with CITADEL_VERBOSE=1, and
+# noisy tools (apt, npm, doctor, tunnel) log to a file shown only on failure.
+VERBOSE="${CITADEL_VERBOSE:-0}"
+INSTALL_LOG="$(mktemp -t citadel-install.XXXXXX 2>/dev/null || echo /tmp/citadel-install.log)"
+detail() { [ "$VERBOSE" = "1" ] && echo "$@" || true; }
+# quiet_run <command...>: hide output unless verbose; on failure show the tail.
+quiet_run() {
+  if [ "$VERBOSE" = "1" ]; then "$@"; return $?; fi
+  if "$@" >>"$INSTALL_LOG" 2>&1; then return 0; fi
+  echo -e "${YELLOW}      Command failed: $*${NC}" >&2
+  tail -n 15 "$INSTALL_LOG" >&2
+  return 1
+}
+
 CHECK_ONLY=false
 UNINSTALL=false
 # A bare `curl | sudo bash` installs a panel that is publicly reachable through a
@@ -158,34 +172,13 @@ if [ "$CHECK_ONLY" = true ]; then
   echo -e "${YELLOW}[CHECK MODE] No changes will be applied to the system.${NC}\n"
 fi
 
-if [ -n "$ADMIN_TERMINAL_USER" ]; then
-  echo -e "${YELLOW}[ADMIN TERMINAL] The in-panel System Terminal will run as '$ADMIN_TERMINAL_USER'."
-  echo -e "                 This grants the panel root-equivalent access to the host."
-  echo -e "                 Disable with --no-admin-terminal.${NC}\n"
-fi
-
-if [ "$ENABLE_UPDATER" = true ]; then
-  echo -e "${YELLOW}[UPDATER] Installing the privileged in-panel updater (root-owned helper)."
-  echo -e "          Disable with --no-updater.${NC}\n"
-fi
-
-if [ "$LAN_ACCESS" = true ]; then
-  echo -e "${YELLOW}[LAN] The panel will be reachable on your local network so you can scan the QR and start from your phone."
-  echo -e "      Anyone on that network who reaches it BEFORE you create the admin account can claim it."
-  echo -e "      Keep it local-only with --local.${NC}\n"
-fi
-
-if [ "$TUNNEL" = true ]; then
-  echo -e "${YELLOW}[TUNNEL] Setting up a public Cloudflare Quick Tunnel so the panel has a GLOBAL URL"
-  echo -e "         (works from any network, no account needed). The URL is public and changes on"
-  echo -e "         restart. Create your admin account immediately after install: until then, the"
-  echo -e "         first visitor can claim the panel. Disable with --no-tunnel.${NC}\n"
-fi
-
-if [ "$KEEP_AWAKE" = true ]; then
-  echo -e "${YELLOW}[24/7] Ignoring lid close and blocking system sleep so Citadel keeps running"
-  echo -e "       when a laptop host is closed. Opt out with --no-24-7; undo later with: sudo citadel power off${NC}\n"
-fi
+NOTES=""
+[ -n "$ADMIN_TERMINAL_USER" ] && NOTES="$NOTES admin-terminal($ADMIN_TERMINAL_USER)"
+[ "$ENABLE_UPDATER" = true ] && NOTES="$NOTES updater"
+[ "$LAN_ACCESS" = true ] && NOTES="$NOTES lan"
+[ "$TUNNEL" = true ] && NOTES="$NOTES tunnel"
+[ "$KEEP_AWAKE" = true ] && NOTES="$NOTES 24/7"
+[ -n "$NOTES" ] && echo -e "${YELLOW}  Options:${NOTES}${NC}  (details: CITADEL_VERBOSE=1)\n"
 
 # Official Citadel repository (enables one-line install via curl | bash)
 REPO_URL="${CITADEL_REPO_URL:-https://github.com/maksymhs/Citadel.git}"
@@ -231,7 +224,7 @@ ARCH=$(uname -m)
 OS=$(uname -s)
 
 echo "[1/8] Checking Operating System and Architecture..."
-echo "      OS: $OS, Architecture: $ARCH"
+detail "      OS: $OS, Architecture: $ARCH"
 
 if [ "$OS" != "Linux" ] && [ "$OS" != "Darwin" ]; then
   echo -e "${RED}[ERROR] Unsupported operating system: $OS${NC}"
@@ -287,7 +280,7 @@ if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ "$CHECK_ONLY" = false ] \
   printf '#!/bin/sh\n# Citadel CLI launcher (managed by the installer/updater)\nexec bash "%s/scripts/citadel" "$@"\n' "$APP_DIR" > "$LAUNCHER_TMP"
   if ! $SUDO cmp -s "$LAUNCHER_TMP" /usr/local/bin/citadel 2>/dev/null; then
     $SUDO install -m 0755 "$LAUNCHER_TMP" /usr/local/bin/citadel
-    echo "      Installed the 'citadel' CLI launcher."
+    detail "      Installed the 'citadel' CLI launcher."
   fi
   rm -f "$LAUNCHER_TMP"
 fi
@@ -300,7 +293,7 @@ if [ "$OS" = "Linux" ]; then
   if [ "$MEM_TOTAL_MB" -lt 450 ]; then
     echo -e "${YELLOW}[WARNING] Low RAM: ${MEM_TOTAL_MB} MB. Adding a swap file is recommended.${NC}"
   else
-    echo "      Available RAM: ${MEM_TOTAL_MB} MB (OK)"
+    detail "      Available RAM: ${MEM_TOTAL_MB} MB (OK)"
   fi
 fi
 
@@ -308,9 +301,9 @@ fi
 echo "[3/8] Checking system packages..."
 if [ "$OS" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
   if [ "$CHECK_ONLY" = false ] && [ "$HAS_SUDO" = true ]; then
-    echo "      Installing/updating base packages (curl, git, tmux, build-essential, python3)..."
-    $SUDO apt-get update -y -qq
-    $SUDO apt-get install -y -qq curl git tmux build-essential python3 ca-certificates
+    detail "      Installing/updating base packages (curl, git, tmux, build-essential, python3)..."
+    quiet_run $SUDO apt-get update -y -qq
+    quiet_run $SUDO apt-get install -y -qq curl git tmux build-essential python3 ca-certificates
   fi
 fi
 
@@ -321,7 +314,7 @@ if command -v node >/dev/null 2>&1; then
   NODE_VER=$(node -v | sed 's/v//')
   NODE_MAJOR=$(echo "$NODE_VER" | cut -d. -f1)
   if [ "$NODE_MAJOR" -ge 18 ]; then
-    echo "      Node.js v$NODE_VER detected (compatible)."
+    detail "      Node.js v$NODE_VER detected (compatible)."
     NODE_INSTALLED=true
   else
     echo -e "${YELLOW}[WARNING] Node.js version (v$NODE_VER) is lower than v18.${NC}"
@@ -332,7 +325,7 @@ if [ "$NODE_INSTALLED" = false ]; then
   if [ "$CHECK_ONLY" = true ]; then
     echo -e "${YELLOW}[WARNING] Installing Node.js LTS (>= 18.x) is required.${NC}"
   elif [ "$OS" = "Linux" ] && command -v apt-get >/dev/null 2>&1 && [ "$HAS_SUDO" = true ]; then
-    echo "      Installing Node.js 22 LTS via NodeSource..."
+    detail "      Installing Node.js 22 LTS via NodeSource..."
     # `$SUDO` is empty when the installer already runs as root; passing `-E`
     # unconditionally would execute `-E` as a command (and curl would die with
     # "Failed writing body").
@@ -351,13 +344,13 @@ fi
 # 6. Directory and User Setup
 echo "[5/8] Preparing directory structure and permissions..."
 if [ "$CHECK_ONLY" = true ]; then
-  echo "      Directories to check: $TARGET_DIR (app, data, projects, logs)"
+  detail "      Directories to check: $TARGET_DIR (app, data, projects, logs)"
 else
   # Determine the run user
   RUN_USER="${SUDO_USER:-$(whoami)}"
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
     if ! id "citadel" >/dev/null 2>&1; then
-      echo "      Creating 'citadel' system service user..."
+      detail "      Creating 'citadel' system service user..."
       $SUDO useradd -r -s /bin/bash -m -d /srv/citadel citadel 2>/dev/null || true
     fi
     RUN_USER="citadel"
@@ -379,24 +372,24 @@ else
   # Obtain the source code: from a local checkout or by cloning the official repository.
   # This supports both `./install.sh` and `curl -fsSL .../install.sh | bash`.
   if [ -n "$SRC_DIR" ] && [ -f "$SRC_DIR/package.json" ] && [ -f "$SRC_DIR/server/index.js" ] && [ "$SRC_DIR" != "$APP_DIR" ]; then
-    echo "      Syncing local Citadel files to $APP_DIR..."
+    detail "      Syncing local Citadel files to $APP_DIR..."
     $SUDO cp -r "$SRC_DIR"/* "$APP_DIR"/ 2>/dev/null || true
     $SUDO cp -r "$SRC_DIR"/.env.example "$APP_DIR"/.env.example 2>/dev/null || true
   elif $SUDO test -d "$APP_DIR/.git"; then
-    echo "      Updating existing Citadel clone in $APP_DIR (branch $REPO_BRANCH)..."
+    detail "      Updating existing Citadel clone in $APP_DIR (branch $REPO_BRANCH)..."
     # safe.directory avoids git's "dubious ownership" refusal when root operates
     # on a working tree owned by the (non-root) service user.
     $SUDO git -c safe.directory='*' -C "$APP_DIR" fetch --depth 1 origin "$REPO_BRANCH"
     $SUDO git -c safe.directory='*' -C "$APP_DIR" reset --hard "origin/$REPO_BRANCH"
   elif ! $SUDO test -f "$APP_DIR/package.json"; then
-    echo "      Cloning Citadel ($REPO_BRANCH) from $REPO_URL..."
+    detail "      Cloning Citadel ($REPO_BRANCH) from $REPO_URL..."
     if [ "$(id -u)" -eq 0 ]; then
       git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$APP_DIR"
     else
       $SUDO git clone --depth 1 --branch "$REPO_BRANCH" "$REPO_URL" "$APP_DIR"
     fi
   else
-    echo "      Code already present in $APP_DIR (skipping download)."
+    detail "      Code already present in $APP_DIR (skipping download)."
   fi
 
   # Remember the local checkout (if any) so `uninstall` can delete it too, giving
@@ -405,7 +398,7 @@ else
     case "$SRC_DIR" in
       "$TARGET_DIR"|"$TARGET_DIR"/*) : ;;
       *)
-        echo "      Recording local source checkout: $SRC_DIR"
+        detail "      Recording local source checkout: $SRC_DIR"
         printf '%s\n' "$SRC_DIR" | $SUDO tee "$DATA_DIR/source-dir" >/dev/null 2>&1 || true
         ;;
     esac
@@ -455,9 +448,9 @@ EOF
     fi
     if command -v ufw >/dev/null 2>&1 && $SUDO ufw status 2>/dev/null | grep -qi 'Status: active'; then
       $SUDO ufw allow "$PANEL_PORT/tcp" >/dev/null 2>&1 || true
-      echo "      Opened firewall port $PANEL_PORT/tcp (ufw)."
+      detail "      Opened firewall port $PANEL_PORT/tcp (ufw)."
     fi
-    echo "      Local network access enabled (http://${LAN_IP_ADDR:-<lan-ip>}:$PANEL_PORT)."
+    detail "      Local network access enabled (http://${LAN_IP_ADDR:-<lan-ip>}:$PANEL_PORT)."
   else
     # LAN not requested: drop any stale bind override so the panel stays local.
     if [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$HAS_SUDO" = true ] \
@@ -486,12 +479,22 @@ else
   # account that systemd runs the server as, and so the working directory is
   # accessible even when its parent is not world-traversable.
   # npm install runs the postinstall (copy-vendor) itself, so it is not repeated here.
-  run_as_service_user "cd '$APP_DIR' && npm install --omit=dev"
+  if [ "$VERBOSE" = "1" ]; then
+    run_as_service_user "cd '$APP_DIR' && npm install --omit=dev"
+  else
+    run_as_service_user "cd '$APP_DIR' && npm install --omit=dev --no-fund --no-audit --loglevel=error" >>"$INSTALL_LOG" 2>&1 \
+      || { echo -e "${RED}[ERROR] npm install failed:${NC}" >&2; tail -n 20 "$INSTALL_LOG" >&2; exit 1; }
+  fi
   # Diagnostics are informational during installation: a failed check (for
   # example, memory pressure or a failed system unit) must not abort a valid
   # install. The operator can inspect the report and run "citadel repair".
-  run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' node scripts/doctor.js" \
-    || echo "      Diagnostics reported issues; installation continues. Review the output above."
+  if [ "$VERBOSE" = "1" ]; then
+    run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' node scripts/doctor.js" \
+      || echo "      Diagnostics reported issues; installation continues. Review the output above."
+  else
+    run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' node scripts/doctor.js" >>"$INSTALL_LOG" 2>&1 \
+      || echo -e "${YELLOW}      Diagnostics reported warnings; run: citadel doctor${NC}"
+  fi
   # Re-assert ownership in case anything above was created with different perms.
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
     $SUDO chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
@@ -522,7 +525,7 @@ EOF
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable citadel.service
     $SUDO systemctl restart citadel.service
-    echo "      citadel service started and enabled at boot."
+    detail "      citadel service started and enabled at boot."
   fi
 
   # Privileged "System Terminal" (enabled by default; disable with
@@ -530,7 +533,7 @@ EOF
   # as the admin user and relaxes the sandbox drop-in (root-capable by design).
   if [ -n "$ADMIN_TERMINAL_USER" ]; then
     if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && command -v systemctl >/dev/null 2>&1; then
-      echo "      Enabling privileged System Terminal as '$ADMIN_TERMINAL_USER'..."
+      detail "      Enabling privileged System Terminal as '$ADMIN_TERMINAL_USER'..."
 
       SUDOERS_FILE="/etc/sudoers.d/citadel-terminal"
       echo "$RUN_USER ALL=($ADMIN_TERMINAL_USER) NOPASSWD: /bin/bash, /usr/bin/bash" | $SUDO tee "$SUDOERS_FILE" >/dev/null
@@ -556,7 +559,7 @@ EOF
 
       $SUDO systemctl daemon-reload
       $SUDO systemctl restart citadel.service
-      echo "      System Terminal will run as '$ADMIN_TERMINAL_USER'."
+      detail "      System Terminal will run as '$ADMIN_TERMINAL_USER'."
     else
       echo -e "${YELLOW}      Skipping privileged System Terminal (requires Linux + systemd + sudo).${NC}"
     fi
@@ -567,13 +570,13 @@ EOF
   # exactly that updater (and nothing else) as root.
   if [ "$ENABLE_UPDATER" = true ]; then
     if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
-      echo "      Installing privileged updater helper..."
+      detail "      Installing privileged updater helper..."
       $SUDO install -o root -g root -m 0755 "$APP_DIR/scripts/update.sh" /usr/local/sbin/citadel-update
       UPDATER_SUDOERS="/etc/sudoers.d/citadel-updater"
       echo "$RUN_USER ALL=(root) NOPASSWD: /usr/local/sbin/citadel-update" | $SUDO tee "$UPDATER_SUDOERS" >/dev/null
       $SUDO chmod 0440 "$UPDATER_SUDOERS"
       $SUDO visudo -cf "$UPDATER_SUDOERS" >/dev/null
-      echo "      In-panel updater enabled (System → Update)."
+      detail "      In-panel updater enabled (System → Update)."
     else
       echo -e "${YELLOW}      Skipping privileged updater (requires Linux + sudo).${NC}"
     fi
@@ -583,7 +586,7 @@ EOF
   # panel (root-owned copy of tunnel.sh + a sudoers rule scoped to it).
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && command -v systemctl >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/tunnel.sh" ]; then
     $SUDO env CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" CITADEL_RUN_USER="$RUN_USER" PORT="$PANEL_PORT" \
-      bash "$APP_DIR/scripts/tunnel.sh" setup || echo -e "${YELLOW}      Tunnel helper skipped.${NC}"
+      bash "$APP_DIR/scripts/tunnel.sh" setup >>"$INSTALL_LOG" 2>&1 || echo -e "${YELLOW}      Tunnel helper skipped.${NC}"
   fi
 
   # Git credential helper: lets project terminals reuse the provider tokens
@@ -591,7 +594,7 @@ EOF
   # ever writing them in clear text. Tokens are only decryptable by the service
   # user that owns the data directory.
   if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && command -v git >/dev/null 2>&1; then
-    echo "      Configuring git credential helper (panel provider tokens)..."
+    detail "      Configuring git credential helper (panel provider tokens)..."
     $SUDO tee /usr/local/bin/citadel-git-credential >/dev/null <<EOF
 #!/bin/sh
 DATA_DIR="$DATA_DIR" DATABASE_PATH="$DATA_DIR/citadel.db" exec node "$APP_DIR/scripts/git-credential-citadel.js" "\$@"
@@ -608,7 +611,7 @@ EOF
 DATA_DIR="$DATA_DIR" DATABASE_PATH="$DATA_DIR/citadel.db" exec node "$APP_DIR/scripts/citadel-creds.js" "\$@"
 EOF
     $SUDO chmod 0755 /usr/local/bin/citadel-creds
-    echo "      Credentials CLI installed: citadel-creds list | get | env | exec"
+    detail "      Credentials CLI installed: citadel-creds list | get | env | exec"
   fi
 
   # Shared CLI agents (installed from the panel into $AGENTS_DIR/bin) on every
@@ -637,14 +640,21 @@ EOF
 exec bash "$APP_DIR/scripts/citadel" "\$@"
 EOF
     $SUDO chmod 0755 /usr/local/bin/citadel
-    echo "      Management CLI installed: citadel status | url | qr | update | tunnel"
+    detail "      Management CLI installed: citadel status | url | qr | update | tunnel"
   fi
 
   # Global access via a Cloudflare Quick Tunnel (on by default; disable with
   # --no-tunnel; also available anytime as `citadel tunnel`). No account or domain.
   if [ "$TUNNEL" = true ] && [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/tunnel.sh" ]; then
-    echo "      Setting up a global Cloudflare Quick Tunnel..."
-    $SUDO bash "$APP_DIR/scripts/tunnel.sh" up || echo -e "${YELLOW}      Tunnel setup skipped (see errors above).${NC}"
+    detail "      Setting up a global Cloudflare Quick Tunnel..."
+    # CITADEL_QUIET: tunnel.sh must not print its own URL/QR; the single QR is
+    # shown at the very end of this installer.
+    if [ "$VERBOSE" = "1" ]; then
+      $SUDO env CITADEL_QUIET=1 bash "$APP_DIR/scripts/tunnel.sh" up || echo -e "${YELLOW}      Tunnel setup skipped (see errors above).${NC}"
+    else
+      $SUDO env CITADEL_QUIET=1 bash "$APP_DIR/scripts/tunnel.sh" up >>"$INSTALL_LOG" 2>&1 \
+        || { echo -e "${YELLOW}      Tunnel setup skipped:${NC}"; tail -n 8 "$INSTALL_LOG"; }
+    fi
     # Re-generate connect-qr with the public tunnel URL so the QR code uses the public URL
     if $SUDO test -f "$DATA_DIR/tunnel-url"; then
       $SUDO -u "$RUN_USER" bash -c "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' PORT='$PANEL_PORT' node scripts/pair-qr.js" 2>/dev/null | $SUDO tee "$DATA_DIR/connect-qr" >/dev/null || true
@@ -655,7 +665,7 @@ EOF
   # the machine and take Citadel/terminals/agents offline.
   if [ "$KEEP_AWAKE" = true ]; then
     if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/power.sh" ]; then
-      echo "      Enabling 24/7 mode (ignore lid close, block sleep)..."
+      detail "      Enabling 24/7 mode (ignore lid close, block sleep)..."
       $SUDO bash "$APP_DIR/scripts/power.sh" on || echo -e "${YELLOW}      24/7 mode could not be enabled (see errors above).${NC}"
     else
       echo -e "${YELLOW}      24/7 mode skipped (requires Linux + systemd + sudo).${NC}"
@@ -730,19 +740,8 @@ else
   fi
 
   echo "  $ACCESS_LABEL:  $ACCESS_URL"
-  [ "$ACCESS_URL" != "http://127.0.0.1:$PANEL_PORT" ] \
-    && echo "  Panel (this machine):  http://127.0.0.1:$PANEL_PORT"
-  echo "  Data Directory:        $DATA_DIR"
-  echo "  Projects Directory:    $PROJECTS_DIR"
-  echo "  Diagnostics:           node $APP_DIR/scripts/doctor.js"
-  if [ -n "$ADMIN_TERMINAL_USER" ]; then
-    echo "  System Terminal User:  $ADMIN_TERMINAL_USER (privileged / root-capable)"
-  fi
-  if [ "$ENABLE_UPDATER" = true ]; then
-    echo "  In-panel Updater:      enabled (System view → Update)"
-  fi
-  echo "=================================================================="
-
+  [ -n "$ADMIN_TERMINAL_USER" ] && echo "  System Terminal:  $ADMIN_TERMINAL_USER (root-capable)"
+  echo "  Manage: citadel status | qr | update | doctor"
   # Scan-to-start: one QR for both jobs. A normal camera opens the panel; the
   # same code scanned from another Citadel's Pair screen pairs the two hosts.
   # The server writes the current single-use invitation at startup; fall back to
@@ -769,17 +768,17 @@ else
   fi
   echo ""
   if [ "$TUNNEL" = true ] || [ "$LAN_EXPOSED" = true ]; then
-    echo -e "${YELLOW}  IMPORTANT: this panel is reachable from outside this machine. Create your${NC}"
-    echo -e "${YELLOW}  administrator account NOW — until you do, the first visitor can claim it.${NC}"
-    echo ""
-  fi
-  echo "  Open it and create your administrator account to finish setup."
-  if [ "$PAIR_QR" = true ]; then
-    echo "  (The code below can also be scanned from another Citadel's Pair screen.)"
+    echo -e "${YELLOW}  Create your admin account NOW: until then the first visitor can claim it.${NC}"
+  else
+    echo "  Open the panel and create your admin account."
   fi
   echo "=================================================================="
   # The QR goes last so it stays on screen on a console without scrollback.
-  echo -e "${BLUE}  Scan with your phone to open the panel:${NC}"
+  if [ "$PAIR_QR" = true ]; then
+    echo -e "${BLUE}  One QR: scan with a phone to open the panel, or from another Citadel's Pair screen:${NC}"
+  else
+    echo -e "${BLUE}  Scan with your phone to open the panel:${NC}"
+  fi
   if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
     (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$ACCESS_URL") || true
   elif command -v qrencode >/dev/null 2>&1; then

@@ -168,7 +168,7 @@ $SUDO systemctl enable "$SERVICE" >/dev/null 2>&1 || true
 $SUDO systemctl restart "$SERVICE"
 
 # 3. Wait for the public URL ---------------------------------------------------
-echo "Waiting for the public URL..."
+[ -z "${CITADEL_QUIET:-}" ] && echo "Waiting for the public URL..."
 PUBLIC_URL=""
 for _ in $(seq 1 30); do
   if [ -f "$URL_FILE" ]; then
@@ -183,14 +183,17 @@ if [ -z "$PUBLIC_URL" ]; then
   exit 1
 fi
 
-echo ""
-echo "Global URL: $PUBLIC_URL"
-if [ -s "$DOMAIN_FILE" ]; then
-  echo "(Stable URL on your own domain.)"
-else
-  echo "(This URL changes when the tunnel restarts. For a stable one: citadel tunnel --domain=HOST --token=TOKEN)"
+QUIET="${CITADEL_QUIET:-}"
+if [ -z "$QUIET" ]; then
+  echo ""
+  echo "Global URL: $PUBLIC_URL"
+  if [ -s "$DOMAIN_FILE" ]; then
+    echo "(Stable URL on your own domain.)"
+  else
+    echo "(This URL changes when the tunnel restarts. For a stable one: citadel tunnel --domain=HOST --token=TOKEN)"
+  fi
+  echo ""
 fi
-echo ""
 
 PAIR_LINK=""
 if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/pair-qr.js" ]; then
@@ -200,7 +203,10 @@ if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/pair-qr.js" ]; then
   fi
 fi
 
-if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
-  (cd "$APP_DIR" && node scripts/print-qr.js "${PAIR_LINK:-$PUBLIC_URL}" "$PUBLIC_URL") || true
+# The installer (CITADEL_QUIET) prints a single QR itself at the very end.
+if [ -z "$QUIET" ]; then
+  if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
+    (cd "$APP_DIR" && node scripts/print-qr.js "${PAIR_LINK:-$PUBLIC_URL}" "$PUBLIC_URL") || true
+  fi
+  echo "  $PUBLIC_URL"
 fi
-echo "  $PUBLIC_URL"
