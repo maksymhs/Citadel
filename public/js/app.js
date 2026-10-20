@@ -50,6 +50,7 @@
     dashboardPaused: false,
     tmuxAvailable: false,
     filesPath: '/',
+    machineId: null, // machine shown on the machine screen
     settingsSection: null, // null = Settings hub, otherwise a section id
     filesMode: 'grid', // 'grid' (folder view, default) | 'list' (tree); list only lasts until you leave Files
     dashboardWidgets: null, // ordered widget ids, persisted per browser
@@ -76,22 +77,19 @@
     { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
   ];
   const KNOWN_VIEWS = [
-    ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity', 'processes', 'machines', 'terminals',
+    ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity', 'machine',
     ...OPTIONAL_NAV.map((n) => n.view),
   ];
   // Legacy view ids → current ids, so a persisted view still resolves.
   const LEGACY_VIEW_MAP = {
     repos: 'projects', terminal: 'workspace', logs: 'activity',
     plugins: 'settings', modules: 'settings', deployments: 'proxy',
-    system: 'settings',
+    system: 'settings', machines: 'dashboard', processes: 'dashboard', terminals: 'dashboard',
   };
 
   // Default dashboard widget order. Widgets whose module is disabled/unavailable
   // are dropped at render time so the layout always stays valid.
-  const DEFAULT_DASHBOARD_WIDGETS = [
-    'machines', 'memory', 'cpu', 'projects', 'host', 'fleet',
-    'integrations', 'quick-access',
-  ];
+  const DEFAULT_DASHBOARD_WIDGETS = ['machines', 'fleet'];
   const WIDGET_REQUIRES = { fleet: 'fleet', metrics: 'metrics' };
 
   function loadUiState() {
@@ -683,7 +681,6 @@
       });
     }
     items.push({ sep: true });
-    items.push({ label: 'Machines overview…', onSelect: () => navigateTo('machines') });
     items.push({ label: 'Pair a machine…', onSelect: showPairModal });
     items.push({ label: 'Manage machines…', onSelect: () => navigateTo('settings') });
     openContextMenu(anchorEl, items);
@@ -965,6 +962,8 @@
   function resolveView(viewId) {
     let view = LEGACY_VIEW_MAP[viewId] || viewId;
     if (!KNOWN_VIEWS.includes(view)) view = 'dashboard';
+    // The machine screen needs a selected machine (not kept across reloads).
+    if (view === 'machine' && !state.machineId) view = 'dashboard';
     const optional = OPTIONAL_NAV.find((n) => n.view === view);
     if (optional && !moduleEnabled(optional.module)) view = 'dashboard';
     return view;
@@ -987,7 +986,7 @@
   // Secondary screens reached from another one get a Back button at the top
   // left. It returns to the screen the user came from, or to a sensible parent
   // when the page was opened directly on it.
-  const DETAIL_VIEWS = { processes: 'dashboard', activity: 'settings', machines: 'dashboard', terminals: 'dashboard' };
+  const DETAIL_VIEWS = { machine: 'dashboard', activity: 'settings' };
 
   function updateBackButton(view) {
     const btn = document.getElementById('top-bar-back');
@@ -1041,15 +1040,9 @@
     } else if (view === 'settings') {
       titleEl.textContent = 'Settings';
       renderSettingsView();
-    } else if (view === 'machines') {
-      titleEl.textContent = 'Machines';
-      window.CitadelMonitor.renderView(monitorCtx());
-    } else if (view === 'terminals') {
-      titleEl.textContent = 'Persistent terminals';
-      renderTerminalsView();
-    } else if (view === 'processes') {
-      titleEl.textContent = 'Top processes';
-      renderProcessesView();
+    } else if (view === 'machine') {
+      titleEl.textContent = 'Machine';
+      window.CitadelMonitor.renderMachine(monitorCtx(), state.machineId);
     } else if (view === 'files') {
       titleEl.textContent = 'File Explorer';
       renderFilesView();
@@ -1084,10 +1077,6 @@
   }
 
   // --- Views Implementation ---
-  function formatMegabytes(bytes) {
-    return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-  }
-
   function formatBytes(bytes) {
     if (bytes === null || bytes === undefined) return '—';
     if (bytes < 1024) return `${bytes} B`;
@@ -1101,43 +1090,22 @@
     return `${value.toFixed(value < 10 ? 1 : 0)} ${units[i]}`;
   }
 
-  // Refresh only the process table body so the rest of the screen stays still.
-  async function refreshProcessTable() {
-    const tbody = document.getElementById('process-table-body');
-    if (!tbody) return;
-    try {
-      const res = await api('/api/system/processes?limit=15');
-      const data = res.processes || {};
-      const rows = data.processes || [];
-
-      if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-muted);">No process data available on this platform.</td></tr>';
-      } else {
-        tbody.innerHTML = rows.map((p) => `
-          <tr>
-            <td data-label="PID" style="font-family:var(--font-mono);color:var(--text-secondary);">${p.pid}</td>
-            <td data-label="Process">${escapeHtml(p.name)}</td>
-            <td data-label="CPU"><span class="badge ${p.cpuPercent >= 50 ? 'badge-danger' : p.cpuPercent >= 10 ? 'badge-warning' : 'badge-muted'}">${p.cpuPercent.toFixed(1)}%</span></td>
-            <td data-label="Memory" style="font-family:var(--font-mono);">${formatMegabytes(p.rssBytes)}</td>
-            <td data-label="MEM %" style="font-family:var(--font-mono);color:var(--text-secondary);">${p.memPercent.toFixed(1)}%</td>
-          </tr>
-        `).join('');
-      }
-
-      const updatedEl = document.getElementById('process-updated');
-      if (updatedEl) updatedEl.textContent = `${rows.length} of ${data.total} · ${new Date(data.timestamp).toLocaleTimeString()}`;
-    } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="5" style="color:var(--danger-color);">${escapeHtml(err.message)}</td></tr>`;
-    }
-  }
-
   // Shared helpers handed to monitor.js (the Machines screen and dashboard widget).
   function monitorCtx() {
     return {
       localApi, escapeHtml, showToast, openModal, reloadWhenServerReady,
-      openOverview: () => navigateTo('machines'),
       isAdmin: Boolean(state.user && state.user.role === 'admin'),
-      switchHost: (id) => (id === state.activeHostId ? navigateTo('dashboard') : switchHost(id)),
+      openMachine: (id) => { state.machineId = id; navigateTo('machine'); },
+      useMachine,
+      openProject: openProjectOn,
+      installAgent: installAgentOn,
+      // A terminal killed from the machine screen may be open in this browser.
+      forgetTerminal: (hostId, sessionId) => {
+        if (hostId !== state.activeHostId) return;
+        disposeTerminalItem(state.terminals.get(sessionId) || state.sysTerminals.get(sessionId));
+        state.terminals.delete(sessionId);
+        state.sysTerminals.delete(sessionId);
+      },
     };
   }
 
@@ -1146,13 +1114,7 @@
   // Each widget is independently ordered/toggled and persisted per browser.
   // Widgets backed by an optional module disappear when that module is off.
   const DASHBOARD_WIDGETS = {
-    machines: { title: 'Machines — health & alerts', size: 12, module: 'dashboard' },
-    memory: { title: 'Memory usage', size: 3, module: 'dashboard' },
-    cpu: { title: 'CPU load (1m)', size: 3, module: 'dashboard' },
-    projects: { title: 'Active projects', size: 3, module: 'projects' },
-    host: { title: 'VPS host', size: 3, module: 'dashboard' },
-    integrations: { title: 'Platform integrations', size: 6, module: 'dashboard' },
-    'quick-access': { title: 'Quick project access', size: 6, module: 'projects' },
+    machines: { title: 'Machines', size: 12, module: 'dashboard' },
     fleet: { title: 'Fleet — remote hosts', size: 12, module: 'fleet' },
   };
 
@@ -1184,58 +1146,10 @@
     return def && moduleEnabled(def.module);
   }
 
-  function dashboardWidgetHtml(id, ctx) {
-    const { node, metrics, integ } = ctx;
+  function dashboardWidgetHtml(id) {
     switch (id) {
-      case 'memory':
-        return card(`<div class="card-title">MEMORY USAGE</div>
-          <div class="card-value">${metrics.memoryUsedPercent}%</div>
-          <div class="card-subtitle">${Math.round(node.memory.usedBytes / 1024 / 1024)} MB of ${Math.round(node.memory.totalBytes / 1024 / 1024)} MB</div>`, 'processes');
-      case 'cpu':
-        return card(`<div class="card-title">CPU LOAD (1m)</div>
-          <div class="card-value">${metrics.loadAvg.toFixed(2)}</div>
-          <div class="card-subtitle">${node.cpu.cores} cores (${escapeHtml(node.cpu.model.split('@')[0].trim())})</div>`, 'processes');
-      case 'projects':
-        return card(`<div class="card-title">ACTIVE PROJECTS</div>
-          <div class="card-value">${state.projects.length}</div>
-          <div class="card-subtitle">${node.stats.activeSessions} persistent terminals</div>`, 'terminals');
-      case 'host':
-        return card(`<div class="card-title">VPS HOST</div>
-          <div class="card-value" style="font-size:18px;">${escapeHtml(node.hostname)}</div>
-          <div class="card-subtitle">${escapeHtml(node.platform)} ${escapeHtml(node.release)} (${node.arch})</div>`, 'settings');
-      case 'integrations':
-        return card(`<h3 class="widget-heading">Platform integrations</h3>
-          <div class="integration-list">
-            ${integrationRow('tmux', integ.tmux.available, integ.tmux.available ? 'Available' : 'Not installed', integ.tmux.description)}
-            ${integrationRow('Git CLI', integ.git.available, integ.git.available ? 'Active' : 'Not installed', integ.git.description)}
-            ${integrationRow('Caddy proxy', integ.caddy.available, integ.caddy.available ? 'Active' : 'Optional', integ.caddy.helpMessage)}
-            ${integrationRow('Docker engine', integ.docker.available, integ.docker.available ? 'Active' : 'Optional')}
-          </div>
-          <div class="integration-section-title">AI coding agents</div>
-          <div class="integration-list">
-            ${(integ.agents || []).map(agentRow).join('')}
-          </div>`);
-      case 'quick-access':
-        return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-            <h3 class="widget-heading">Quick project access</h3>
-            <div style="display:flex;gap:8px;">
-              <button class="btn btn-primary btn-sm" id="dash-new-project-btn">+ New</button>
-              <button class="btn btn-secondary btn-sm" id="dash-clone-btn">Clone Git</button>
-            </div>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">
-            ${state.projects.length === 0 ? '<div style="color:var(--text-muted);font-size:13px;">No projects registered yet.</div>' : ''}
-            ${state.projects.slice(0, 5).map((p) => `
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-tertiary);border-radius:6px;">
-                <div>
-                  <strong style="color:var(--accent-color);">${escapeHtml(p.name)}</strong>
-                  <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${escapeHtml(p.path)}</div>
-                </div>
-                <button class="btn btn-secondary btn-sm open-workspace-btn" data-project-id="${p.id}">Open</button>
-              </div>`).join('')}
-          </div>`);
       case 'machines':
-        return card(`<div id="dash-machines-body"><div class="mon-muted">Loading…</div></div>`);
+        return `<div class="dash-widget" data-widget="machines"><div id="dash-machines-body"><div class="mon-muted">Loading…</div></div></div>`;
       case 'fleet':
         return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
             <div>
@@ -1252,36 +1166,19 @@
         return '';
     }
 
-    function card(inner, targetView) {
-      const clickableClass = targetView ? ' dash-widget-clickable' : '';
-      const clickableAttrs = targetView
-        ? ` role="button" tabindex="0" data-target-view="${targetView}"`
-        : '';
-      return `<div class="card dash-widget${clickableClass}" data-widget="${id}"${clickableAttrs}>${inner}</div>`;
+    function card(inner) {
+      return `<div class="card dash-widget" data-widget="${id}">${inner}</div>`;
     }
   }
 
-  function integrationRow(name, ok, label, title) {
-    return `<div class="integration-item"${title ? ` title="${escapeHtml(title)}"` : ''}>
-      <span class="integration-name"><span class="status-dot ${ok ? 'ok' : 'off'}"></span>${escapeHtml(name)}</span>
-      <span class="integration-status">${escapeHtml(label)}</span>
-    </div>`;
-  }
-
-  function agentRow(agent) {
-    const right = agent.available
-      ? `<span class="integration-status"${agent.version ? ` title="${escapeHtml(agent.version)}"` : ''}>Installed</span>`
-      : `<button class="btn btn-secondary btn-sm install-agent-btn" data-tool="${agent.id}" data-name="${escapeHtml(agent.name)}">Install</button>`;
-    return `<div class="integration-item">
-      <span class="integration-name"><span class="status-dot ${agent.available ? 'ok' : 'off'}"></span>${escapeHtml(agent.name)}</span>
-      ${right}
-    </div>`;
-  }
-
-  // Launch an agent's official install one-liner in a System Terminal session.
-  async function installAgent(tool, name, btn) {
+  // Launch an agent's official install one-liner in a System Terminal session
+  // on the given machine (switching to it first, because the terminal opens there).
+  async function installAgentOn(hostId, tool, name) {
     if (!window.confirm(`Install ${name} now? It runs in a System Terminal session.`)) return;
-    btn.disabled = true;
+    if (hostId !== state.activeHostId) {
+      await switchHost(hostId);
+      if (state.activeHostId !== hostId) return;
+    }
     try {
       const res = await api('/api/system/integrations/install', { method: 'POST', body: { tool } });
       const sessionId = res.session?.sessionId;
@@ -1294,231 +1191,46 @@
       saveUiState({ workspaceContext: 'system' });
       navigateTo('workspace');
     } catch (err) {
-      btn.disabled = false;
       showToast(err.message, 'error');
     }
   }
-  // Screen listing every persistent terminal on the active machine, to select
-  // some and kill them (the tmux session and PTY are removed).
-  async function killTerminals(ids) {
-    for (const id of ids) {
-      disposeTerminalItem(state.terminals.get(id) || state.sysTerminals.get(id));
-      state.terminals.delete(id);
-      state.sysTerminals.delete(id);
-      await api(`/api/terminals/${id}`, { method: 'DELETE' }).catch(() => {});
+
+  // Work on a machine: make it the active one and open one of its areas.
+  async function useMachine(hostId, view = 'projects') {
+    if (hostId !== state.activeHostId) {
+      await switchHost(hostId);
+      if (state.activeHostId !== hostId) return;
     }
-    await loadSessions();
+    navigateTo(view);
   }
 
-  async function renderTerminalsView() {
-    const content = document.getElementById('main-content');
-    const actions = document.getElementById('top-bar-actions');
-    actions.innerHTML = `
-      <button class="btn btn-secondary btn-sm" id="term-refresh-btn">Refresh</button>
-      <button class="btn btn-danger btn-sm" id="term-kill-selected" disabled>Kill selected</button>`;
-    content.innerHTML = '<div class="mon-muted">Loading terminals…</div>';
-
-    const projectName = (id) => {
-      if (!id) return 'System';
-      const p = state.projects.find((x) => x.id === id);
-      return p ? p.name : 'Unknown project';
-    };
-
-    const load = async () => {
-      let sessions;
-      try {
-        const res = await api('/api/terminals');
-        sessions = (res.sessions || []).filter((t) => t.isAlive || t.status === 'active');
-      } catch (err) {
-        content.innerHTML = `<div style="color:var(--danger-color);">${escapeHtml(err.message)}</div>`;
-        return;
-      }
-      if (state.currentView !== 'terminals') return;
-      content.innerHTML = `
-        <div style="margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Persistent terminals (${sessions.length})</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">
-            Terminals keep running on the machine after you close the browser. Select the ones you no longer need and kill them;
-            this ends their tmux session and everything running inside.
-          </p>
-        </div>
-        <div class="card">
-          ${sessions.length === 0 ? '<div class="mon-muted">No persistent terminals are running.</div>' : `
-          <div class="table-container">
-            <table class="data-table">
-              <thead><tr>
-                <th style="width:36px;"><input type="checkbox" id="term-select-all" aria-label="Select all"></th>
-                <th>Terminal</th><th>Project</th><th>Started</th><th style="width:110px;">Status</th><th style="width:90px;"></th>
-              </tr></thead>
-              <tbody>
-                ${sessions.map((t) => `
-                  <tr>
-                    <td data-label="Select"><input type="checkbox" class="term-check" value="${escapeHtml(t.id)}" aria-label="Select ${escapeHtml(t.name)}"></td>
-                    <td data-label="Terminal"><strong>${escapeHtml(t.name)}</strong></td>
-                    <td data-label="Project">${escapeHtml(projectName(t.project_id))}</td>
-                    <td data-label="Started" style="font-size:12px;color:var(--text-secondary);">${escapeHtml(new Date(t.created_at).toLocaleString())}${t.connectedClients ? ` · ${t.connectedClients} viewing` : ''}</td>
-                    <td data-label="Status"><span class="badge ${t.isAlive ? 'badge-success' : 'badge-danger'}">${t.isAlive ? 'running' : 'dead'}</span></td>
-                    <td data-label="Action"><button class="btn btn-danger btn-sm term-kill-one" data-id="${escapeHtml(t.id)}">Kill</button></td>
-                  </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>`}
-        </div>`;
-
-      const killBtn = document.getElementById('term-kill-selected');
-      const checks = () => Array.from(document.querySelectorAll('.term-check'));
-      const sync = () => {
-        const n = checks().filter((c) => c.checked).length;
-        killBtn.disabled = n === 0;
-        killBtn.textContent = n ? `Kill selected (${n})` : 'Kill selected';
-        const all = document.getElementById('term-select-all');
-        if (all) all.checked = n > 0 && n === checks().length;
-      };
-      checks().forEach((c) => { c.onchange = sync; });
-      document.getElementById('term-select-all')?.addEventListener('change', (e) => {
-        checks().forEach((c) => { c.checked = e.target.checked; });
-        sync();
-      });
-      sync();
-      killBtn.onclick = () => {
-        const ids = checks().filter((c) => c.checked).map((c) => c.value);
-        if (ids.length === 0) return;
-        openModal({
-          title: `Kill ${ids.length} terminal${ids.length === 1 ? '' : 's'}?`,
-          confirmText: 'Kill',
-          bodyHtml: '<p>This ends the selected terminals and everything running inside them. It cannot be undone.</p>',
-          onConfirm: async () => {
-            await killTerminals(ids);
-            showToast(`${ids.length} terminal${ids.length === 1 ? '' : 's'} killed.`, 'success');
-            load();
-          },
-        });
-      };
-      document.querySelectorAll('.term-kill-one').forEach((btn) => {
-        btn.onclick = async () => {
-          btn.disabled = true;
-          await killTerminals([btn.getAttribute('data-id')]);
-          showToast('Terminal killed.', 'success');
-          load();
-        };
-      });
-    };
-
-    document.getElementById('term-refresh-btn').onclick = load;
-    await load();
+  async function openProjectOn(hostId, projectId) {
+    if (hostId !== state.activeHostId) {
+      await switchHost(hostId);
+      if (state.activeHostId !== hostId) return;
+    }
+    state.workspaceContext = projectId;
+    state.activeRepoId = null;
+    saveUiState({ workspaceContext: projectId, activeRepoId: null });
+    navigateTo('workspace');
   }
 
   async function renderDashboardView() {
     const content = document.getElementById('main-content');
-    content.innerHTML = '<div style="color:var(--text-secondary);">Loading system metrics...</div>';
+    document.getElementById('top-bar-actions').innerHTML = '';
 
-    const actions = document.getElementById('top-bar-actions');
-    actions.innerHTML = '';
+    const widgets = dashboardWidgetOrder().filter(widgetAvailable);
+    content.innerHTML = `<div class="dash-widgets">${widgets.map((id) => dashboardWidgetHtml(id)).join('')}</div>`;
 
-    try {
-      const [nodeRes, metricsRes, integRes] = await Promise.all([
-        api('/api/system/node'),
-        api('/api/system/metrics'),
-        api('/api/system/integrations'),
-      ]);
-
-      const node = nodeRes.node;
-      const metrics = metricsRes.metrics;
-      const integ = integRes.integrations;
-      const ctx = { node, metrics, integ };
-
-      const widgets = dashboardWidgetOrder().filter(widgetAvailable);
-      content.innerHTML = `<div class="dash-widgets">${widgets.map((id) => dashboardWidgetHtml(id, ctx)).join('')}</div>`;
-
-      document.getElementById('dash-new-project-btn')?.addEventListener('click', showCreateProjectModal);
-      document.getElementById('dash-clone-btn')?.addEventListener('click', openGitRepositories);
-      document.getElementById('dash-fleet-check-all')?.addEventListener('click', () => refreshDashboardFleet(true));
-      document.getElementById('dash-fleet-update-all')?.addEventListener('click', fleetUpdateAll);
-      bindActivityButtons();
-      document.querySelectorAll('.open-workspace-btn').forEach((btn) => {
-        btn.onclick = () => {
-          state.workspaceContext = btn.getAttribute('data-project-id');
-          saveUiState({ workspaceContext: state.workspaceContext });
-          navigateTo('workspace');
-        };
-      });
-
-      // Memory/CPU cards open the dedicated live processes screen.
-      document.querySelectorAll('.dash-widget-clickable[data-target-view]').forEach((el) => {
-        const go = () => {
-          const target = el.getAttribute('data-target-view');
-          navigateTo(target);
-        };
-        el.onclick = go;
-        el.onkeydown = (e) => {
-          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-            e.preventDefault();
-            go();
-          }
-        };
-      });
-
-      if (widgets.includes('fleet')) refreshDashboardFleet();
-      if (widgets.includes('machines')) {
-        window.CitadelMonitor.renderWidget(monitorCtx());
-      }
-
-      document.querySelectorAll('.install-agent-btn').forEach((btn) => {
-        btn.onclick = () => installAgent(btn.getAttribute('data-tool'), btn.getAttribute('data-name') || btn.getAttribute('data-tool'), btn);
-      });
-    } catch (err) {
-      content.innerHTML = `<div style="color:var(--danger-color);">Error loading dashboard: ${escapeHtml(err.message)}</div>`;
+    document.getElementById('dash-fleet-check-all')?.addEventListener('click', () => refreshDashboardFleet(true));
+    document.getElementById('dash-fleet-update-all')?.addEventListener('click', fleetUpdateAll);
+    if (widgets.includes('fleet')) refreshDashboardFleet();
+    if (widgets.includes('machines')) {
+      window.CitadelMonitor.setupDashboardActions(monitorCtx());
+      window.CitadelMonitor.renderWidget(monitorCtx());
     }
   }
 
-  // Dedicated live process screen, opened from the Memory/CPU dashboard cards.
-  async function renderProcessesView() {
-    const content = document.getElementById('main-content');
-    const actions = document.getElementById('top-bar-actions');
-    actions.innerHTML = '';
-
-    content.innerHTML = `
-      <div style="margin-bottom:20px;">
-        <h2 style="font-size:18px;margin-bottom:6px;">Top processes</h2>
-        <p style="color:var(--text-secondary);font-size:13px;">Live CPU &amp; memory usage per process.</p>
-      </div>
-      <div class="card">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;flex-wrap:wrap;">
-          <div id="process-summary" style="font-size:12px;color:var(--text-muted);">Updates every 5 seconds</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span class="badge badge-muted" id="process-updated">—</span>
-            <button class="btn btn-secondary btn-sm" id="process-pause-btn">Pause</button>
-          </div>
-        </div>
-        <div class="table-container">
-          <table class="data-table">
-            <thead><tr>
-              <th style="width:90px;">PID</th><th>Process</th>
-              <th style="width:100px;">CPU</th><th style="width:120px;">Memory</th><th style="width:100px;">MEM %</th>
-            </tr></thead>
-            <tbody id="process-table-body">
-              <tr><td colspan="5" style="color:var(--text-muted);">Loading processes...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-
-    const pauseBtn = document.getElementById('process-pause-btn');
-    pauseBtn.onclick = () => {
-      state.dashboardPaused = !state.dashboardPaused;
-      pauseBtn.textContent = state.dashboardPaused ? 'Resume' : 'Pause';
-    };
-
-    await refreshProcessTable();
-    if (state.dashboardTimer) clearInterval(state.dashboardTimer);
-    state.dashboardTimer = setInterval(() => {
-      if (state.dashboardPaused || document.hidden) return;
-      refreshProcessTable();
-    }, 5000);
-  }
-
-  // 2. Projects View
   function renderProjectsActions() {
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
@@ -1529,18 +1241,6 @@
     document.getElementById('proj-create-btn').onclick = showCreateProjectModal;
     document.getElementById('proj-import-btn').onclick = showImportProjectModal;
     document.getElementById('proj-creds-btn').onclick = () => renderReposView();
-  }
-
-  // Open the Git Repositories screen from anywhere (e.g. the dashboard) without
-  // showing a modal: switch to the Projects section and render that screen.
-  function openGitRepositories() {
-    state.currentView = 'projects';
-    saveUiState({ currentView: 'projects' });
-    setActiveNav('projects');
-    const titleEl = document.getElementById('top-bar-title');
-    if (titleEl) titleEl.textContent = 'Projects & Repositories';
-    renderProjectsActions();
-    renderReposView();
   }
 
   async function renderProjectsView() {
@@ -4549,7 +4249,7 @@
   // button in the top bar returns to the hub.
   const SETTINGS_SECTIONS = {
     updates: { title: 'Updates', desc: 'Keep this machine and the machines paired with it on the latest version.' },
-    machines: { title: 'Machines', desc: 'Pair other Citadels to reach them from this panel. Live health and alerts are under the machine selector → Machines overview.' },
+    machines: { title: 'Machines', desc: 'Pair other Citadels to reach them from this panel. Live health and alerts are on the Dashboard.' },
     network: { title: 'Network & access', desc: 'The address Citadel advertises to other devices. This only changes the advertised address; it never opens ports or exposes anything by itself.' },
     credentials: { title: 'Credentials', desc: 'One encrypted vault for everything agents and git need. Environment variables are injected into every terminal; agents can read any entry with the citadel-creds CLI. Values are never shown again.' },
     activity: { title: 'Activity & Audit', desc: 'The live event stream and the security audit trail for this host.' },

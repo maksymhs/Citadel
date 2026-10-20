@@ -54,68 +54,10 @@
     return host.isLocal ? `/api${apiPath}` : `/api/remote/${encodeURIComponent(host.id)}${apiPath}`;
   }
 
-  function gauge(esc, label, value, text, warn, crit) {
-    const v = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : null;
-    return `<div class="mon-gauge ${levelClass(v, warn, crit)}">
-      <div class="mon-gauge-head"><span>${esc(label)}</span><strong>${v === null ? '—' : esc(text)}</strong></div>
-      <div class="mon-bar"><div class="mon-bar-fill" style="width:${v === null ? 0 : v}%"></div></div>
-    </div>`;
-  }
-
   function statusOf(h) {
     if (h.online === true) return h.alerts.length ? 'warn' : 'ok';
     if (h.online === false) return 'down';
     return 'unknown';
-  }
-
-  function cardHtml(h, ctx) {
-    const esc = ctx.escapeHtml;
-    const status = statusOf(h);
-    const health = h.health;
-    const dot = status === 'ok' ? 'host-dot-on' : status === 'down' ? 'host-dot-off' : status === 'warn' ? 'mon-dot-warn' : '';
-    const chips = h.alerts.map((k) => `<span class="badge ${k === 'offline' ? 'badge-danger' : 'badge-warning'}">${esc(ALERT_LABELS[k] || k)}</span>`).join('');
-
-    let body;
-    if (h.online === false) {
-      body = `<div class="mon-down">
-        <strong>Not responding</strong>
-        <span>${esc(h.error || 'Unreachable')}</span>
-        <span class="mon-muted">Offline since ${esc(fmtAgo(h.since))}. Last seen ${esc(fmtAgo(h.lastSeen))}.</span>
-      </div>`;
-    } else if (h.online === null) {
-      body = '<div class="mon-muted">Checking…</div>';
-    } else if (!health) {
-      body = '<div class="mon-muted">Online. This machine runs an older Citadel without detailed health; update it to see load, memory and disk.</div>';
-    } else {
-      const loadPct = Math.min(100, Math.round((health.loadPerCore || 0) * 100));
-      body = `<div class="mon-gauges">
-        ${gauge(esc, 'CPU', loadPct, `${loadPct}%`, 70, 100)}
-        ${gauge(esc, 'Memory', health.memory && health.memory.usedPercent, `${health.memory ? health.memory.usedPercent : 0}%`, 80, 95)}
-        ${gauge(esc, 'Disk', health.disk && health.disk.usedPercent, health.disk ? `${health.disk.usedPercent}% of ${fmtBytes(health.disk.totalBytes)}` : '', 80, 90)}
-      </div>
-      <div class="mon-meta">
-        <span title="Machine uptime">⏱ ${esc(fmtDuration(health.uptimeSeconds))}</span>
-        ${h.latencyMs !== null && !h.isLocal ? `<span title="Round-trip to this machine">⇄ ${h.latencyMs} ms</span>` : ''}
-        ${h.uptime24h !== null ? `<span title="Availability, last 24 hours">${h.uptime24h}% 24h</span>` : ''}
-        ${Number.isFinite(health.activeTerminals) ? `<span title="Persistent terminals">▣ ${health.activeTerminals}</span>` : ''}
-      </div>`;
-    }
-
-    return `<div class="card mon-card mon-${status}" data-mon-id="${esc(h.id)}">
-      <div class="mon-card-head">
-        <span class="host-dot ${dot}"></span>
-        <div class="mon-card-name">
-          <strong>${esc(h.name)}</strong>
-          <span class="mon-muted">${h.isLocal ? 'This machine' : esc((h.address || '').replace(/^https?:\/\//, ''))}${h.version ? ` · v${esc(h.version)}` : ''}</span>
-        </div>
-        <div class="mon-chips">${chips}</div>
-      </div>
-      ${body}
-      <div class="mon-actions">
-        <button class="btn btn-primary btn-sm" data-mon-open="${esc(h.id)}" ${h.online === false ? 'disabled' : ''}>Open</button>
-        <button class="btn btn-secondary btn-sm" data-mon-details="${esc(h.id)}">Details</button>
-      </div>
-    </div>`;
   }
 
   function alertsHtml(alerts, ctx) {
@@ -129,87 +71,6 @@
       </div>`).join('')}
     </div>`;
   }
-
-  function summaryText(data) {
-    const online = data.hosts.filter((h) => h.online === true).length;
-    const down = data.hosts.filter((h) => h.online === false).length;
-    const parts = [`${online} online`];
-    if (down) parts.push(`${down} offline`);
-    if (data.alerts.length) parts.push(`${data.alerts.length} alert${data.alerts.length === 1 ? '' : 's'}`);
-    return `${parts.join(' · ')} — checked ${fmtAgo(data.checkedAt)} (every ${data.intervalSec}s)`;
-  }
-
-  // --- Main view ------------------------------------------------------------
-
-  async function renderView(ctx) {
-    const { localApi, escapeHtml: esc, showToast } = ctx;
-    const content = document.getElementById('main-content');
-    const actions = document.getElementById('top-bar-actions');
-    clearInterval(refreshTimer);
-
-    if (ctx.isAdmin) {
-      actions.innerHTML = `<button class="btn btn-secondary btn-sm" id="mon-alerts-btn">Alerts…</button>
-        <button class="btn btn-secondary btn-sm" id="mon-refresh-btn">Check now</button>`;
-    }
-    content.innerHTML = '<div id="mon-root"><div class="mon-muted">Loading machines…</div></div>';
-
-    let data = null;
-    const draw = () => {
-      const root = document.getElementById('mon-root');
-      if (!root || !data) return;
-      if (!data.hosts.length) {
-        root.innerHTML = '<div class="mon-muted">First check in progress…</div>';
-        return;
-      }
-      const paired = data.hosts.length > 1;
-      root.innerHTML = `${alertsHtml(data.alerts, ctx)}
-        <div class="mon-summary">${esc(summaryText(data))}</div>
-        <div class="mon-grid">${data.hosts.map((h) => cardHtml(h, ctx)).join('')}</div>
-        ${paired ? '' : `<div class="card mon-empty">
-          <strong>Add more machines</strong>
-          <span class="mon-muted">Pair your other devices (home server, VPS, laptop) from the machine selector at the top of the sidebar and they appear here with live health and alerts.</span>
-        </div>`}`;
-      root.querySelectorAll('[data-mon-open]').forEach((b) => {
-        b.onclick = () => ctx.switchHost(b.getAttribute('data-mon-open'));
-      });
-      root.querySelectorAll('[data-mon-details]').forEach((b) => {
-        b.onclick = () => {
-          const host = data.hosts.find((x) => x.id === b.getAttribute('data-mon-details'));
-          if (host) showDetails(host, ctx, () => load(false));
-        };
-      });
-    };
-
-    const load = async (force) => {
-      try {
-        data = force
-          ? await localApi('/api/monitor/refresh', { method: 'POST' })
-          : await localApi('/api/monitor/overview');
-        draw();
-      } catch (err) {
-        if (force) showToast(err.message, 'error');
-        const root = document.getElementById('mon-root');
-        if (root && !data) root.innerHTML = `<div style="color:var(--danger-color);">${esc(err.message)}</div>`;
-      }
-    };
-
-    document.getElementById('mon-refresh-btn')?.addEventListener('click', async (e) => {
-      e.currentTarget.disabled = true;
-      await load(true);
-      const btn = document.getElementById('mon-refresh-btn');
-      if (btn) btn.disabled = false;
-    });
-    document.getElementById('mon-alerts-btn')?.addEventListener('click', () => showAlertSettings(ctx));
-
-    await load(false);
-    // Stops by itself once the view is replaced.
-    refreshTimer = setInterval(() => {
-      if (!document.getElementById('mon-root')) { clearInterval(refreshTimer); return; }
-      load(false);
-    }, 15000);
-  }
-
-  // --- Dashboard widget -----------------------------------------------------
 
   // Donut gauge: the ring fills with the value and takes the level colour.
   function ring(esc, label, value, warn, crit) {
@@ -250,7 +111,7 @@
       h.latencyMs !== null && !h.isLocal ? `⇄ ${h.latencyMs} ms` : null,
       h.version ? `v${h.version}` : null,
     ].filter(Boolean).map(esc).join(' · ');
-    return `<button type="button" class="mon-mini-card mon-${status}" data-mon-overview title="Open Machines overview">
+    return `<button type="button" class="mon-mini-card mon-${status}" data-mon-machine="${esc(h.id)}" title="Open ${esc(h.name)}">
       <span class="mon-mini-inner">
         <span class="mon-mini-info">
           <span class="mon-mini-head">
@@ -266,25 +127,50 @@
     </button>`;
   }
 
+  // --- Dashboard ------------------------------------------------------------
+
   async function renderWidget(ctx) {
     const body = document.getElementById('dash-machines-body');
     if (!body) return;
-    const esc = ctx.escapeHtml;
-    try {
-      const data = await ctx.localApi('/api/monitor/overview');
-      const summary = document.getElementById('dash-machines-summary');
-      if (summary) summary.textContent = data.hosts.length ? summaryText(data) : 'First check in progress…';
-      body.innerHTML = `${data.alerts.length ? alertsHtml(data.alerts.slice(0, 3), ctx) : ''}
-        <div class="mon-mini-grid">${data.hosts.map((h) => miniCardHtml(h, ctx)).join('')}</div>`;
-      body.querySelectorAll('[data-mon-overview]').forEach((el) => {
-        el.onclick = () => ctx.openOverview();
-      });
-    } catch (err) {
-      body.innerHTML = `<div class="mon-muted">${esc(err.message)}</div>`;
-    }
+    clearInterval(refreshTimer);
+    const draw = async () => {
+      const target = document.getElementById('dash-machines-body');
+      if (!target) { clearInterval(refreshTimer); return; }
+      try {
+        const data = await ctx.localApi('/api/monitor/overview');
+        target.innerHTML = `${data.alerts.length ? alertsHtml(data.alerts.slice(0, 3), ctx) : ''}
+          ${data.hosts.length ? `<div class="mon-mini-grid">${data.hosts.map((h) => miniCardHtml(h, ctx)).join('')}</div>`
+    : '<div class="mon-muted">First check in progress…</div>'}`;
+        target.querySelectorAll('[data-mon-machine]').forEach((el) => {
+          el.onclick = () => ctx.openMachine(el.getAttribute('data-mon-machine'));
+        });
+      } catch (err) {
+        target.innerHTML = `<div class="mon-muted">${ctx.escapeHtml(err.message)}</div>`;
+      }
+    };
+    await draw();
+    refreshTimer = setInterval(draw, 15000);
   }
 
-  // --- Details, logs, restart ----------------------------------------------
+  // Top-bar actions of the dashboard (administrators only).
+  function setupDashboardActions(ctx) {
+    const actions = document.getElementById('top-bar-actions');
+    if (!actions || !ctx.isAdmin) return;
+    actions.innerHTML = `<button class="btn btn-secondary btn-sm" id="mon-alerts-btn">Alerts…</button>
+      <button class="btn btn-secondary btn-sm" id="mon-refresh-btn">Check now</button>`;
+    document.getElementById('mon-alerts-btn').onclick = () => showAlertSettings(ctx);
+    document.getElementById('mon-refresh-btn').onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await ctx.localApi('/api/monitor/refresh', { method: 'POST' });
+        await renderWidget(ctx);
+      } catch (err) {
+        ctx.showToast(err.message, 'error');
+      }
+      btn.disabled = false;
+    };
+  }
 
   function spark(points, key, { max = 100, cls = '' } = {}) {
     const vals = points.map((p) => p[key]);
@@ -301,46 +187,6 @@
   function downBand(points) {
     if (!points.length) return '';
     return `<div class="mon-band">${points.map((p) => `<span class="${p.online === 1 ? 'up' : p.online === 0 ? 'down' : 'part'}" title="${new Date(p.ts).toLocaleString()}"></span>`).join('')}</div>`;
-  }
-
-  async function showDetails(host, ctx, onChange) {
-    const { localApi, escapeHtml: esc } = ctx;
-    ctx.openModal({
-      title: host.name,
-      confirmText: 'Close',
-      bodyHtml: '<div id="mon-detail"><div class="mon-muted">Loading history…</div></div>',
-    });
-    try {
-      const hist = await localApi(`/api/monitor/hosts/${encodeURIComponent(host.id)}/history?hours=24`);
-      const root = document.getElementById('mon-detail');
-      if (!root) return;
-      const events = (hist.events || []).slice(0, 8);
-      root.innerHTML = `
-        <div class="mon-detail-grid">
-          <div><div class="mon-muted">Availability 24h</div><strong>${hist.uptime === null ? '—' : `${hist.uptime}%`}</strong></div>
-          <div><div class="mon-muted">Availability 7d</div><strong>${host.uptime7d === null ? '—' : `${host.uptime7d}%`}</strong></div>
-          <div><div class="mon-muted">Version</div><strong>${esc(host.version || '—')}</strong></div>
-        </div>
-        ${downBand(hist.points)}
-        <div class="mon-charts">
-          <div><div class="mon-muted">Memory %</div>${spark(hist.points, 'memPercent')}</div>
-          <div><div class="mon-muted">Disk %</div>${spark(hist.points, 'diskPercent')}</div>
-          <div><div class="mon-muted">CPU load / core</div>${spark(hist.points, 'loadPerCore', { max: 1 })}</div>
-          ${host.isLocal ? '' : `<div><div class="mon-muted">Latency ms</div>${spark(hist.points, 'latencyMs', { max: 100 })}</div>`}
-        </div>
-        <div class="mon-muted" style="margin-top:12px;">Recent incidents</div>
-        ${events.length ? `<ul class="mon-events">${events.map((e) => `<li><span class="mon-muted">${esc(new Date(e.ts).toLocaleString())}</span> ${esc(e.message || e.action)}</li>`).join('')}</ul>`
-    : '<div class="mon-muted">None in the last 30 days.</div>'}
-        ${ctx.isAdmin ? `<div class="mon-actions" style="margin-top:14px;">
-          <button class="btn btn-secondary btn-sm" id="mon-logs-btn" ${host.online === false ? 'disabled' : ''}>View logs</button>
-          <button class="btn btn-secondary btn-sm" id="mon-restart-btn" ${host.online === false ? 'disabled' : ''}>Restart Citadel</button>
-        </div>` : ''}`;
-      document.getElementById('mon-logs-btn')?.addEventListener('click', () => showLogs(host, ctx));
-      document.getElementById('mon-restart-btn')?.addEventListener('click', () => confirmRestart(host, ctx, onChange));
-    } catch (err) {
-      const root = document.getElementById('mon-detail');
-      if (root) root.innerHTML = `<div style="color:var(--danger-color);">${esc(err.message)}</div>`;
-    }
   }
 
   async function showLogs(host, ctx) {
@@ -376,6 +222,271 @@
         else setTimeout(() => { if (typeof onChange === 'function') onChange(); }, 9000);
       },
     });
+  }
+
+  // --- Machine screen -------------------------------------------------------
+  // Everything about one machine behind a single card: health, projects,
+  // terminals, processes and tools. Data comes through the host proxy, so any
+  // paired machine can be inspected without switching to it first.
+
+  const TABS = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'projects', label: 'Projects' },
+    { id: 'terminals', label: 'Terminals' },
+    { id: 'processes', label: 'Processes' },
+    { id: 'tools', label: 'Tools' },
+  ];
+  let machineTab = 'overview';
+  let machineTimer = null;
+
+  async function renderMachine(ctx, hostId, tab) {
+    const { localApi, escapeHtml: esc } = ctx;
+    const content = document.getElementById('main-content');
+    document.getElementById('top-bar-actions').innerHTML = '';
+    clearInterval(refreshTimer);
+    clearInterval(machineTimer);
+    if (tab) machineTab = tab;
+    content.innerHTML = '<div id="mon-machine"><div class="mon-muted">Loading…</div></div>';
+
+    let host;
+    try {
+      const data = await localApi('/api/monitor/overview');
+      host = data.hosts.find((h) => h.id === hostId);
+    } catch (err) {
+      content.innerHTML = `<div style="color:var(--danger-color);">${esc(err.message)}</div>`;
+      return;
+    }
+    if (!host) {
+      content.innerHTML = '<div class="card mon-empty"><strong>Machine not found</strong><span class="mon-muted">It may have been unpaired. Go back to the dashboard.</span></div>';
+      return;
+    }
+
+    const status = statusOf(host);
+    const dot = status === 'ok' ? 'host-dot-on' : status === 'down' ? 'host-dot-off' : status === 'warn' ? 'mon-dot-warn' : '';
+    const offline = host.online === false;
+    const root = document.getElementById('mon-machine');
+    root.innerHTML = `
+      <div class="card mon-machine-head">
+        <span class="host-dot ${dot}"></span>
+        <div class="mon-machine-title">
+          <strong>${esc(host.name)}</strong>
+          <span class="mon-muted">${host.isLocal ? 'This machine' : esc((host.address || '').replace(/^https?:\/\//, ''))}${host.version ? ` · v${esc(host.version)}` : ''}${offline ? ` · offline since ${esc(fmtAgo(host.since))}` : ''}</span>
+        </div>
+        <div class="mon-chips">${host.alerts.map((k) => `<span class="badge ${k === 'offline' ? 'badge-danger' : 'badge-warning'}">${esc(ALERT_LABELS[k] || k)}</span>`).join('')}</div>
+        <div class="mon-actions mon-machine-actions">
+          <button class="btn btn-primary btn-sm" id="mon-use-btn" ${offline ? 'disabled' : ''}>Work on this machine</button>
+          ${ctx.isAdmin ? `<button class="btn btn-secondary btn-sm" id="mon-logs-btn" ${offline ? 'disabled' : ''}>Logs</button>
+          <button class="btn btn-secondary btn-sm" id="mon-restart-btn" ${offline ? 'disabled' : ''}>Restart</button>` : ''}
+        </div>
+      </div>
+      <div class="mon-tabs" role="tablist">
+        ${TABS.map((t) => `<button type="button" role="tab" class="mon-tab${t.id === machineTab ? ' active' : ''}" data-mon-tab="${t.id}" ${offline && t.id !== 'overview' ? 'disabled' : ''}>${t.label}</button>`).join('')}
+      </div>
+      <div id="mon-tab-body"></div>`;
+
+    document.getElementById('mon-use-btn').onclick = () => ctx.useMachine(host.id);
+    document.getElementById('mon-logs-btn')?.addEventListener('click', () => showLogs(host, ctx));
+    document.getElementById('mon-restart-btn')?.addEventListener('click', () => confirmRestart(host, ctx, () => renderMachine(ctx, hostId)));
+    root.querySelectorAll('[data-mon-tab]').forEach((b) => {
+      b.onclick = () => renderMachine(ctx, hostId, b.getAttribute('data-mon-tab'));
+    });
+
+    const body = document.getElementById('mon-tab-body');
+    const loading = () => { body.innerHTML = '<div class="mon-muted">Loading…</div>'; };
+    const fail = (err) => { body.innerHTML = `<div style="color:var(--danger-color);">${esc(err.message)}</div>`; };
+    const tabId = offline ? 'overview' : machineTab;
+
+    if (tabId === 'overview') {
+      loading();
+      try {
+        const hist = await localApi(`/api/monitor/hosts/${encodeURIComponent(host.id)}/history?hours=24`);
+        const hl = host.health;
+        const load = hl ? Math.min(100, Math.round((hl.loadPerCore || 0) * 100)) : null;
+        const events = (hist.events || []).slice(0, 8);
+        body.innerHTML = `
+          ${hl ? `<div class="card mon-overview-rings">
+            ${ring(esc, 'CPU', load, 70, 100)}
+            ${ring(esc, 'Memory', hl.memory && hl.memory.usedPercent, 80, 95)}
+            ${ring(esc, 'Disk', hl.disk && hl.disk.usedPercent, 80, 90)}
+            <div class="mon-facts">
+              <div><span>Uptime</span><strong>${esc(fmtDuration(hl.uptimeSeconds))}</strong></div>
+              <div><span>Load (1m)</span><strong>${esc(String(hl.load1))}</strong></div>
+              <div><span>Cores</span><strong>${esc(String(hl.cores))}</strong></div>
+              ${hl.disk ? `<div><span>Disk size</span><strong>${esc(fmtBytes(hl.disk.totalBytes))}</strong></div>` : ''}
+              ${host.latencyMs !== null && !host.isLocal ? `<div><span>Latency</span><strong>${host.latencyMs} ms</strong></div>` : ''}
+              <div><span>Terminals</span><strong>${esc(String(hl.activeTerminals ?? 0))}</strong></div>
+            </div>
+          </div>` : `<div class="card mon-muted">${offline ? esc(host.error || 'Not responding.') : 'No detailed metrics: update this machine to see load, memory and disk.'}</div>`}
+          <div class="card">
+            <div class="mon-detail-grid">
+              <div><div class="mon-muted">Availability 24h</div><strong>${hist.uptime === null ? '—' : `${hist.uptime}%`}</strong></div>
+              <div><div class="mon-muted">Availability 7d</div><strong>${host.uptime7d === null ? '—' : `${host.uptime7d}%`}</strong></div>
+              <div><div class="mon-muted">Version</div><strong>${esc(host.version || '—')}</strong></div>
+            </div>
+            ${downBand(hist.points)}
+            <div class="mon-charts">
+              <div><div class="mon-muted">Memory %</div>${spark(hist.points, 'memPercent')}</div>
+              <div><div class="mon-muted">Disk %</div>${spark(hist.points, 'diskPercent')}</div>
+              <div><div class="mon-muted">CPU load / core</div>${spark(hist.points, 'loadPerCore', { max: 1 })}</div>
+              ${host.isLocal ? '' : `<div><div class="mon-muted">Latency ms</div>${spark(hist.points, 'latencyMs', { max: 100 })}</div>`}
+            </div>
+          </div>
+          <div class="card">
+            <div class="mon-muted" style="margin-bottom:6px;">Recent incidents</div>
+            ${events.length ? `<ul class="mon-events">${events.map((e) => `<li><span class="mon-muted">${esc(new Date(e.ts).toLocaleString())}</span> ${esc(e.message || e.action)}</li>`).join('')}</ul>`
+    : '<div class="mon-muted">None in the last 30 days.</div>'}
+          </div>`;
+      } catch (err) { fail(err); }
+      return;
+    }
+
+    if (tabId === 'projects') {
+      loading();
+      try {
+        const res = await localApi(remotePath(host, '/projects'));
+        const list = res.projects || [];
+        body.innerHTML = `<div class="card">
+          <div class="mon-tab-toolbar"><span class="mon-muted">${list.length} project${list.length === 1 ? '' : 's'}</span>
+            <button class="btn btn-secondary btn-sm" id="mon-manage-projects">Manage projects</button></div>
+          ${list.length === 0 ? '<div class="mon-muted">No projects on this machine yet.</div>' : `<div class="mon-rows">
+            ${list.map((p) => `<div class="mon-row">
+              <div class="mon-row-main"><strong>${esc(p.name)}</strong>
+                <span class="mon-muted mon-ellipsis">${esc(p.path)}</span></div>
+              ${p.active_sessions_count > 0 ? `<span class="badge badge-success">${p.active_sessions_count} terminal${p.active_sessions_count === 1 ? '' : 's'}</span>` : ''}
+              <button class="btn btn-primary btn-sm" data-mon-open-project="${esc(p.id)}">Open</button>
+            </div>`).join('')}</div>`}
+        </div>`;
+        document.getElementById('mon-manage-projects').onclick = () => ctx.useMachine(host.id, 'projects');
+        body.querySelectorAll('[data-mon-open-project]').forEach((b) => {
+          b.onclick = () => ctx.openProject(host.id, b.getAttribute('data-mon-open-project'));
+        });
+      } catch (err) { fail(err); }
+      return;
+    }
+
+    if (tabId === 'terminals') {
+      const load = async () => {
+        try {
+          const [t, pr] = await Promise.all([
+            localApi(remotePath(host, '/terminals')),
+            localApi(remotePath(host, '/projects')).catch(() => ({ projects: [] })),
+          ]);
+          const names = new Map((pr.projects || []).map((p) => [p.id, p.name]));
+          const list = (t.sessions || []).filter((x) => x.isAlive || x.status === 'active');
+          body.innerHTML = `<div class="card">
+            <div class="mon-tab-toolbar">
+              <span class="mon-muted">${list.length} persistent terminal${list.length === 1 ? '' : 's'} — they keep running when you close the browser</span>
+              <button class="btn btn-danger btn-sm" id="mon-kill-selected" disabled>Kill selected</button>
+            </div>
+            ${list.length === 0 ? '<div class="mon-muted">No persistent terminals are running.</div>' : `
+            <label class="mon-selectall"><input type="checkbox" id="mon-term-all"> Select all</label>
+            <div class="mon-rows">${list.map((x) => `<label class="mon-row">
+              <input type="checkbox" class="mon-term-check" value="${esc(x.id)}">
+              <div class="mon-row-main"><strong>${esc(x.name)}</strong>
+                <span class="mon-muted">${esc(x.project_id ? (names.get(x.project_id) || 'Unknown project') : 'System')} · started ${esc(new Date(x.created_at).toLocaleString())}</span></div>
+              <span class="badge ${x.isAlive ? 'badge-success' : 'badge-danger'}">${x.isAlive ? 'running' : 'dead'}</span>
+            </label>`).join('')}</div>`}
+          </div>`;
+          const checks = () => Array.from(body.querySelectorAll('.mon-term-check'));
+          const kill = document.getElementById('mon-kill-selected');
+          const sync = () => {
+            const n = checks().filter((c) => c.checked).length;
+            kill.disabled = n === 0;
+            kill.textContent = n ? `Kill selected (${n})` : 'Kill selected';
+          };
+          checks().forEach((c) => { c.onchange = sync; });
+          document.getElementById('mon-term-all')?.addEventListener('change', (e) => {
+            checks().forEach((c) => { c.checked = e.target.checked; });
+            sync();
+          });
+          kill.onclick = () => {
+            const ids = checks().filter((c) => c.checked).map((c) => c.value);
+            if (!ids.length) return;
+            ctx.openModal({
+              title: `Kill ${ids.length} terminal${ids.length === 1 ? '' : 's'}?`,
+              confirmText: 'Kill',
+              bodyHtml: '<p>This ends the selected terminals and everything running inside them. It cannot be undone.</p>',
+              onConfirm: async () => {
+                for (const id of ids) {
+                  ctx.forgetTerminal(host.id, id);
+                  await localApi(remotePath(host, `/terminals/${encodeURIComponent(id)}`), { method: 'DELETE' }).catch(() => {});
+                }
+                ctx.showToast(`${ids.length} terminal${ids.length === 1 ? '' : 's'} killed.`, 'success');
+                load();
+              },
+            });
+          };
+        } catch (err) { fail(err); }
+      };
+      loading();
+      await load();
+      return;
+    }
+
+    if (tabId === 'processes') {
+      const load = async () => {
+        if (!document.getElementById('mon-proc-body') && body.dataset.ready) { clearInterval(machineTimer); return; }
+        try {
+          const res = await localApi(remotePath(host, '/system/processes?limit=15'));
+          const d = res.processes || {};
+          const rows = d.processes || [];
+          if (!body.dataset.ready) {
+            body.dataset.ready = '1';
+            body.innerHTML = `<div class="card">
+              <div class="mon-tab-toolbar"><span class="mon-muted" id="mon-proc-meta"></span><span class="mon-muted">Updates every 5 s</span></div>
+              <div class="table-container"><table class="data-table"><thead><tr>
+                <th style="width:80px;">PID</th><th>Process</th><th style="width:90px;">CPU</th><th style="width:110px;">Memory</th><th style="width:80px;">MEM %</th>
+              </tr></thead><tbody id="mon-proc-body"></tbody></table></div></div>`;
+          }
+          document.getElementById('mon-proc-body').innerHTML = rows.length ? rows.map((x) => `<tr>
+              <td data-label="PID" style="font-family:var(--font-mono);color:var(--text-secondary);">${x.pid}</td>
+              <td data-label="Process">${esc(x.name)}</td>
+              <td data-label="CPU"><span class="badge ${x.cpuPercent >= 50 ? 'badge-danger' : x.cpuPercent >= 10 ? 'badge-warning' : 'badge-muted'}">${x.cpuPercent.toFixed(1)}%</span></td>
+              <td data-label="Memory" style="font-family:var(--font-mono);">${esc(fmtBytes(x.rssBytes))}</td>
+              <td data-label="MEM %" style="font-family:var(--font-mono);color:var(--text-secondary);">${x.memPercent.toFixed(1)}%</td>
+            </tr>`).join('') : '<tr><td colspan="5" class="mon-muted">No process data on this platform.</td></tr>';
+          const meta = document.getElementById('mon-proc-meta');
+          if (meta) meta.textContent = `${rows.length} of ${d.total} processes · ${new Date(d.timestamp).toLocaleTimeString()}`;
+        } catch (err) { fail(err); clearInterval(machineTimer); }
+      };
+      loading();
+      await load();
+      machineTimer = setInterval(() => { if (!document.hidden) load(); }, 5000);
+      return;
+    }
+
+    if (tabId === 'tools') {
+      loading();
+      try {
+        const res = await localApi(remotePath(host, '/system/integrations'));
+        const integ = res.integrations || {};
+        const chip = (name, ok, hint) => `<div class="mon-tool ${ok ? 'on' : 'off'}" title="${esc(hint || '')}"><span class="status-dot ${ok ? 'ok' : 'off'}"></span>${esc(name)}</div>`;
+        body.innerHTML = `
+          <div class="card">
+            <div class="mon-muted" style="margin-bottom:8px;">Platform</div>
+            <div class="mon-tools">
+              ${chip('tmux', integ.tmux && integ.tmux.available, integ.tmux && integ.tmux.description)}
+              ${chip('Git', integ.git && integ.git.available, integ.git && integ.git.description)}
+              ${chip('Caddy', integ.caddy && integ.caddy.available, integ.caddy && integ.caddy.helpMessage)}
+              ${chip('Docker', integ.docker && integ.docker.available, '')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="mon-muted" style="margin-bottom:8px;">AI coding agents</div>
+            <div class="mon-rows">
+              ${(integ.agents || []).map((a) => `<div class="mon-row">
+                <span class="status-dot ${a.available ? 'ok' : 'off'}"></span>
+                <div class="mon-row-main"><strong>${esc(a.name)}</strong>${a.version ? `<span class="mon-muted">${esc(a.version)}</span>` : ''}</div>
+                ${a.available ? '<span class="badge badge-success">Installed</span>'
+    : `<button class="btn btn-secondary btn-sm" data-mon-install="${esc(a.id)}" data-name="${esc(a.name)}" ${ctx.isAdmin ? '' : 'disabled'}>Install</button>`}
+              </div>`).join('')}
+            </div>
+          </div>`;
+        body.querySelectorAll('[data-mon-install]').forEach((b) => {
+          b.onclick = () => ctx.installAgent(host.id, b.getAttribute('data-mon-install'), b.getAttribute('data-name'));
+        });
+      } catch (err) { fail(err); }
+    }
   }
 
   // --- Alert settings -------------------------------------------------------
@@ -473,5 +584,5 @@
     };
   }
 
-  window.CitadelMonitor = { renderView, renderWidget };
+  window.CitadelMonitor = { renderWidget, renderMachine, setupDashboardActions };
 })();
