@@ -378,18 +378,40 @@
     if (tabId === 'tools') {
       loading();
       try {
-        const res = await localApi(remotePath(host, '/system/integrations'));
+        const [res, toolsRes] = await Promise.all([
+          localApi(remotePath(host, '/system/integrations')),
+          // Older machines do not have the tools endpoint yet.
+          localApi(remotePath(host, '/system/tools')).catch(() => null),
+        ]);
         const integ = res.integrations || {};
-        const chip = (name, ok, hint) => `<div class="mon-tool ${ok ? 'on' : 'off'}" title="${esc(hint || '')}"><span class="status-dot ${ok ? 'ok' : 'off'}"></span>${esc(name)}</div>`;
+        // Services that are running, not just installed.
+        const running = { docker: integ.docker && integ.docker.available, caddy: integ.caddy && integ.caddy.available };
+        const tools = (toolsRes && toolsRes.tools) || [
+          { id: 'tmux', name: 'tmux', group: 'System', installed: Boolean(integ.tmux && integ.tmux.available) },
+          { id: 'git', name: 'Git', group: 'Development', installed: Boolean(integ.git && integ.git.available) },
+          { id: 'caddy', name: 'Caddy', group: 'Network', installed: Boolean(integ.caddy && integ.caddy.available) },
+          { id: 'docker', name: 'Docker', group: 'Containers', installed: Boolean(integ.docker && integ.docker.available) },
+        ];
+        const chip = (t) => `<div class="mon-tool ${t.installed ? 'on' : 'off'}" title="${esc(t.path || '')}">
+          <span class="status-dot ${t.installed ? 'ok' : 'off'}"></span>${esc(t.name)}${t.version ? `<span class="mon-tool-ver">${esc(t.version)}</span>` : ''}${t.installed && running[t.id] ? '<span class="badge badge-success">running</span>' : ''}
+        </div>`;
+        const groups = ['Runtimes', 'Development', 'Containers', 'Network', 'System'];
+        const groupHtml = groups.map((g) => {
+          const items = tools.filter((t) => t.group === g);
+          const have = items.filter((t) => t.installed);
+          const missing = items.filter((t) => !t.installed);
+          if (!items.length) return '';
+          return `<div class="mon-tool-group">
+            <div class="mon-muted mon-tool-title">${esc(g)} <span>${have.length}/${items.length}</span></div>
+            <div class="mon-tools">${have.map(chip).join('') || '<span class="mon-muted">None detected</span>'}</div>
+            ${missing.length ? `<details class="mon-tool-missing"><summary>${missing.length} not installed</summary><div class="mon-tools">${missing.map(chip).join('')}</div></details>` : ''}
+          </div>`;
+        }).join('');
+        const installedCount = tools.filter((t) => t.installed).length;
         body.innerHTML = `
           <div class="card">
-            <div class="mon-muted" style="margin-bottom:8px;">Platform</div>
-            <div class="mon-tools">
-              ${chip('tmux', integ.tmux && integ.tmux.available, integ.tmux && integ.tmux.description)}
-              ${chip('Git', integ.git && integ.git.available, integ.git && integ.git.description)}
-              ${chip('Caddy', integ.caddy && integ.caddy.available, integ.caddy && integ.caddy.helpMessage)}
-              ${chip('Docker', integ.docker && integ.docker.available, '')}
-            </div>
+            <div class="mon-tab-toolbar"><span class="mon-muted">${installedCount} of ${tools.length} common tools installed</span></div>
+            ${groupHtml}
           </div>
           <div class="card">
             <div class="mon-muted" style="margin-bottom:8px;">AI coding agents</div>

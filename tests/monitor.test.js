@@ -275,6 +275,21 @@ describe('Fleet monitor: health, history, alerts and actions', () => {
     assert.equal(monitor.getOverview().hosts.length, 1);
   });
 
+  test('GET /api/system/tools lists installed tools with versions', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/system/tools', headers: { cookie } });
+    assert.equal(res.statusCode, 200);
+    const { tools } = JSON.parse(res.payload);
+    assert.ok(tools.length > 20);
+    const node = tools.find((x) => x.id === 'node');
+    assert.equal(node.installed, true);
+    assert.match(node.version, /^\d+\.\d+/);
+    assert.ok(node.path.endsWith('node'));
+    const missing = tools.filter((x) => !x.installed);
+    assert.ok(missing.every((x) => x.version === null && x.path === null));
+    const unauth = await app.inject({ method: 'GET', url: '/api/system/tools' });
+    assert.equal(unauth.statusCode, 401);
+  });
+
   test('log tail and restart are admin actions; restart is inert under test', async () => {
     const logs = await app.inject({ method: 'GET', url: '/api/system/logs?lines=20', headers: { cookie } });
     assert.equal(logs.statusCode, 200);

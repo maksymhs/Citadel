@@ -2357,3 +2357,11 @@ label.mon-row:hover { border-color: #444c56; }
   .act-controls input[type="search"] { min-width: 0; flex: 1; }
   .act-item { padding: 8px 14px; }
 }
+
+.mon-tool-group { margin-bottom: 16px; }
+.mon-tool-group:last-child { margin-bottom: 0; }
+.mon-tool-title { text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+.mon-tool-title span { font-family: var(--font-mono); margin-left: 6px; }
+.mon-tool-ver { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.mon-tool-missing { margin-top: 8px; }
+.mon-tool-missing summary { cursor: pointer; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }

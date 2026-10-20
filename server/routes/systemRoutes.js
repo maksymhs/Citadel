@@ -12,6 +12,7 @@ const updateRolloutService = require('../services/updateRolloutService');
 const auditService = require('../services/auditService');
 const connectService = require('../services/connectService');
 const serviceLogs = require('../services/serviceLogService');
+const toolsService = require('../services/toolsService');
 const agentInstallService = require('../services/agentInstallService');
 
 function requireAdmin(request, reply, done) {
@@ -81,6 +82,9 @@ async function systemRoutes(fastify) {
       processes: await nodeService.getProcesses({ limit }),
     };
   });
+
+  // Common developer/system tools found on this machine, with their versions.
+  fastify.get('/api/system/tools', async (request) => toolsService.listTools({ force: request.query?.force === 'true' }));
 
   // Integrations diagnostic check (tmux, git, caddy, docker, AI agents)
   fastify.get('/api/system/integrations', async () => {
