@@ -29,7 +29,7 @@
         html = job.phase === 'login' && job.loginUrl
           ? `<p>1. Open Cloudflare, pick the domain <strong>${escapeHtml((job.domain || '').split('.').slice(-2).join('.'))}</strong> and authorize:</p>
              <p style="margin:8px 0;"><a class="btn btn-primary btn-sm" href="${escapeHtml(job.loginUrl)}" target="_blank" rel="noopener">Authorize in Cloudflare</a></p>
-             <p>2. This page continues on its own once you approve.</p>`
+             <p>2. This page continues on its own once you approve. Cloudflare lists only your root domain: pick it even though you are linking <code>${escapeHtml(job.domain || '')}</code>; the subdomain is created for you.</p>`
           : `<p>${escapeHtml(job.message || 'Working…')}</p>`;
         html += '<p style="margin-top:8px;"><button class="btn btn-secondary btn-sm" id="tunnel-cancel">Cancel</button></p>';
       } else {

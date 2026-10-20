@@ -21,6 +21,9 @@ const TOKEN_FILE = path.join(DATA_DIR, 'tunnel-token');
 const DOMAIN_FILE = path.join(DATA_DIR, 'tunnel-domain');
 const CF_HOME = path.join(DATA_DIR, 'cloudflared');
 const CERT_FILE = path.join(CF_HOME, 'cert.pem');
+// `cloudflared tunnel login` ignores TUNNEL_ORIGIN_CERT and always writes the
+// certificate to $HOME/.cloudflared/cert.pem; the other steps read CERT_FILE.
+const LOGIN_CERT_FILE = path.join(CF_HOME, '.cloudflared', 'cert.pem');
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const STEP_TIMEOUT_MS = 60 * 1000;
 
@@ -160,7 +163,9 @@ function start(rawDomain) {
   const child = spawn(CLOUDFLARED, ['tunnel', 'login'], { env: cfEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
   loginProc = child;
   const timer = setTimeout(() => child.kill('SIGKILL'), LOGIN_TIMEOUT_MS);
+  let output = '';
   const scan = (chunk) => {
+    output += chunk;
     const m = String(chunk).match(/https:\/\/[^\s]+/);
     if (m && !job.loginUrl && /cloudflare/i.test(m[0])) setJob({ loginUrl: m[0] });
   };
@@ -177,8 +182,14 @@ function start(rawDomain) {
     const cancelled = loginProc !== child;
     loginProc = null;
     if (cancelled) return;
+    try {
+      if (fs.existsSync(LOGIN_CERT_FILE) && !fs.existsSync(CERT_FILE)) {
+        fs.renameSync(LOGIN_CERT_FILE, CERT_FILE);
+      }
+    } catch { /* checked below */ }
     if (code !== 0 || !fs.existsSync(CERT_FILE)) {
-      fail(new Error('Cloudflare authorization was not completed.'));
+      const detail = code !== 0 ? lastLine(output) : '';
+      fail(new Error(`Cloudflare authorization was not completed.${detail ? ` (${detail})` : ''}`));
       return;
     }
     finishSetup(domain)

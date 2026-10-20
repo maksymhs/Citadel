@@ -1425,3 +1425,13 @@ README/.env.example/architecture. No commits/pushes/deploys.
   messages only with `CITADEL_VERBOSE=1`. Dry run, warnings and the kept-source
   notes are unchanged.
 - Version bumped to `0.33.7`; asset cache-buster token moved to `v0337`.
+
+## 82. Settings → Tunnel stuck after Cloudflare authorization (v0.33.8)
+- **Bug.** `cloudflared tunnel login` ignores `TUNNEL_ORIGIN_CERT` and writes the
+  certificate to `$HOME/.cloudflared/cert.pem`; the panel waited for
+  `<data>/cloudflared/cert.pem`, so an approved login never advanced.
+- **Fix.** After the login process exits the certificate is moved to the path
+  the remaining steps use; a failed login now includes cloudflared's last line.
+  The UI explains that Cloudflare lists only the root zone (e.g. maksym.site)
+  and that the subdomain (server.maksym.site) is created automatically.
+- Version bumped to `0.33.8`; asset cache-buster token moved to `v0338`.
