@@ -52,6 +52,7 @@
     dashboardPaused: false,
     tmuxAvailable: false,
     filesPath: '/',
+    keepSettingsSection: false,
     settingsSection: null, // null = Settings hub, otherwise a section id
     filesMode: 'grid', // 'grid' (folder view, default) | 'list' (tree); list only lasts until you leave Files
     dashboardWidgets: null, // ordered widget ids, persisted per browser
@@ -683,7 +684,7 @@
     }
     items.push({ sep: true });
     items.push({ label: 'Pair a machine…', onSelect: showPairModal });
-    items.push({ label: 'Manage machines…', onSelect: () => navigateTo('settings') });
+    items.push({ label: 'Manage machines…', onSelect: () => openSettingsAt('machines') });
     openContextMenu(anchorEl, items);
   }
 
@@ -1007,7 +1008,8 @@
     if (from !== view && !Object.prototype.hasOwnProperty.call(DETAIL_VIEWS, from)) state.backView = from;
     // Files always opens as a grid; the list toggle only lasts while you stay in Files.
     if (view === 'files' && from !== 'files') state.filesMode = 'grid';
-    if (view === 'settings' && from !== 'settings') state.settingsSection = null;
+    if (view === 'settings' && from !== 'settings' && !state.keepSettingsSection) state.settingsSection = null;
+    state.keepSettingsSection = false;
     state.currentView = view;
     updateBackButton(view);
     saveUiState({ currentView: view });
@@ -4372,6 +4374,17 @@
     credentials: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>',
     activity: NAV_ICONS.activity,
   };
+
+  // Open Settings directly on one of its screens, from anywhere.
+  function openSettingsAt(section) {
+    state.settingsSection = section;
+    if (state.currentView === 'settings') {
+      renderSettingsView();
+    } else {
+      state.keepSettingsSection = true;
+      navigateTo('settings');
+    }
+  }
 
   function openSettingsSection(id) {
     state.settingsSection = id || null;
