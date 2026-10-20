@@ -2267,3 +2267,37 @@ label.mon-row:hover { border-color: #444c56; }
 .mon-overview-rings .mon-ring strong small { display: inline; }
 .mon-overview-rings .mon-ring span { font-size: 12px; text-transform: none; letter-spacing: 0; }
 #dash-machines-body:empty + .dash-machine-pane { margin-top: 0; }
+
+/* Settings hub + secondary screens */
+.settings-screen { max-width: 980px; margin: 0 auto; }
+.settings-screen-head { margin-bottom: 20px; }
+.settings-screen-head h2 { font-size: 20px; margin-bottom: 4px; }
+.settings-screen-head p { color: var(--text-secondary); font-size: 13px; line-height: 1.5; max-width: 70ch; }
+.settings-hero-title strong { font-size: 20px; }
+.settings-hero-body { gap: 10px; justify-content: center; align-self: stretch; }
+.settings-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+}
+.settings-tile {
+  display: flex; align-items: center; gap: 14px; text-align: left;
+  padding: 16px 18px; font: inherit; color: inherit; cursor: pointer;
+  background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.settings-tile:hover, .settings-tile:focus-visible { border-color: var(--accent-color); transform: translateY(-1px); outline: none; }
+.settings-tile-icon {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 40px; height: 40px; border-radius: 10px;
+  background: var(--accent-bg); color: var(--accent-color);
+}
+.settings-tile-icon svg { width: 20px; height: 20px; }
+.settings-tile-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.settings-tile-text strong { font-size: 15px; }
+.settings-tile-text span { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-tile-chev { color: var(--text-muted); font-size: 22px; line-height: 1; }
+.settings-panel { display: flex; flex-direction: column; gap: 14px; }
+.settings-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; max-width: 360px; }
+.settings-screen .card { margin-bottom: 16px; }
+
