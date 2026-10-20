@@ -135,3 +135,15 @@ test('print-qr unicode output decodes back to the original text', () => {
   assert.ok(decoded, 'the rendered grid is a valid QR code');
   assert.equal(decoded.data, text);
 });
+
+test('qr-page writes a self-contained page with the QR and the escaped address', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-qr-')), 'qr.html');
+  execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'qr-page.js'), 'https://example.com/#pair=v1.a.b', out, 'https://example.com/<x>']);
+  const html = fs.readFileSync(out, 'utf8');
+  assert.match(html, /<svg[^>]*shape-rendering="crispEdges"/);
+  assert.ok(html.includes('https://example.com/&lt;x&gt;'), 'the address is HTML-escaped');
+  assert.ok(!html.includes('<x>'));
+  assert.equal(fs.statSync(out).mode & 0o077, 0, 'the page holds a one-time secret and is private');
+});

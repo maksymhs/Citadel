@@ -210,6 +210,13 @@ if [ -n "$PUBLIC_URL" ] && [ "$UPDATE_MODE" = false ]; then
   QR_TEXT="$PUBLIC_URL"
   case "$PAIR_LINK" in "$PUBLIC_URL"*"#pair="*) QR_TEXT="$PAIR_LINK" ;; esac
   echo "  Create your admin account now: until then the first visitor can claim it."
+  # A large QR in the browser is far easier for a phone camera than the one
+  # drawn in the terminal (which depends on font and line spacing).
+  if [ -z "${CITADEL_NO_OPEN:-}" ] && [ -t 1 ] && command -v open >/dev/null 2>&1 \
+     && (cd "$APP_DIR" && node scripts/qr-page.js "$QR_TEXT" "$DATA_DIR/qr.html" "$PUBLIC_URL") 2>/dev/null; then
+    open "$DATA_DIR/qr.html" >/dev/null 2>&1 || true
+    echo "  A large QR opened in your browser (citadel qr --open shows it again)."
+  fi
   echo "  Scan to open on your phone, or to pair from another Citadel."
   (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$PUBLIC_URL") || true
 elif [ -z "$PUBLIC_URL" ] && [ "$TUNNEL" = true ] && [ "$UPDATE_MODE" = false ]; then

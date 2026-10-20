@@ -1589,3 +1589,13 @@ README/.env.example/architecture. No commits/pushes/deploys.
   distorts it, `CITADEL_QR_MODE=ascii citadel qr` draws full coloured cells
   (needs about 45 rows).
 - Version bumped to `0.36.4`; asset cache-buster token moved to `v0364`.
+
+## 95. Large QR page in the browser (v0.36.5)
+- A QR drawn with block glyphs in a terminal depends on the font and line spacing
+  (macOS Terminal still failed to scan after the glyph/colour fix). New
+  `scripts/qr-page.js` writes a self-contained HTML page with a large SVG QR and a
+  proper quiet zone; `citadel qr --open` shows it, and the macOS installer opens
+  it automatically after a fresh install (`CITADEL_NO_OPEN=1` to skip). The
+  terminal QR is still printed. The page is mode 0600 because it holds the
+  single-use invitation (valid 10 minutes).
+- Version bumped to `0.36.5`; asset cache-buster token moved to `v0365`.

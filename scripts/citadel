@@ -55,7 +55,8 @@ Citadel CLI
   citadel power on       Ignore lid close and block sleep for 24/7 operation
   citadel power off      Restore the system sleep defaults
   citadel url            Print the panel URL
-  citadel qr [--url]     Print a scannable pairing QR code (--url: short, panel address only)
+  citadel qr [--url|--open]  Print a pairing QR code (--url: short, address only;
+                         --open: large QR page in the browser)
   citadel logs           Follow the service logs
   citadel restart        Restart the service
   citadel update         Update to the latest version
@@ -125,6 +126,21 @@ case "$cmd" in
       exit 0
     fi
     pair_link="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" PORT="$PORT" node scripts/pair-qr.js "$p_url" 2>/dev/null || true)"
+    if [ "${1:-}" = "--open" ]; then
+      # A large QR in the browser: scans reliably when a terminal font or line
+      # spacing distorts the one drawn in the console.
+      qr_page="$DATA_DIR/qr.html"
+      (cd "$APP_DIR" && node scripts/qr-page.js "${pair_link:-$p_url}" "$qr_page" "$p_url")
+      if command -v open >/dev/null 2>&1; then
+        open "$qr_page"
+      elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$qr_page" >/dev/null 2>&1 || true
+      else
+        echo "Open this file in a browser: $qr_page"
+      fi
+      echo "Large QR page: $qr_page (the code works once and expires in 10 minutes)"
+      exit 0
+    fi
     echo "Pairing QR (valid for 10 minutes):"
     (cd "$APP_DIR" && node scripts/print-qr.js "${pair_link:-$p_url}" "$p_url") || {
       echo "Tip: the pairing code does not fit this terminal. Try: citadel qr --url (short code) or run it over SSH." >&2
