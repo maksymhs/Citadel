@@ -155,6 +155,17 @@ function normalizeRepo(provider, r) {
   };
 }
 
+const MAX_REPO_PAGES = 30;
+
+function parseNextLink(header) {
+  if (!header) return null;
+  for (const part of header.split(',')) {
+    const m = part.match(/<([^>]+)>\s*;\s*rel="?next"?/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 async function listRepos(provider) {
   const p = getProvider(provider);
   if (!p) throw new Error(`Unsupported provider: ${provider}`);
@@ -173,19 +184,26 @@ async function listRepos(provider) {
       ? `${p.apiBase}/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member`
       : `${p.apiBase}/projects?membership=true&per_page=100&order_by=last_activity_at`;
 
-  const res = await fetch(url, { headers });
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      throw new Error(`Invalid or insufficient ${p.label} token (HTTP ${res.status}).`);
+  // Both APIs cap a page at 100 entries; follow the Link header so accounts
+  // with many repositories (or organisations) are listed in full.
+  const all = [];
+  let next = url;
+  for (let page = 0; next && page < MAX_REPO_PAGES; page++) {
+    const res = await fetch(next, { headers });
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(`Invalid or insufficient ${p.label} token (HTTP ${res.status}).`);
+      }
+      throw new Error(`${p.label} API error (HTTP ${res.status}).`);
     }
-    throw new Error(`${p.label} API error (HTTP ${res.status}).`);
+    const data = await res.json();
+    if (!Array.isArray(data)) {
+      throw new Error(`Unexpected ${p.label} API response.`);
+    }
+    all.push(...data);
+    next = parseNextLink(res.headers && res.headers.get('link'));
   }
-
-  const data = await res.json();
-  if (!Array.isArray(data)) {
-    throw new Error(`Unexpected ${p.label} API response.`);
-  }
-  return data.map((r) => normalizeRepo(p.id, r));
+  return all.map((r) => normalizeRepo(p.id, r));
 }
 
 module.exports = {

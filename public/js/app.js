@@ -1905,30 +1905,49 @@
         return;
       }
       container.innerHTML = `
-        <div class="table-container">
-          <table class="data-table">
-            <thead>
-              <tr><th>Repository</th><th>Visibility</th><th>Default Branch</th><th>Action</th></tr>
-            </thead>
-            <tbody>
-              ${repos.map((r, i) => `
-                <tr>
-                  <td data-label="Repository">
-                    <strong>${escapeHtml(r.fullName)}</strong>
-                    ${r.description ? `<div style="font-size:11px;color:var(--text-muted);">${escapeHtml(r.description)}</div>` : ''}
-                  </td>
-                  <td data-label="Visibility"><span class="badge ${r.private ? 'badge-muted' : 'badge-success'}">${r.private ? 'Private' : 'Public'}</span></td>
-                  <td data-label="Default Branch" style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(r.defaultBranch)}</td>
-                  <td data-label="Action"><button class="btn btn-primary btn-sm repos-clone-btn" data-index="${i}">Clone</button></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
+        <div class="form-group" style="margin-bottom:12px;">
+          <input type="search" class="form-input" id="repos-search" placeholder="Search ${repos.length} repositories..." autocomplete="off">
         </div>
+        <div id="repos-table-wrap"></div>
       `;
-      container.querySelectorAll('.repos-clone-btn').forEach((btn) => {
-        btn.onclick = () => cloneRepoPrompt(repos[parseInt(btn.getAttribute('data-index'), 10)]);
-      });
+      const wrap = document.getElementById('repos-table-wrap');
+      const renderTable = (query) => {
+        const q = query.trim().toLowerCase();
+        const rows = repos
+          .map((r, i) => ({ r, i }))
+          .filter(({ r }) => !q || `${r.fullName} ${r.description}`.toLowerCase().includes(q));
+        if (rows.length === 0) {
+          wrap.innerHTML = '<p style="color:var(--text-muted);">No repositories match your search.</p>';
+          return;
+        }
+        wrap.innerHTML = `
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr><th>Repository</th><th>Visibility</th><th>Default Branch</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                ${rows.map(({ r, i }) => `
+                  <tr>
+                    <td data-label="Repository">
+                      <strong>${escapeHtml(r.fullName)}</strong>
+                      ${r.description ? `<div style="font-size:11px;color:var(--text-muted);">${escapeHtml(r.description)}</div>` : ''}
+                    </td>
+                    <td data-label="Visibility"><span class="badge ${r.private ? 'badge-muted' : 'badge-success'}">${r.private ? 'Private' : 'Public'}</span></td>
+                    <td data-label="Default Branch" style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(r.defaultBranch)}</td>
+                    <td data-label="Action"><button class="btn btn-primary btn-sm repos-clone-btn" data-index="${i}">Clone</button></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+        wrap.querySelectorAll('.repos-clone-btn').forEach((btn) => {
+          btn.onclick = () => cloneRepoPrompt(repos[parseInt(btn.getAttribute('data-index'), 10)]);
+        });
+      };
+      renderTable('');
+      document.getElementById('repos-search').addEventListener('input', (e) => renderTable(e.target.value));
     } catch (err) {
       container.innerHTML = `<p style="color:var(--danger-color);">${escapeHtml(err.message)}</p>`;
     }

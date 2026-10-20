@@ -53,11 +53,21 @@ function build(data, targetMode, quiet = 2) {
 // Leave room for the prompt, header text, and margins so the QR code does
 // not scroll off the top of the screen on terminals with limited rows (e.g. 24).
 const RESERVED_ROWS = 2;
-function fits(code) {
+function fits(code, reserved = RESERVED_ROWS) {
   if (Number.isFinite(columns) && columns > 0 && code.width >= columns) return false;
-  if (Number.isFinite(rows) && rows > 0 && code.height + RESERVED_ROWS > rows) return false;
+  if (Number.isFinite(rows) && rows > 0 && code.height + reserved > rows) return false;
   return true;
 }
+
+// Progressively tighter layouts: the quiet zone shrinks to 1 module and, as a
+// last resort, only a single row is kept free for the prompt. Scanners cope
+// with a 1-module margin, and this keeps the full pairing code usable on short
+// consoles (80x24/25) instead of dropping to the plain panel URL.
+const LAYOUTS = [
+  { quiet: 2, reserved: RESERVED_ROWS },
+  { quiet: 1, reserved: RESERVED_ROWS },
+  { quiet: 1, reserved: 1 },
+];
 
 function renderUnicode(code) {
   // Force black-on-white so the code keeps its polarity on dark terminals.
@@ -96,17 +106,16 @@ function renderAscii(code) {
 }
 
 function findBestFit(data) {
-  // Try preferred mode with quiet=2, then quiet=1.
-  for (const quiet of [2, 1]) {
+  for (const { quiet, reserved } of LAYOUTS) {
     const candidate = build(data, preferredMode, quiet);
-    if (fits(candidate)) return candidate;
+    if (fits(candidate, reserved)) return candidate;
   }
   // If ASCII was preferred but did not fit (common on 80x24 Linux consoles),
   // try unicode before giving up, unless the user explicitly forced ASCII.
   if (preferredMode === 'ascii' && !isForcedMode) {
-    for (const quiet of [2, 1]) {
+    for (const { quiet, reserved } of LAYOUTS) {
       const candidate = build(data, 'unicode', quiet);
-      if (fits(candidate)) return candidate;
+      if (fits(candidate, reserved)) return candidate;
     }
   }
   return null;
