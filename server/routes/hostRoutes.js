@@ -57,6 +57,17 @@ async function hostRoutes(fastify) {
 
   // Lightweight reachability probe for the sidebar status dots. Deliberately
   // independent of the optional fleet module so host switching always works.
+  // Private display name for a paired machine (empty restores its own name).
+  fastify.put('/api/hosts/:id/name', { preHandler: [requireSessionAuth, requireAdmin] }, async (request, reply) => {
+    try {
+      const host = hostService.setHostAlias(request.params.id, request.body ? request.body.name : '');
+      audit(request, 'host_alias_set', request.params.id, { alias: host.alias });
+      return { host };
+    } catch (err) {
+      return reply.status(err.message === 'Host not found.' ? 404 : 400).send({ error: err.message });
+    }
+  });
+
   fastify.get('/api/hosts/status', { preHandler: requireSessionAuth }, async (request) => {
     const only = request.query && typeof request.query.id === 'string' ? request.query.id : null;
     const list = hostService.listHosts().filter((host) => !only || host.id === only);

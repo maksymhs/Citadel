@@ -202,7 +202,10 @@ function toPublic(row) {
   if (!row) return null;
   return {
     id: row.id,
-    name: row.name,
+    // What the user sees: their own alias when set, else the machine's name.
+    name: row.alias || row.name,
+    peerName: row.name,
+    alias: row.alias || null,
     baseUrl: row.base_url,
     instanceId: row.instance_id || null,
     urls: candidateUrls(row),
@@ -212,6 +215,19 @@ function toPublic(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Give a paired machine a private display name (empty clears it). Only affects
+ * this panel: the other machine is never told.
+ */
+function setHostAlias(id, alias) {
+  const row = getHostRow(id);
+  if (!row) throw new Error('Host not found.');
+  const clean = String(alias || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40);
+  getDatabase().prepare('UPDATE fleet_hosts SET alias = ?, updated_at = ? WHERE id = ?')
+    .run(clean || null, new Date().toISOString(), id);
+  return toPublic(getHostRow(id));
 }
 
 function getHostRow(id) {
@@ -224,7 +240,7 @@ function getHostRowByInstance(instanceId) {
 }
 
 function listHostRows() {
-  return getDatabase().prepare('SELECT * FROM fleet_hosts ORDER BY name').all();
+  return getDatabase().prepare('SELECT * FROM fleet_hosts ORDER BY COALESCE(alias, name)').all();
 }
 
 /**
@@ -798,6 +814,7 @@ async function unpairHost(hostId) {
 }
 
 module.exports = {
+  setHostAlias,
   INSTANCE_ID_KEY,
   INSTANCE_NAME_KEY,
   INVITE_TTL_MS,

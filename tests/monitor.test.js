@@ -263,6 +263,49 @@ describe('Fleet monitor: health, history, alerts and actions', () => {
     assert.equal(hooks[0].state, 'test');
   });
 
+  test('a paired machine can get a private display name', async () => {
+    const put = (name) => app.inject({ method: 'PUT', url: `/api/hosts/${remoteId}/name`, headers: { cookie }, payload: { name } });
+
+    const set = await put('  Home NAS  ');
+    assert.equal(set.statusCode, 200);
+    const host = JSON.parse(set.payload).host;
+    assert.equal(host.name, 'Home NAS');
+    assert.equal(host.alias, 'Home NAS');
+    assert.equal(host.peerName, 'nas', 'the machine\'s own name is kept');
+
+    const list = JSON.parse((await app.inject({ method: 'GET', url: '/api/hosts', headers: { cookie } })).payload).hosts;
+    assert.equal(list.find((h) => h.id === remoteId).name, 'Home NAS');
+
+    monitor._reset();
+    await monitor.pollOnce();
+    assert.equal(monitor.getOverview().hosts.find((h) => h.id === remoteId).name, 'Home NAS');
+
+    // The peer announcing its own name again must not overwrite the alias.
+    const hostService = require('../server/services/hostService');
+    hostService.absorbIdentityHeaders(remoteId, {
+      'x-citadel-instance': 'instance-nas',
+      'x-citadel-name': encodeURIComponent('nas-renamed'),
+      'x-citadel-urls': upstreamUrl,
+    });
+    const after = JSON.parse((await app.inject({ method: 'GET', url: '/api/hosts', headers: { cookie } })).payload).hosts.find((h) => h.id === remoteId);
+    assert.equal(after.name, 'Home NAS');
+    assert.equal(after.peerName, 'nas-renamed');
+
+    const cleared = JSON.parse((await put('')).payload).host;
+    assert.equal(cleared.alias, null);
+    assert.equal(cleared.name, 'nas-renamed');
+
+    assert.equal((await put('x'.repeat(100))).statusCode, 200);
+    const long = JSON.parse((await app.inject({ method: 'GET', url: '/api/hosts', headers: { cookie } })).payload).hosts.find((h) => h.id === remoteId);
+    assert.equal(long.alias.length, 40);
+    await put('');
+
+    const missing = await app.inject({ method: 'PUT', url: '/api/hosts/nope/name', headers: { cookie }, payload: { name: 'a' } });
+    assert.equal(missing.statusCode, 404);
+    const anon = await app.inject({ method: 'PUT', url: `/api/hosts/${remoteId}/name`, payload: { name: 'a' } });
+    assert.equal(anon.statusCode, 401);
+  });
+
   test('unpairing a machine drops it and its alerts', async () => {
     monitor._reset();
     remote.down = true;

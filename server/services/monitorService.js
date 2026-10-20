@@ -488,9 +488,12 @@ function publicHost(st) {
 }
 
 function getOverview() {
+  // A rename shows up immediately instead of at the next probe.
+  const names = new Map(hostService.listHosts().map((h) => [h.id, h.name]));
+  names.set(LOCAL_ID, localLabel());
   const hosts = Array.from(states.values())
     .sort((a, b) => (a.id === LOCAL_ID ? -1 : b.id === LOCAL_ID ? 1 : String(a.name).localeCompare(String(b.name))))
-    .map(publicHost);
+    .map((st) => ({ ...publicHost(st), name: names.get(st.id) || st.name }));
   return {
     checkedAt: lastRunAt || null,
     intervalSec: Math.round(INTERVAL_MS / 1000),

@@ -1206,6 +1206,7 @@
       isAdmin: Boolean(state.user && state.user.role === 'admin'),
       activeHostId: () => state.activeHostId,
       useMachine,
+      renameMachine: showRenameMachineModal,
       openLogs: () => { state.activityTab = 'service'; saveUiState({ activityTab: 'service' }); navigateTo('activity'); },
       openProject: openProjectOn,
       installAgent: installAgentOn,
@@ -1306,6 +1307,44 @@
     } catch (err) {
       showToast(err.message, 'error');
     }
+  }
+
+  // Rename a machine. A paired one gets a private display name (empty restores
+  // its own); this machine's name is what it shows and advertises to its peers.
+  function showRenameMachineModal(id) {
+    const isLocal = id === 'local';
+    const host = isLocal
+      ? { name: (state.hostIdentity && state.hostIdentity.name) || '', peerName: null }
+      : state.hosts.find((h) => h.id === id);
+    if (!host) return;
+    openModal({
+      title: `Rename ${host.name}`,
+      confirmText: 'Save',
+      bodyHtml: `
+        <div class="form-group">
+          <label class="form-label" for="m-machine-name">Name</label>
+          <input type="text" class="form-input" id="m-machine-name" maxlength="40" value="${escapeHtml(isLocal ? host.name : (host.alias || ''))}" placeholder="${escapeHtml(isLocal ? 'My server' : host.peerName || '')}" autocomplete="off">
+          <p class="mon-muted" style="margin-top:8px;">${isLocal
+    ? 'The name this machine shows and tells the machines paired with it.'
+    : `Only changes how it appears here. Leave it empty to use its own name (“${escapeHtml(host.peerName || host.name)}”).`}</p>
+        </div>`,
+      onConfirm: async () => {
+        const name = document.getElementById('m-machine-name').value.trim();
+        if (isLocal) {
+          if (!name) throw new Error('A name is required.');
+          await localApi('/api/host/identity', { method: 'PUT', body: { name } });
+        } else {
+          await localApi(`/api/hosts/${encodeURIComponent(id)}/name`, { method: 'PUT', body: { name } });
+        }
+        await loadHosts();
+        renderSidebarNav();
+        showToast('Name saved.', 'success');
+        if (state.currentView === 'settings') renderSettingsView();
+        else if (state.currentView === 'dashboard') renderDashboardView();
+      },
+    });
+    const input = document.getElementById('m-machine-name');
+    if (input) { input.focus(); input.select(); }
   }
 
   // Work on a machine: make it the active one and open one of its areas.
@@ -4937,6 +4976,7 @@
               </div>
             </div>
             <div style="display:flex;gap:8px;flex-shrink:0;">
+              <button class="btn btn-secondary btn-sm" id="settings-rename-local" title="Change the name of this machine">Rename this machine</button>
               <button class="btn btn-secondary btn-sm" id="settings-pair-btn">Pair a machine</button>
             </div>
           </div>
@@ -4947,12 +4987,14 @@
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:8px;">
                   <div style="min-width:0;">
                     <strong>${escapeHtml(h.name)}</strong>
+                    ${h.alias ? `<span class="mon-muted" title="The machine's own name"> (${escapeHtml(h.peerName)})</span>` : ''}
                     ${state.activeHostId === h.id ? '<span class="badge badge-success" style="margin-left:6px;">Active</span>' : ''}
                     <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);word-break:break-all;">${escapeHtml((h.urls && h.urls[0]) || h.baseUrl)}</div>
                     ${h.lastSeen ? `<div style="font-size:11px;color:var(--text-muted);">Last seen ${escapeHtml(new Date(h.lastSeen).toLocaleString())}</div>` : ''}
                   </div>
                   <div style="display:flex;gap:6px;flex-shrink:0;">
                     ${state.activeHostId === h.id ? '' : `<button class="btn btn-secondary btn-sm" data-use-host="${h.id}">Use</button>`}
+                    <button class="btn btn-secondary btn-sm" data-rename-host="${h.id}" title="Give this machine your own name">Rename</button>
                     <button class="btn btn-secondary btn-sm" data-address-host="${h.id}" title="Set this machine's current address">Address</button>
                     <button class="btn btn-secondary btn-sm" data-sync-host="${h.id}" title="Merge the credential vault with this machine">Sync credentials</button>
                     <button class="btn btn-secondary btn-sm" data-unpair-host="${h.id}">Unpair</button>
@@ -5084,6 +5126,10 @@
 
       if (section === 'machines') {
       document.getElementById('settings-pair-btn').onclick = () => showPairModal();
+      document.getElementById('settings-rename-local').onclick = () => showRenameMachineModal('local');
+      document.querySelectorAll('[data-rename-host]').forEach((btn) => {
+        btn.onclick = () => showRenameMachineModal(btn.getAttribute('data-rename-host'));
+      });
       document.querySelectorAll('[data-use-host]').forEach((btn) => {
         btn.onclick = () => switchHost(btn.getAttribute('data-use-host'));
       });
@@ -5491,6 +5537,8 @@
     }
 
     add('Actions', 'Pair a machine', 'Scan or paste a pairing code', () => showPairModal());
+    add('Actions', 'Rename this machine', 'Change the name it shows', () => showRenameMachineModal('local'));
+    for (const h of state.hosts) add('Actions', `Rename ${h.name}`, 'Your own name for this machine', () => showRenameMachineModal(h.id));
     add('Actions', 'New project', '', () => { navigateTo('projects'); setTimeout(showCreateProjectModal, 50); });
     add('Actions', 'Check machines now', 'Refresh health of every machine', async () => {
       try { await localApi('/api/monitor/refresh', { method: 'POST' }); showToast('Machines checked.', 'success'); } catch (err) { showToast(err.message, 'error'); }

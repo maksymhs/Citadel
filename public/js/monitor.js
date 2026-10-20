@@ -195,7 +195,8 @@
         <div class="mon-chips">${host.alerts.map((k) => `<span class="badge ${k === 'offline' ? 'badge-danger' : 'badge-warning'}">${esc(ALERT_LABELS[k] || k)}</span>`).join('')}</div>
         <div class="mon-actions mon-machine-actions">
           ${host.id === ctx.activeHostId() ? '' : `<button class="btn btn-primary btn-sm" id="mon-use-btn" ${offline ? 'disabled' : ''}>Work on this machine</button>`}
-          ${ctx.isAdmin ? `<button class="btn btn-secondary btn-sm" id="mon-logs-btn" ${offline ? 'disabled' : ''}>Logs</button>
+          ${ctx.isAdmin ? `<button class="btn btn-secondary btn-sm" id="mon-rename-btn" title="Rename this machine">Rename</button>
+          <button class="btn btn-secondary btn-sm" id="mon-logs-btn" ${offline ? 'disabled' : ''}>Logs</button>
           <button class="btn btn-secondary btn-sm" id="mon-restart-btn" ${offline ? 'disabled' : ''}>Restart</button>` : ''}
         </div>
       </div>
@@ -205,6 +206,7 @@
       <div id="mon-tab-body"></div>`;
 
     document.getElementById('mon-use-btn')?.addEventListener('click', () => ctx.useMachine(host.id));
+    document.getElementById('mon-rename-btn')?.addEventListener('click', () => ctx.renameMachine(host.id));
     document.getElementById('mon-logs-btn')?.addEventListener('click', () => ctx.openLogs());
     document.getElementById('mon-restart-btn')?.addEventListener('click', () => confirmRestart(host, ctx, () => renderMachine(ctx, hostId, undefined, false)));
     root.querySelectorAll('[data-mon-tab]').forEach((b) => {

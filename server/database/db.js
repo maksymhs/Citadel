@@ -192,6 +192,14 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: '009_host_alias',
+    up: (db) => {
+      // A private display name for a paired machine. The peer's own name keeps
+      // updating in `name`; the alias only changes how it is shown here.
+      if (!columnExists(db, 'fleet_hosts', 'alias')) db.exec('ALTER TABLE fleet_hosts ADD COLUMN alias TEXT');
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
