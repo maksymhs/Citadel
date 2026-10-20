@@ -1526,3 +1526,22 @@ README/.env.example/architecture. No commits/pushes/deploys.
   unpaired; after all opt in, B↔C get paired, B reads C's processes through the
   proxy, and a second sync is a no-op. Unit tests: `tests/known-peers.test.js`.
 - Version bumped to `0.35.0`; asset cache-buster token moved to `v0350`.
+
+## 90. Staged update propagation across paired machines (v0.36.0)
+- **What.** Opt-in per machine (`PUT /api/system/update/propagate`, Settings →
+  Updates). After a machine restarts on a newer version than the one recorded in
+  `update.last_version`, `updateRolloutService` updates each paired machine that
+  is behind, one at a time: `POST /api/system/update {propagated:true}`, then
+  polls `/api/system/version` until the peer reports the new version (6 min
+  limit). The rollout halts at the first peer that fails or does not come back,
+  so a bad release cannot reach the whole fleet. Peers without a usable updater
+  are skipped. `POST /api/system/update/rollout` runs it on demand; the last
+  summary is stored in `app_config` (`update.rollout`) and shown in Settings.
+- **No cascades.** A machine updated by a rollout records `update.skip_propagation`
+  and does not propagate on its next start; propagated requests also skip the
+  legacy `CITADEL_PEERS` fan-out.
+- **Notes.** The first update that introduces this feature does not propagate
+  (no previous version is recorded). A rollout interrupted by a restart is closed
+  as "interrupted" on the next start.
+- Tests: `tests/update-rollout.test.js` (order, halt on failure, skip, unreachable,
+  and the start-up rules). Version bumped to `0.36.0`; cache-buster token `v0360`.

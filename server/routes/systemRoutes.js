@@ -8,6 +8,7 @@ const gitService = require('../services/gitService');
 const proxyProvider = require('../services/proxyProvider');
 const dockerService = require('../services/dockerService');
 const updateService = require('../services/updateService');
+const updateRolloutService = require('../services/updateRolloutService');
 const auditService = require('../services/auditService');
 const connectService = require('../services/connectService');
 const agentInstallService = require('../services/agentInstallService');
@@ -116,8 +117,12 @@ async function systemRoutes(fastify) {
   // Trigger an update: prefers the privileged helper, falls back to the
   // built-in unprivileged updater. Administrators only.
   fastify.post('/api/system/update', { preHandler: requireAdmin }, async (request, reply) => {
+    // A peer that is rolling an update out asks us to update without passing it
+    // on again (no cascading rollouts, and no legacy CITADEL_PEERS fan-out).
+    const propagated = Boolean(request.body && request.body.propagated);
     try {
-      const res = await updateService.triggerUpdate();
+      if (propagated) updateRolloutService.markPropagatedUpdate();
+      const res = await updateService.triggerUpdate({ fanout: !propagated });
       auditService.logAction({
         userId: request.user.id,
         action: 'system_update_triggered',
@@ -127,8 +132,33 @@ async function systemRoutes(fastify) {
       });
       return res;
     } catch (err) {
+      if (propagated) updateRolloutService.clearPropagatedUpdate();
       return reply.status(400).send({ error: err.message });
     }
+  });
+
+  // Staged update propagation to the machines paired with this one (opt-in).
+  fastify.get('/api/system/update/propagate', { preHandler: requireAdmin }, async () => ({
+    enabled: updateRolloutService.isPropagationEnabled(),
+    lastRollout: updateRolloutService.getLastRollout(),
+  }));
+
+  fastify.put('/api/system/update/propagate', { preHandler: requireAdmin }, async (request) => ({
+    enabled: updateRolloutService.setPropagationEnabled(Boolean(request.body && request.body.enabled)),
+  }));
+
+  // Update the paired machines that are behind this one, now. Runs in the
+  // background; progress is read from the propagate endpoint.
+  fastify.post('/api/system/update/rollout', { preHandler: requireAdmin }, async (request) => {
+    updateRolloutService.rollout().catch(() => {});
+    auditService.logAction({
+      userId: request.user.id,
+      action: 'system_update_rollout_started',
+      targetType: 'system',
+      targetId: 'citadel',
+      ip: request.ip,
+    });
+    return { started: true };
   });
 
   // Progress of the most recent (built-in) update. Administrators only.

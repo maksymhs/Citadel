@@ -225,6 +225,8 @@ Scan a QR from your phone, pair several Citadel machines and expose the panel gl
 
 **Mesh pairing (opt-in).** In **Settings → Machines** turn on *Auto-pair with all my machines* on each Citadel that should join. Machines that are already paired then introduce them to each other, so every machine ends up paired with every other one (single-use invitations, one token per direction, no credential vault merge). Once paired, the machine selector under the logo opens any machine's terminals, logs and processes. Machines with mesh off refuse introductions; *Unpair* removes a machine from both sides.
 
+**Update propagation (opt-in).** In **Settings → Updates** enable *After this machine updates, update my paired machines one at a time*. Once this machine is updated and healthy, it updates each paired machine that is behind, waiting for it to come back on the new version before starting the next, and stops at the first one that does not. *Update paired machines now* runs it on demand. Machines updated this way do not propagate further.
+
 ### Git credentials for terminals
 
 The installer also registers a git credential helper (`/usr/local/bin/citadel-git-credential`) system-wide. It lets plain `git fetch/pull/push` inside project terminals reuse the provider tokens you stored in **Repositories**, decrypting them on demand — tokens are never written to disk in clear text. It only resolves credentials for hosts that have a configured provider (GitHub/GitLab).

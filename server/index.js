@@ -45,6 +45,7 @@ const remoteProxyRoutes = require('./routes/remoteProxyRoutes');
 const wsTerminalRoutes = require('./routes/wsTerminal');
 const hostService = require('./services/hostService');
 const meshService = require('./services/meshService');
+const updateRolloutService = require('./services/updateRolloutService');
 
 async function buildServer(options = {}) {
   // Only honour X-Forwarded-* from explicitly trusted peers (default loopback).
@@ -214,6 +215,15 @@ async function startServer() {
       if (typeof t.unref === 'function') t.unref();
     }
   };
+  // Opt-in: after this machine moved to a newer version, update its paired
+  // machines one at a time (waits for the peers to be reachable first).
+  const rolloutStartup = setTimeout(() => {
+    updateRolloutService.maybePropagateAfterUpdate().catch((err) => {
+      fastify.log.debug(`[Citadel] Update rollout failed: ${err.message}`);
+    });
+  }, 45000);
+  if (typeof rolloutStartup.unref === 'function') rolloutStartup.unref();
+
   // Opt-in mesh: periodically introduce paired machines to each other.
   const meshStartup = setTimeout(() => meshService.scheduleSync(0), 30000);
   const meshTimer = setInterval(() => meshService.scheduleSync(0), 10 * 60 * 1000);

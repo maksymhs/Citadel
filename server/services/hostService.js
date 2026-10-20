@@ -840,6 +840,8 @@ module.exports = {
   openHostStream,
   wsCandidates,
   announceToPeers,
+  readConfig,
+  writeConfig,
   getMeshEnabled,
   setMeshEnabled,
   listHostRows,
