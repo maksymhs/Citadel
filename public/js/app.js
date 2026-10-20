@@ -50,6 +50,7 @@
     dashboardPaused: false,
     tmuxAvailable: false,
     filesPath: '/',
+    settingsSection: null, // null = Settings hub, otherwise a section id
     filesMode: 'grid', // 'grid' (folder view, default) | 'list' (tree); list only lasts until you leave Files
     dashboardWidgets: null, // ordered widget ids, persisted per browser
   };
@@ -991,6 +992,12 @@
   function updateBackButton(view) {
     const btn = document.getElementById('top-bar-back');
     if (!btn) return;
+    // A Settings section is a secondary screen of the Settings hub.
+    if (view === 'settings' && state.settingsSection) {
+      btn.hidden = false;
+      btn.onclick = () => openSettingsSection(null);
+      return;
+    }
     const isDetail = Object.prototype.hasOwnProperty.call(DETAIL_VIEWS, view);
     btn.hidden = !isDetail;
     btn.onclick = isDetail ? () => navigateTo(state.backView && state.backView !== view ? state.backView : DETAIL_VIEWS[view]) : null;
@@ -1002,6 +1009,7 @@
     if (from !== view && !Object.prototype.hasOwnProperty.call(DETAIL_VIEWS, from)) state.backView = from;
     // Files always opens as a grid; the list toggle only lasts while you stay in Files.
     if (view === 'files' && from !== 'files') state.filesMode = 'grid';
+    if (view === 'settings' && from !== 'settings') state.settingsSection = null;
     state.currentView = view;
     updateBackButton(view);
     saveUiState({ currentView: view });
@@ -4543,19 +4551,48 @@
   }
 
   // 7. Settings View (host tools: public URL, connection, modules, updates, diagnostics)
+  // Settings is a hub of tiles; each tile opens a secondary screen. The back
+  // button in the top bar returns to the hub.
+  const SETTINGS_SECTIONS = {
+    updates: { title: 'Updates', desc: 'Keep this machine and the machines paired with it on the latest version.' },
+    machines: { title: 'Machines', desc: 'Pair other Citadels to reach them from this panel. Live health and alerts are under the machine selector → Machines overview.' },
+    network: { title: 'Network & access', desc: 'The address Citadel advertises to other devices. This only changes the advertised address; it never opens ports or exposes anything by itself.' },
+    credentials: { title: 'Credentials', desc: 'One encrypted vault for everything agents and git need. Environment variables are injected into every terminal; agents can read any entry with the citadel-creds CLI. Values are never shown again.' },
+    activity: { title: 'Activity & Audit', desc: 'The live event stream and the security audit trail for this host.' },
+  };
+
+  const SETTINGS_ICONS = {
+    updates: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5M5.6 15A8 8 0 0018.4 9M18.4 9L20 9M5.6 15L4 15"/>',
+    machines: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>',
+    network: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
+    credentials: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>',
+    activity: NAV_ICONS.activity,
+  };
+
+  function openSettingsSection(id) {
+    state.settingsSection = id || null;
+    renderSettingsView();
+  }
+
   async function renderSettingsView() {
     const content = document.getElementById('main-content');
+    const section = SETTINGS_SECTIONS[state.settingsSection] ? state.settingsSection : null;
+    state.settingsSection = section;
+    const titleEl = document.getElementById('top-bar-title');
+    if (titleEl) titleEl.textContent = section ? `Settings · ${SETTINGS_SECTIONS[section].title}` : 'Settings';
+    updateBackButton('settings');
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading settings...</div>';
 
     try {
       const canPair = Boolean(state.user && state.user.role === 'admin');
+      // A pairing code is only minted for the hub, where its QR is shown.
       const [settingsRes, connectRes, nodeRes, versionRes, secretsRes, inviteRes] = await Promise.all([
         api('/api/settings/connect'),
         api('/api/system/connect'),
         api('/api/system/node'),
         api('/api/system/version'),
         api('/api/secrets'),
-        canPair ? api('/api/pair/invite', { method: 'POST' }).catch((err) => ({ inviteError: err.message || 'failed' })) : Promise.resolve(null),
+        (canPair && !section) ? api('/api/pair/invite', { method: 'POST' }).catch((err) => ({ inviteError: err.message || 'failed' })) : Promise.resolve(null),
       ]);
       await loadModules();
       const s = settingsRes.connect || {};
@@ -4577,14 +4614,15 @@
         : ((state.hosts.find((h) => h.id === state.activeHostId) || {}).name);
       const panelHost = (state.hostIdentity && state.hostIdentity.name) || 'this machine';
 
-      content.innerHTML = `
-        <div style="margin-bottom:24px;">
-          <h2 style="font-size:20px;margin-bottom:6px;">Settings${activeHost ? ` · ${escapeHtml(activeHost)}` : ''}</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">
-            This machine, paired machines, how this host is reached and credentials.
-          </p>
-        </div>
+      const summaries = {
+        updates: `v${ver.version || '?'} · ${ver.channel === 'stable' ? 'stable' : 'main'} channel`,
+        machines: state.hosts.length ? `${state.hosts.length} paired machine${state.hosts.length === 1 ? '' : 's'}` : 'No machines paired yet',
+        network: s.publicUrl ? 'Custom public URL' : 'Address detected automatically',
+        credentials: `${secretsList.length} secret${secretsList.length === 1 ? '' : 's'} in the vault`,
+        activity: 'Events and security audit trail',
+      };
 
+      const hubHtml = `
         <div class="card settings-hero">
           ${qrSvg ? `<div class="settings-hero-qr" title="Scan to open this panel, or pair from another Citadel">
             <div class="connect-qr">${qrSvg}</div>
@@ -4598,26 +4636,11 @@
             <div class="settings-hero-line">
               Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
               ${ver.commit ? `<span class="mon-muted">(${escapeHtml(ver.commit)})</span>` : ''}
-              ${canPair ? `<select id="update-channel" class="input" title="Update channel">
-                <option value="stable"${ver.channel === 'stable' ? ' selected' : ''}>Stable</option>
-                <option value="main"${ver.channel !== 'stable' ? ' selected' : ''}>Main (latest commit)</option>
-              </select>` : ''}
             </div>
-            <div id="update-status" class="settings-hero-status">
-              ${ver.updateMode === 'helper'
-                ? 'The in-panel updater is enabled.'
-                : ver.updateMode === 'self'
-                  ? 'Built-in updater enabled.'
-                  : `Automatic updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
-            </div>
-            <div class="settings-hero-actions">
-              <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
-              ${canPair && state.hosts.length > 0 ? '<button class="btn btn-secondary btn-sm" id="update-rollout-now">Update paired machines</button>' : ''}
-              ${ver.canUpdate ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
-            </div>
-            ${canPair && state.hosts.length > 0 ? '<div id="update-rollout-status" class="settings-hero-status"></div>' : ''}
             <div class="settings-hero-address">
               <a href="${escapeHtml(qrAddress || '#')}" target="_blank" rel="noopener">${escapeHtml(qrAddress)}</a>
+            </div>
+            <div class="settings-hero-actions">
               <button class="btn btn-secondary btn-sm" id="settings-copy-url">Copy link</button>
               ${invite ? '<button class="btn btn-secondary btn-sm" id="settings-new-code">New code</button>' : ''}
               <button class="btn btn-secondary btn-sm" id="connect-help-btn">Remote access help</button>
@@ -4629,12 +4652,49 @@
                 : '<div class="settings-hero-status">Sign in as an administrator to generate a pairing code.</div>'}
           </div>
         </div>
+        <div class="settings-tiles">
+          ${Object.entries(SETTINGS_SECTIONS).map(([id, def]) => `
+            <button type="button" class="settings-tile" data-settings-section="${id}">
+              <span class="settings-tile-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${SETTINGS_ICONS[id]}</svg></span>
+              <span class="settings-tile-text">
+                <strong>${escapeHtml(def.title)}</strong>
+                <span>${escapeHtml(summaries[id])}</span>
+              </span>
+              <span class="settings-tile-chev" aria-hidden="true">&rsaquo;</span>
+            </button>`).join('')}
+        </div>`;
 
-        <div style="margin-top:28px;margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Machines</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">Pair other Citadels to reach them from this panel, with live health and alerts in the machine selector → Machines overview.</p>
-        </div>
+      const updatesHtml = `
+        <div class="card settings-panel">
+          <div class="settings-hero-line">
+            Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
+            ${ver.commit ? `<span class="mon-muted">(${escapeHtml(ver.commit)})</span>` : ''}
+            ${ver.repo ? `<span class="mon-muted">· ${escapeHtml(ver.repo)}${ver.branch ? ` · ${escapeHtml(ver.branch)}` : ''}</span>` : ''}
+          </div>
+          ${canPair ? `<label class="settings-field">Update channel
+            <select id="update-channel" class="input">
+              <option value="stable"${ver.channel === 'stable' ? ' selected' : ''}>Stable (latest release)</option>
+              <option value="main"${ver.channel !== 'stable' ? ' selected' : ''}>Main (latest commit, may be unstable)</option>
+            </select>
+          </label>` : ''}
+          <div id="update-status" class="settings-hero-status" style="font-size:13px;">
+            ${ver.updateMode === 'helper'
+              ? 'The in-panel updater is enabled.'
+              : ver.updateMode === 'self'
+                ? 'Built-in updater enabled.'
+                : `Automatic updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
+          </div>
+          <div class="settings-hero-actions">
+            <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
+            ${canPair && state.hosts.length > 0 ? '<button class="btn btn-secondary btn-sm" id="update-rollout-now">Update paired machines</button>' : ''}
+            ${ver.canUpdate ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
+          </div>
+          ${canPair && state.hosts.length > 0 ? '<div id="update-rollout-status" class="settings-hero-status"></div>' : ''}
+        </div>`;
 
+      const sectionHtml = {
+        updates: updatesHtml,
+        machines: `
         <div class="card" style="margin-bottom:24px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
             <div>
@@ -4675,11 +4735,8 @@
           <div id="settings-suggestions" style="margin-top:6px;"></div>
         </div>
 
-        <div style="margin-top:28px;margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Network &amp; access</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">The address Citadel advertises to other devices. This only changes the advertised address; it never opens ports or exposes anything by itself.</p>
-        </div>
-
+`,
+        network: `
         <div class="card" style="margin-bottom:24px;">
           <h3 class="widget-heading">Public URL</h3>
           <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;line-height:1.6;">
@@ -4704,38 +4761,84 @@
           <div id="tunnel-body" style="margin-top:6px;font-size:13px;color:var(--text-secondary);">Loading…</div>
         </div>
 
-        <div style="margin-top:28px;margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Credentials</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">
-            One encrypted vault for everything agents and git need. Environment
-            variables are injected into every terminal; agents can read any entry
-            with the <code>citadel-creds</code> CLI. Values are never shown again.
-          </p>
-        </div>
-
+`,
+        credentials: `
         <div class="card" style="margin-bottom:24px;">
           ${secretsCardHtml(secretsList)}
         </div>
-
-        <div style="margin-top:28px;margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Activity &amp; Audit</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">
-            The live event stream and the security audit trail for this host.
-          </p>
-        </div>
-
+`,
+        activity: `
         <div class="card" style="margin-bottom:24px;">
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="activity">Open Activity</button>
             <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="audit">Open Audit</button>
           </div>
         </div>
-      `;
+`,
+      };
 
-      bindUpdatesCard();
-      bindSecretsCard();
-      bindActivityButtons();
+      content.innerHTML = section
+        ? `<div class="settings-screen">
+            <div class="settings-screen-head">
+              <h2>${escapeHtml(SETTINGS_SECTIONS[section].title)}</h2>
+              <p>${escapeHtml(SETTINGS_SECTIONS[section].desc)}</p>
+            </div>
+            ${sectionHtml[section]}
+          </div>`
+        : `<div class="settings-screen">
+            <div class="settings-screen-head">
+              <h2>Settings${activeHost ? ` · ${escapeHtml(activeHost)}` : ''}</h2>
+            </div>
+            ${hubHtml}
+          </div>`;
 
+      document.querySelectorAll('[data-settings-section]').forEach((btn) => {
+        btn.onclick = () => openSettingsSection(btn.getAttribute('data-settings-section'));
+      });
+
+      if (section === 'updates') {
+        bindUpdatesCard();
+      // Staged update propagation.
+      const nowBtn = document.getElementById('update-rollout-now');
+      if (canPair && nowBtn) {
+        const statusEl = document.getElementById('update-rollout-status');
+        const showRollout = (r) => {
+          if (!statusEl) return;
+          if (!r || !r.hosts) { statusEl.textContent = ''; return; }
+          const parts = r.hosts.map((h) => `${h.name}: ${h.status}${h.error ? ` (${h.error})` : ''}`);
+          statusEl.textContent = `Last rollout to v${r.target}${r.finishedAt ? '' : ' (running…)'}: ${parts.join(' · ') || 'nothing to do'}${r.halted ? ` — stopped: ${r.halted}` : ''}`;
+        };
+        let rolloutPoll = null;
+        const load = async () => {
+          try {
+            const res = await api('/api/system/update/propagate');
+            showRollout(res.lastRollout);
+            clearTimeout(rolloutPoll);
+            if (res.lastRollout && !res.lastRollout.finishedAt && document.getElementById('update-rollout-status')) {
+              rolloutPoll = setTimeout(load, 5000);
+            }
+          } catch { /* optional */ }
+        };
+        load();
+        nowBtn.onclick = async () => {
+          nowBtn.disabled = true;
+          try {
+            await api('/api/system/update/rollout', { method: 'POST' });
+            showToast('Rollout started.', 'success');
+            setTimeout(load, 1500);
+          } catch (err) {
+            showToast(err.message, 'error');
+          } finally {
+            nowBtn.disabled = false;
+          }
+        };
+      }
+      }
+
+      if (section === 'credentials') bindSecretsCard();
+      if (section === 'activity') bindActivityButtons();
+
+      if (section === 'machines') {
       document.getElementById('settings-pair-btn').onclick = () => showPairModal();
       document.querySelectorAll('[data-use-host]').forEach((btn) => {
         btn.onclick = () => switchHost(btn.getAttribute('data-use-host'));
@@ -4801,43 +4904,6 @@
           }
         };
       });
-
-      // Staged update propagation.
-      const nowBtn = document.getElementById('update-rollout-now');
-      if (canPair && nowBtn) {
-        const statusEl = document.getElementById('update-rollout-status');
-        const showRollout = (r) => {
-          if (!statusEl) return;
-          if (!r || !r.hosts) { statusEl.textContent = ''; return; }
-          const parts = r.hosts.map((h) => `${h.name}: ${h.status}${h.error ? ` (${h.error})` : ''}`);
-          statusEl.textContent = `Last rollout to v${r.target}${r.finishedAt ? '' : ' (running…)'}: ${parts.join(' · ') || 'nothing to do'}${r.halted ? ` — stopped: ${r.halted}` : ''}`;
-        };
-        let rolloutPoll = null;
-        const load = async () => {
-          try {
-            const res = await api('/api/system/update/propagate');
-            showRollout(res.lastRollout);
-            clearTimeout(rolloutPoll);
-            if (res.lastRollout && !res.lastRollout.finishedAt && document.getElementById('update-rollout-status')) {
-              rolloutPoll = setTimeout(load, 5000);
-            }
-          } catch { /* optional */ }
-        };
-        load();
-        nowBtn.onclick = async () => {
-          nowBtn.disabled = true;
-          try {
-            await api('/api/system/update/rollout', { method: 'POST' });
-            showToast('Rollout started.', 'success');
-            setTimeout(load, 1500);
-          } catch (err) {
-            showToast(err.message, 'error');
-          } finally {
-            nowBtn.disabled = false;
-          }
-        };
-      }
-
       // Machines my paired hosts know about but I am not paired with yet.
       const suggestionsEl = document.getElementById('settings-suggestions');
       if (canPair && suggestionsEl && state.hosts.length > 0) {
@@ -4855,19 +4921,20 @@
                 </div>
                 <button class="btn btn-secondary btn-sm" data-suggest-pair="${escapeHtml(m.urls[0])}">Pair</button>
               </div>`).join('')}
-            <div style="font-size:11px;color:var(--text-muted);">Pairing needs that machine's own QR: open its Settings → Connection and scan or paste the code.</div>`;
+            <div style="font-size:11px;color:var(--text-muted);">Pairing needs that machine's own QR: open its Settings and scan or paste the code.</div>`;
           suggestionsEl.querySelectorAll('[data-suggest-pair]').forEach((btn) => {
             btn.onclick = () => showPairModal();
           });
         }).catch(() => { /* discovery is best-effort */ });
       }
+      }
 
+      if (section === 'network') {
       if (canPair) {
         window.CitadelTunnelCard.init({
           api, escapeHtml, showToast, reload: renderSettingsView,
         });
       }
-
       const input = document.getElementById('settings-public-url');
       const saveBtn = document.getElementById('settings-save-url');
       const clearBtn = document.getElementById('settings-clear-url');
@@ -4894,7 +4961,9 @@
           save(input.value);
         }
       };
+      }
 
+      if (!section) {
       document.getElementById('settings-copy-url').onclick = async () => {
         try {
           await navigator.clipboard.writeText(qrLink);
@@ -4926,6 +4995,7 @@
             `,
           });
         };
+      }
       }
     } catch (err) {
       content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
