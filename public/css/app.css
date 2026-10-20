@@ -2301,3 +2301,59 @@ label.mon-row:hover { border-color: #444c56; }
 .settings-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; max-width: 360px; }
 .settings-screen .card { margin-bottom: 16px; }
 
+
+/* Activity & Audit */
+.act-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.act-stat { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; }
+.act-stat span { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.act-stat strong { font-size: 22px; font-family: var(--font-mono); }
+.act-stat.bad strong { color: var(--danger-color); }
+.act-stat.warn strong { color: var(--warning-color); }
+.act-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.act-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.act-count { font-size: 13px; color: var(--text-secondary); }
+.act-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 16px;
+  background: var(--bg-secondary); color: var(--text-secondary); border: 1px solid var(--border-color);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.act-chip b { font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); }
+.act-chip:hover { border-color: var(--accent-color); }
+.act-chip.active { background: var(--accent-bg); border-color: var(--accent-color); color: var(--accent-color); }
+.act-chip.bad.active { background: var(--danger-bg); border-color: var(--danger-color); color: var(--danger-color); }
+.act-chip.warn.active { background: var(--warning-bg); border-color: var(--warning-color); color: var(--warning-color); }
+.act-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.act-controls .form-input { width: auto; padding: 6px 10px; }
+.act-controls input[type="search"] { min-width: 200px; }
+.act-live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.act-feed { padding: 6px 0; }
+.act-day { padding: 10px 18px 4px; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+.act-item {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 7px 18px;
+  font-size: 13px; border-left: 3px solid transparent;
+}
+.act-item:hover { background: rgba(255, 255, 255, 0.025); }
+.act-item.has-details { cursor: pointer; }
+.act-item.act-error { border-left-color: var(--danger-color); background: var(--danger-bg); }
+.act-item.act-warn { border-left-color: var(--warning-color); }
+.act-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; align-self: center; }
+.act-error .act-dot { background: var(--danger-color); }
+.act-warn .act-dot, .act-dot.warn { background: var(--warning-color); }
+.act-info .act-dot { background: var(--accent-color); }
+.act-time { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); min-width: 74px; }
+.act-cat { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 10px; padding: 0 8px; }
+.act-msg { flex: 1; min-width: 160px; color: var(--text-primary); word-break: break-word; }
+.act-node { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.act-details {
+  flex-basis: 100%; margin: 4px 0 2px 20px; padding: 8px 10px; background: var(--bg-primary);
+  border: 1px solid var(--border-color); border-radius: 6px; font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;
+}
+.act-more { margin-top: 16px; }
+.act-more summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); margin-bottom: 10px; }
+.mon-logs .log-err { color: var(--danger-color); }
+.mon-logs .log-warn { color: var(--warning-color); }
+@media (max-width: 600px) {
+  .act-controls input[type="search"] { min-width: 0; flex: 1; }
+  .act-item { padding: 8px 14px; }
+}
