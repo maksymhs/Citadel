@@ -178,6 +178,13 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 
+# Always leave cloudflared installed (even with --no-tunnel) so Settings → Tunnel
+# can attach your own domain without any extra step.
+if [ -f "$APP_DIR/scripts/tunnel-macos.sh" ]; then
+  quiet_run env CITADEL_QUIET=1 CITADEL_TARGET_DIR="$TARGET_DIR" CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" \
+    bash "$APP_DIR/scripts/tunnel-macos.sh" setup || true
+fi
+
 # Public tunnel (Cloudflare Quick Tunnel, no account): gives the QR a global
 # address. Skipped with --no-tunnel; an existing tunnel keeps its URL on update.
 PUBLIC_URL=""

@@ -58,6 +58,13 @@ test('cloudflare tunnel setup only accepts plain hostnames and reports status', 
   assert.equal(cf.normalizeDomain('a.com; rm -rf /'), null);
   assert.equal(cf.normalizeDomain('evil.com/path'), null);
   const status = cf.getStatus();
-  assert.equal(status.helperInstalled, false);
-  assert.throws(() => cf.start('citadel.maksym.site'), /citadel tunnel setup|Linux/);
+  // macOS runs the tunnel as a per-user launchd agent, so the Settings flow is
+  // supported out of the box there; Linux still needs the root helper.
+  assert.equal(status.supported, process.platform === 'linux' || process.platform === 'darwin');
+  if (process.platform === 'darwin') {
+    assert.equal(status.helperInstalled, true);
+  } else {
+    assert.equal(status.helperInstalled, false);
+    assert.throws(() => cf.start('citadel.maksym.site'), /citadel tunnel setup|Linux/);
+  }
 });

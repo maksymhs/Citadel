@@ -22,7 +22,7 @@
       const active = job.phase === 'login' || job.phase === 'working';
       let html = '';
       if (!t.supported) {
-        html = 'Tunnel setup is only available on Linux hosts.';
+        html = 'Tunnel setup is only available on Linux and macOS hosts.';
       } else if (!t.cloudflaredInstalled || !t.helperInstalled) {
         html = `One-time step on this machine: <code>sudo citadel tunnel setup</code>, then reload this page.`;
       } else if (active) {

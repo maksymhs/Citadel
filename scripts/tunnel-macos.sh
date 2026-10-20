@@ -6,6 +6,7 @@
 #   bash scripts/tunnel-macos.sh --domain=HOST --token=TOKEN
 #                                               # stable URL on your own domain
 #   bash scripts/tunnel-macos.sh --quick        # back to a random trycloudflare.com URL
+#   bash scripts/tunnel-macos.sh setup          # only install cloudflared (used by Settings → Tunnel)
 #   bash scripts/tunnel-macos.sh stop | remove
 #
 # Runs as the logged-in user (no sudo). The runner (tunnel-run.sh) records the
@@ -41,12 +42,12 @@ QUICK=false
 RESTART=false
 for arg in "$@"; do
   case "$arg" in
-    up|stop|remove) ACTION="$arg" ;;
+    up|stop|remove|setup) ACTION="$arg" ;;
     --domain=*) DOMAIN="${arg#--domain=}" ;;
     --token=*) TOKEN="${arg#--token=}" ;;
     --quick) QUICK=true ;;
     --restart) RESTART=true ;;
-    *) echo "Usage: $0 [up|stop|remove|--domain=HOST --token=TOKEN|--quick]" >&2; exit 1 ;;
+    *) echo "Usage: $0 [up|stop|remove|setup|--domain=HOST --token=TOKEN|--quick]" >&2; exit 1 ;;
   esac
 done
 
@@ -113,6 +114,11 @@ if [ ! -x "$CLOUDFLARED" ]; then
   chmod 755 "$CLOUDFLARED"
   xattr -d com.apple.quarantine "$CLOUDFLARED" >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR"
+fi
+
+if [ "$ACTION" = setup ]; then
+  say "cloudflared ready: $CLOUDFLARED"
+  exit 0
 fi
 
 # 2. launchd agent -------------------------------------------------------------

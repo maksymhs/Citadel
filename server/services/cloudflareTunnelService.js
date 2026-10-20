@@ -15,7 +15,13 @@ const path = require('node:path');
 const { DATA_DIR, LOGS_DIR } = require('../config');
 const { getTunnelUrl } = require('./tunnelService');
 
-const CLOUDFLARED = process.env.CLOUDFLARED_PATH || '/usr/local/bin/cloudflared';
+const IS_MAC = process.platform === 'darwin';
+// macOS runs the tunnel as a per-user launchd agent (scripts/tunnel-macos.sh),
+// so there is no root helper: cloudflared lives next to the data directory and
+// the script is invoked directly.
+const MAC_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'tunnel-macos.sh');
+const CLOUDFLARED = process.env.CLOUDFLARED_PATH
+  || (IS_MAC ? path.join(path.dirname(DATA_DIR), 'bin', 'cloudflared') : '/usr/local/bin/cloudflared');
 const HELPER = process.env.CITADEL_TUNNEL_HELPER || '/usr/local/sbin/citadel-tunnel';
 const TOKEN_FILE = path.join(DATA_DIR, 'tunnel-token');
 const DOMAIN_FILE = path.join(DATA_DIR, 'tunnel-domain');
@@ -104,14 +110,28 @@ function lastLine(text) {
   return lines[lines.length - 1] || 'unknown error';
 }
 
+function macScript(args) {
+  const env = {
+    ...process.env,
+    CITADEL_DATA_DIR: DATA_DIR,
+    CITADEL_APP_DIR: path.join(__dirname, '..', '..'),
+    CLOUDFLARED_PATH: CLOUDFLARED,
+    CITADEL_QUIET: '1',
+  };
+  return spawnSync('bash', [MAC_SCRIPT, ...args], { encoding: 'utf8', timeout: 120000, env });
+}
+
 function runHelper(args = ['up']) {
-  const res = spawnSync('sudo', ['-n', HELPER, ...args], { encoding: 'utf8', timeout: 120000 });
+  const res = IS_MAC
+    ? macScript([...args, '--restart'])
+    : spawnSync('sudo', ['-n', HELPER, ...args], { encoding: 'utf8', timeout: 120000 });
   if (res.status !== 0) {
     throw new Error(`Could not start the tunnel service: ${lastLine(res.stderr || res.stdout)}`);
   }
 }
 
 function helperInstalled() {
+  if (IS_MAC) return fs.existsSync(MAC_SCRIPT);
   try {
     const st = fs.statSync(HELPER);
     return st.isFile() && st.uid === 0 && (st.mode & 0o022) === 0;
@@ -120,12 +140,18 @@ function helperInstalled() {
   }
 }
 
+/** Download cloudflared next to the app (no sudo, no Homebrew needed). */
+function ensureMacCloudflared() {
+  const res = macScript(['setup']);
+  if (res.status !== 0) throw new Error(`Could not install cloudflared: ${lastLine(res.stderr || res.stdout)}`);
+}
+
 function getStatus() {
   const domain = readFile(DOMAIN_FILE);
   const url = getTunnelUrl();
   return {
-    supported: process.platform === 'linux',
-    cloudflaredInstalled: fs.existsSync(CLOUDFLARED),
+    supported: process.platform === 'linux' || IS_MAC,
+    cloudflaredInstalled: fs.existsSync(CLOUDFLARED) || (IS_MAC && helperInstalled()),
     helperInstalled: helperInstalled(),
     mode: domain && readFile(TOKEN_FILE) ? 'named' : (url ? 'quick' : 'off'),
     domain: domain || null,
@@ -202,7 +228,8 @@ function start(rawDomain) {
   const domain = normalizeDomain(rawDomain);
   if (!domain) throw new Error('Enter a valid hostname, e.g. citadel.example.com');
   const status = getStatus();
-  if (!status.supported) throw new Error('Tunnel setup is only available on Linux hosts.');
+  if (!status.supported) throw new Error('Tunnel setup is only available on Linux and macOS hosts.');
+  if (IS_MAC && !fs.existsSync(CLOUDFLARED)) ensureMacCloudflared();
   if (!status.cloudflaredInstalled || !status.helperInstalled) {
     throw new Error('Run "sudo citadel tunnel setup" once on this machine to enable this.');
   }
