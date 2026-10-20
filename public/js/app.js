@@ -222,6 +222,53 @@
     return data;
   }
 
+  // --- Theme (dark / light / auto) -----------------------------------------
+  // The saved choice is applied by a tiny script in index.html before the first
+  // paint; this keeps the toggle, the browser's theme-color and the icon in sync.
+  const THEME_ORDER = ['dark', 'light', 'auto'];
+  const THEME_LABELS = { dark: 'Dark', light: 'Light', auto: 'Match system' };
+  const THEME_ICONS = {
+    dark: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>',
+    light: '<circle cx="12" cy="12" r="4" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
+    auto: '<rect x="3" y="4" width="18" height="12" rx="2" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M8 20h8M12 16v4"/>',
+  };
+
+  function currentThemeMode() {
+    const mode = document.documentElement.getAttribute('data-theme');
+    return THEME_ORDER.includes(mode) ? mode : 'dark';
+  }
+
+  function effectiveTheme() {
+    const mode = currentThemeMode();
+    if (mode !== 'auto') return mode;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+
+  function syncThemeChrome() {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', effectiveTheme() === 'light' ? '#ffffff' : '#0d1117');
+    const btn = document.getElementById('theme-btn');
+    if (btn) {
+      const mode = currentThemeMode();
+      const next = THEME_ORDER[(THEME_ORDER.indexOf(mode) + 1) % THEME_ORDER.length];
+      btn.innerHTML = `<svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">${THEME_ICONS[mode]}</svg>`;
+      btn.title = `Theme: ${THEME_LABELS[mode]} (click for ${THEME_LABELS[next]})`;
+      btn.setAttribute('aria-label', btn.title);
+    }
+  }
+
+  function setTheme(mode) {
+    document.documentElement.setAttribute('data-theme', mode);
+    try { localStorage.setItem('citadel.theme', mode); } catch { /* ignore */ }
+    syncThemeChrome();
+  }
+
+  if (window.matchMedia) {
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const onSystemChange = () => syncThemeChrome();
+    if (media.addEventListener) media.addEventListener('change', onSystemChange);
+  }
+
   // Toast notification
   function showToast(message, type = 'info') {
     const root = document.getElementById('toast-root');
@@ -410,7 +457,7 @@
       <div class="auth-page">
         <div class="auth-card">
           <div class="logo">
-            <div style="width:48px;height:48px;background:linear-gradient(135deg,#1f6feb,#8a2be2);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:bold;margin-bottom:12px;">C</div>
+            <img src="/favicon.svg" alt="" width="56" height="56" style="border-radius:14px;margin-bottom:12px;">
             <h1>Set up Citadel</h1>
             <p>Create the initial admin account to protect your server</p>
           </div>
@@ -456,7 +503,7 @@
       <div class="auth-page">
         <div class="auth-card">
           <div class="logo">
-            <div style="width:48px;height:48px;background:linear-gradient(135deg,#1f6feb,#8a2be2);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:bold;margin-bottom:12px;">C</div>
+            <img src="/favicon.svg" alt="" width="56" height="56" style="border-radius:14px;margin-bottom:12px;">
             <h1>Citadel</h1>
             <p>Secure access to your VPS control panel</p>
           </div>
@@ -504,7 +551,7 @@
         <!-- Sidebar Navigation -->
         <aside class="sidebar" id="app-sidebar">
           <div class="sidebar-header">
-            <div class="logo-icon">C</div>
+            <img class="logo-icon" src="/favicon.svg" alt="" width="28" height="28">
             <span class="logo-text">Citadel</span>
             <span class="version-tag" id="app-version-tag"></span>
           </div>
@@ -514,6 +561,7 @@
               <div class="user-avatar">${(state.user.username || 'A')[0].toUpperCase()}</div>
               <div class="user-name">${escapeHtml(state.user.username)}</div>
             </div>
+            <button class="btn btn-secondary btn-sm theme-btn" id="theme-btn" type="button"></button>
             <button class="btn btn-secondary btn-sm" id="logout-btn" title="Log out">
               <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
             </button>
@@ -555,6 +603,12 @@
 
     renderSidebarNav();
     bindSidebarNav(closeSidebar);
+
+    document.getElementById('theme-btn').onclick = () => {
+      const mode = currentThemeMode();
+      setTheme(THEME_ORDER[(THEME_ORDER.indexOf(mode) + 1) % THEME_ORDER.length]);
+    };
+    syncThemeChrome();
 
     document.getElementById('logout-btn').onclick = async () => {
       await api('/api/auth/logout', { method: 'POST' }).catch(() => {});

@@ -25,6 +25,74 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sidebar-width: 250px;
+  --bg-hover: #30363d;
+  --border-hover: #444c56;
+  --hover-bg: rgba(255, 255, 255, 0.04);
+  --btn-primary: #238636;
+  --btn-primary-hover: #2ea043;
+  --toast-error-bg: #221516;
+  --toast-success-bg: #122317;
+  color-scheme: dark;
+}
+
+/* Light palette. "auto" follows the operating system. */
+:root[data-theme="light"] {
+  --bg-primary: #f6f8fa;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #eef1f4;
+  --bg-card: #ffffff;
+  --border-color: #d0d7de;
+  --border-muted: #d8dee4;
+  --text-primary: #1f2328;
+  --text-secondary: #59636e;
+  --text-muted: #636c76;
+  --accent-color: #0969da;
+  --accent-hover: #0550ae;
+  --accent-bg: rgba(9, 105, 218, 0.1);
+  --success-color: #1a7f37;
+  --success-bg: rgba(26, 127, 55, 0.12);
+  --warning-color: #9a6700;
+  --warning-bg: rgba(154, 103, 0, 0.12);
+  --danger-color: #cf222e;
+  --danger-bg: rgba(207, 34, 46, 0.1);
+  --bg-hover: #e3e8ee;
+  --border-hover: #afb8c1;
+  --hover-bg: rgba(0, 0, 0, 0.04);
+  --btn-primary: #1f883d;
+  --btn-primary-hover: #1a7f37;
+  --toast-error-bg: #ffebe9;
+  --toast-success-bg: #dafbe1;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    --bg-primary: #f6f8fa;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #eef1f4;
+    --bg-card: #ffffff;
+    --border-color: #d0d7de;
+    --border-muted: #d8dee4;
+    --text-primary: #1f2328;
+    --text-secondary: #59636e;
+    --text-muted: #636c76;
+    --accent-color: #0969da;
+    --accent-hover: #0550ae;
+    --accent-bg: rgba(9, 105, 218, 0.1);
+    --success-color: #1a7f37;
+    --success-bg: rgba(26, 127, 55, 0.12);
+    --warning-color: #9a6700;
+    --warning-bg: rgba(154, 103, 0, 0.12);
+    --danger-color: #cf222e;
+    --danger-bg: rgba(207, 34, 46, 0.1);
+    --bg-hover: #e3e8ee;
+    --border-hover: #afb8c1;
+    --hover-bg: rgba(0, 0, 0, 0.04);
+    --btn-primary: #1f883d;
+    --btn-primary-hover: #1a7f37;
+    --toast-error-bg: #ffebe9;
+    --toast-success-bg: #dafbe1;
+    color-scheme: light;
+  }
 }
 
 * {
@@ -101,14 +169,9 @@ html.is-mobile-ui #app-container {
 .sidebar-header .logo-icon {
   width: 28px;
   height: 28px;
-  background: linear-gradient(135deg, #1f6feb, #8a2be2);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  color: #fff;
-  font-size: 16px;
+  border-radius: 7px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .sidebar-header .logo-text {
@@ -533,7 +596,7 @@ html.is-mobile-ui #app-container {
 }
 
 .hamburger-btn:hover {
-  background-color: #30363d;
+  background-color: var(--bg-hover);
 }
 
 .hamburger-btn svg {
@@ -687,11 +750,11 @@ html.is-mobile-ui #app-container {
 }
 
 .btn-primary {
-  background-color: #238636;
+  background-color: var(--btn-primary);
   color: #fff;
 }
 .btn-primary:hover {
-  background-color: #2ea043;
+  background-color: var(--btn-primary-hover);
 }
 
 .btn-secondary {
@@ -700,7 +763,7 @@ html.is-mobile-ui #app-container {
   border-color: var(--border-color);
 }
 .btn-secondary:hover {
-  background-color: #30363d;
+  background-color: var(--bg-hover);
 }
 
 .btn-danger {
@@ -754,7 +817,7 @@ html.is-mobile-ui #app-container {
 }
 
 .data-table tr:hover td {
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: var(--hover-bg);
 }
 
 /* Badges */
@@ -1035,12 +1098,12 @@ html.is-mobile-ui #app-container {
 
 .toast.toast-error {
   border-color: var(--danger-color);
-  background-color: #221516;
+  background-color: var(--toast-error-bg);
 }
 
 .toast.toast-success {
   border-color: var(--success-color);
-  background-color: #122317;
+  background-color: var(--toast-success-bg);
 }
 
 @keyframes slideIn {
@@ -1595,7 +1658,7 @@ html.is-mobile-ui .data-table tr:hover td {
   --wb-dim-color: var(--text-muted);
   --wb-error-color: var(--danger-color);
   --wb-error-background-color: var(--danger-bg);
-  --wb-hover-color: rgba(255, 255, 255, 0.05);
+  --wb-hover-color: var(--hover-bg);
   --wb-hover-border-color: transparent;
   --wb-grid-color: var(--border-muted);
   --wb-active-color: var(--accent-bg);
@@ -1704,7 +1767,7 @@ html.is-mobile-ui .data-table tr:hover td {
 }
 
 .files-tree .wb-row:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--hover-bg);
 }
 
 .files-tree .wb-row.wb-active,
@@ -2182,7 +2245,7 @@ html.is-mobile-ui .data-table tr:hover td {
   border-radius: 8px;
   overflow: hidden;
 }
-.proj-item:hover { border-color: #444c56; }
+.proj-item:hover { border-color: var(--border-hover); }
 .proj-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; }
 .proj-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .proj-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -2253,7 +2316,7 @@ html.is-mobile-ui .data-table tr:hover td {
   background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px;
 }
 label.mon-row { cursor: pointer; }
-label.mon-row:hover { border-color: #444c56; }
+label.mon-row:hover { border-color: var(--border-hover); }
 .mon-row-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mon-row-main strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mon-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
@@ -2329,7 +2392,7 @@ label.mon-row:hover { border-color: #444c56; }
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 7px 18px;
   font-size: 13px; border-left: 3px solid transparent;
 }
-.act-item:hover { background: rgba(255, 255, 255, 0.025); }
+.act-item:hover { background: var(--hover-bg); }
 .act-item.has-details { cursor: pointer; }
 .act-item.act-error { border-left-color: var(--danger-color); background: var(--danger-bg); }
 .act-item.act-warn { border-left-color: var(--warning-color); }
@@ -2380,6 +2443,9 @@ label.mon-row:hover { border-color: #444c56; }
 .mon-tile-text i { font-style: normal; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mon-tile-live { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--success-color); box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.2); }
 
+/* Theme toggle */
+.theme-btn { padding: 4px 8px; margin-left: auto; margin-right: 6px; }
+
 /* Terminal: Select view and copy prompt */
 .term-select {
   position: fixed; inset: 0; z-index: 300; display: flex; flex-direction: column;
@@ -2395,7 +2461,7 @@ label.mon-row:hover { border-color: #444c56; }
 .term-select-foot .mon-muted { flex: 1; min-width: 160px; }
 .term-select-text {
   flex: 1; min-height: 0; width: 100%; resize: none; border: 0; outline: none; padding: 12px 14px;
-  background: #000; color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; line-height: 1.45;
+  background: #000; color: #f0f6fc; font-family: var(--font-mono); font-size: 13px; line-height: 1.45;
   white-space: pre; overflow: auto; -webkit-user-select: text; user-select: text;
 }
 .toast-copy { display: flex; align-items: center; gap: 12px; }

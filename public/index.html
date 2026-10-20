@@ -4,6 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Citadel — Development Environment & AI Agents</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icons/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0d1117">
+  <!-- Apply the saved theme before the first paint so there is no flash. -->
+  <script>
+    (function () {
+      var mode = 'dark';
+      try { var saved = localStorage.getItem('citadel.theme'); if (saved === 'light' || saved === 'auto') mode = saved; } catch (e) { /* ignore */ }
+      document.documentElement.setAttribute('data-theme', mode);
+    })();
+  </script>
   <link rel="stylesheet" href="/vendor/xterm.css">
   <link rel="stylesheet" href="/vendor/wunderbaum.css">
   <!-- ?v= cache-busts CDNs (e.g. Cloudflare) that may serve stale assets after
