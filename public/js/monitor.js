@@ -109,26 +109,6 @@
     refreshTimer = setInterval(draw, 15000);
   }
 
-  // Top-bar actions of the dashboard (administrators only).
-  function setupDashboardActions(ctx) {
-    const actions = document.getElementById('top-bar-actions');
-    if (!actions || !ctx.isAdmin) return;
-    actions.innerHTML = `<button class="btn btn-secondary btn-sm" id="mon-alerts-btn">Alerts…</button>
-      <button class="btn btn-secondary btn-sm" id="mon-refresh-btn">Check now</button>`;
-    document.getElementById('mon-alerts-btn').onclick = () => showAlertSettings(ctx);
-    document.getElementById('mon-refresh-btn').onclick = async (e) => {
-      const btn = e.currentTarget;
-      btn.disabled = true;
-      try {
-        await ctx.localApi('/api/monitor/refresh', { method: 'POST' });
-        await renderWidget(ctx);
-      } catch (err) {
-        ctx.showToast(err.message, 'error');
-      }
-      btn.disabled = false;
-    };
-  }
-
   function spark(points, key, { max = 100, cls = '' } = {}) {
     const vals = points.map((p) => p[key]);
     if (vals.filter((v) => v !== null && v !== undefined).length < 2) return '<div class="mon-muted">Not enough data yet.</div>';
@@ -524,5 +504,5 @@
     };
   }
 
-  window.CitadelMonitor = { renderWidget, renderMachine, setupDashboardActions };
+  window.CitadelMonitor = { renderWidget, renderMachine, showAlertSettings };
 })();

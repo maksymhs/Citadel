@@ -1226,7 +1226,6 @@
     document.getElementById('dash-fleet-update-all')?.addEventListener('click', fleetUpdateAll);
     if (widgets.includes('fleet')) refreshDashboardFleet();
     if (widgets.includes('machines')) {
-      window.CitadelMonitor.setupDashboardActions(monitorCtx());
       window.CitadelMonitor.renderWidget(monitorCtx());
       window.CitadelMonitor.renderMachine(monitorCtx(), state.activeHostId);
     }
@@ -4360,6 +4359,7 @@
     updates: { title: 'Updates', desc: 'Keep this machine and the machines paired with it on the latest version.' },
     machines: { title: 'Machines', desc: 'Pair other Citadels to reach them from this panel. Live health and alerts are on the Dashboard.' },
     network: { title: 'Network & access', desc: 'The address Citadel advertises to other devices. This only changes the advertised address; it never opens ports or exposes anything by itself.' },
+    alerts: { title: 'Alerts', desc: 'Get told when a paired machine goes offline or runs low on disk, memory or CPU. Each Citadel watches the machines paired with it, checking every minute.' },
     credentials: { title: 'Credentials', desc: 'One encrypted vault for everything agents and git need. Environment variables are injected into every terminal; agents can read any entry with the citadel-creds CLI. Values are never shown again.' },
     activity: { title: 'Activity & Audit', desc: 'The live event stream and the security audit trail for this host.' },
   };
@@ -4368,6 +4368,7 @@
     updates: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5M5.6 15A8 8 0 0018.4 9M18.4 9L20 9M5.6 15L4 15"/>',
     machines: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>',
     network: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
+    alerts: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2a2 2 0 01-.6 1.4L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>',
     credentials: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>',
     activity: NAV_ICONS.activity,
   };
@@ -4398,6 +4399,7 @@
         (canPair && !section) ? api('/api/pair/invite', { method: 'POST' }).catch((err) => ({ inviteError: err.message || 'failed' })) : Promise.resolve(null),
       ]);
       await loadModules();
+      const monCfg = section === 'alerts' ? ((await localApi('/api/monitor/config').catch(() => null)) || {}).config : null;
       const s = settingsRes.connect || {};
       const connect = connectRes.connect || {};
       const node = nodeRes.node || {};
@@ -4421,6 +4423,7 @@
         updates: `v${ver.version || '?'} · ${ver.channel === 'stable' ? 'stable' : 'main'} channel`,
         machines: state.hosts.length ? `${state.hosts.length} paired machine${state.hosts.length === 1 ? '' : 's'}` : 'No machines paired yet',
         network: s.publicUrl ? 'Custom public URL' : 'Address detected automatically',
+        alerts: 'Offline, disk, memory and CPU alerts',
         credentials: `${secretsList.length} secret${secretsList.length === 1 ? '' : 's'} in the vault`,
         activity: 'Events and security audit trail',
       };
@@ -4495,8 +4498,31 @@
           ${canPair && state.hosts.length > 0 ? '<div id="update-rollout-status" class="settings-hero-status"></div>' : ''}
         </div>`;
 
+      const channelNames = monCfg ? [
+        monCfg.channels.webhook.set && 'Webhook',
+        monCfg.channels.ntfy.set && 'ntfy',
+        monCfg.channels.telegram.set && 'Telegram',
+      ].filter(Boolean) : [];
+      const alertsHtml = `
+        <div class="card settings-panel">
+          ${monCfg ? `
+          <div class="settings-hero-line">
+            Alerts are <strong style="color:${monCfg.enabled ? 'var(--success-color)' : 'var(--warning-color)'};">${monCfg.enabled ? 'on' : 'off'}</strong>
+            <span class="mon-muted">· checks every ${monCfg.intervalSec}s · disk ≥ ${monCfg.thresholds.diskPercent}% · memory ≥ ${monCfg.thresholds.memPercent}% · CPU load ≥ ${monCfg.thresholds.loadPerCore} per core</span>
+          </div>
+          <div class="settings-hero-status" style="font-size:13px;">
+            ${channelNames.length ? `Notifications go to: ${escapeHtml(channelNames.join(', '))}.` : 'No notification channel yet: alerts only show on the Dashboard.'}
+          </div>` : '<div class="settings-hero-status">Alert settings are unavailable.</div>'}
+          <div class="settings-hero-actions">
+            ${canPair ? '<button class="btn btn-primary btn-sm" id="alerts-configure">Configure alerts</button>' : ''}
+            ${canPair ? '<button class="btn btn-secondary btn-sm" id="alerts-check-now">Check machines now</button>' : ''}
+          </div>
+          <div class="settings-hero-status">A machine cannot alert about its own outage. To be told when this one goes down, set up alerts on another paired machine too.</div>
+        </div>`;
+
       const sectionHtml = {
         updates: updatesHtml,
+        alerts: alertsHtml,
         machines: `
         <div class="card" style="margin-bottom:24px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
@@ -4638,6 +4664,23 @@
       }
       }
 
+      if (section === 'alerts') {
+        document.getElementById('alerts-configure')?.addEventListener('click', async () => {
+          await window.CitadelMonitor.showAlertSettings(monitorCtx());
+        });
+        document.getElementById('alerts-check-now')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          try {
+            const res = await localApi('/api/monitor/refresh', { method: 'POST' });
+            const bad = (res.hosts || []).filter((h) => h.online === false).length;
+            showToast(bad ? `${bad} machine${bad === 1 ? ' is' : 's are'} offline.` : 'All machines responded.', bad ? 'error' : 'success');
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+          btn.disabled = false;
+        });
+      }
       if (section === 'credentials') bindSecretsCard();
       if (section === 'activity') bindActivityButtons();
 
