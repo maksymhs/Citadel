@@ -3502,21 +3502,33 @@
     const item = getItem ? getItem() : null;
     if (!item || item.disposed) return;
 
+    const send = (value) => {
+      if (!value || item.disposed) return;
+      item.term.paste(value);
+      item.term.focus();
+    };
+
+    // iOS shows a native "Paste" callout and the promise never settles if the
+    // user ignores it, which made the button look dead. Race it against a
+    // timeout so the manual textarea always appears as a fallback.
     let text = null;
     try {
       if (navigator.clipboard && navigator.clipboard.readText) {
-        text = await navigator.clipboard.readText();
+        text = await Promise.race([
+          navigator.clipboard.readText(),
+          new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+        ]);
       }
     } catch {
       text = null;
     }
 
-    if (text !== null) {
+    if (text !== null && text !== undefined) {
       if (text === '') {
         showToast('Clipboard is empty.', 'info');
         return;
       }
-      item.term.paste(text);
+      send(text);
       return;
     }
 
@@ -3525,19 +3537,29 @@
       bodyHtml: `
         <div class="form-group">
           <label class="form-label" for="terminal-paste-input">Long-press the box below and choose Paste</label>
-          <textarea id="terminal-paste-input" class="form-input" rows="5" spellcheck="false" placeholder="Paste here..."></textarea>
+          <textarea id="terminal-paste-input" class="form-input" rows="5" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="Paste here..."></textarea>
         </div>
       `,
       confirmText: 'Send to terminal',
       onConfirm: async () => {
         const el = document.getElementById('terminal-paste-input');
-        const value = el ? el.value : '';
-        if (value && !item.disposed) item.term.paste(value);
+        send(el ? el.value : '');
       },
     });
 
     const input = document.getElementById('terminal-paste-input');
-    if (input) input.focus();
+    if (input) {
+      // One step on mobile: the system Paste action sends immediately.
+      input.addEventListener('paste', (event) => {
+        const pasted = event.clipboardData && event.clipboardData.getData('text');
+        if (!pasted) return;
+        event.preventDefault();
+        const closeBtn = document.getElementById('modal-close-btn');
+        if (closeBtn) closeBtn.click();
+        send(pasted);
+      });
+      input.focus();
+    }
   }
 
   // 4b. Fleet — manage and control remote Citadel instances

@@ -1363,3 +1363,11 @@ README/.env.example/architecture. No commits/pushes/deploys.
   `tests/connect.test.js` and `tests/pairing.test.js` cover the QR width and
   offline-unpair paths. Full suite **360 tests, 359 pass, 1 skipped**. Version
   bumped to `0.31.0`; asset cache-buster token moved to `v0310`.
+
+## 76. Mobile terminal Paste button fix (v0.33.2)
+- **Bug.** On iOS the Clipboard API shows a native "Paste" callout and its
+  promise never settles if the user ignores it, so the Paste button looked dead.
+- **Fix.** The clipboard read races a 2.5 s timeout and falls back to the manual
+  textarea; a system Paste in that textarea now sends immediately, closes the
+  dialog and returns focus to the terminal.
+- Version bumped to `0.33.2`; asset cache-buster token moved to `v0332`.
