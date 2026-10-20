@@ -618,6 +618,16 @@ EOF
       echo "$RUN_USER ALL=(root) NOPASSWD: /usr/local/sbin/citadel-update" | $SUDO tee "$UPDATER_SUDOERS" >/dev/null
       $SUDO chmod 0440 "$UPDATER_SUDOERS"
       $SUDO visudo -cf "$UPDATER_SUDOERS" >/dev/null
+      # sudo cannot elevate under NoNewPrivileges=true, so the unit must allow it
+      # (and keep the helpers' target paths writable) for this rule to work.
+      $SUDO mkdir -p /etc/systemd/system/citadel.service.d
+      $SUDO tee /etc/systemd/system/citadel.service.d/updater-privileges.conf >/dev/null <<'UNITEOF'
+[Service]
+NoNewPrivileges=false
+ReadWritePaths=-/etc/systemd -/etc/sudoers.d -/etc/profile.d -/usr/local/sbin -/usr/local/bin
+UNITEOF
+      $SUDO systemctl daemon-reload
+      $SUDO systemctl restart citadel.service
       detail "      In-panel updater enabled (System → Update)."
     else
       echo -e "${CLR}${YELLOW}      Skipping privileged updater (requires Linux + sudo).${NC}"

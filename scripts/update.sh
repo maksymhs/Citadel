@@ -343,6 +343,26 @@ if [ "$(id -u)" -eq 0 ] && service_manager_available; then
   fi
 fi
 
+# The in-panel updater and the Settings -> Tunnel helper run through a scoped
+# `sudo` rule. The unit ships with NoNewPrivileges=true, which makes sudo fail
+# ("no new privileges" flag is set) even though the rule exists, and
+# ProtectSystem=full would make the helpers' targets read-only. Grant exactly
+# those capabilities: sudo may elevate, and only the paths the helpers manage
+# are writable. Idempotent; applied on the restart at the end of this update.
+PRIV_DROPIN="$DROPIN_DIR/updater-privileges.conf"
+if [ "$(id -u)" -eq 0 ] && service_manager_available \
+   && { [ -f /etc/sudoers.d/citadel-updater ] || [ -f /etc/sudoers.d/citadel-tunnel ]; }; then
+  PRIV_WANT='[Service]
+NoNewPrivileges=false
+ReadWritePaths=-/etc/systemd -/etc/sudoers.d -/etc/profile.d -/usr/local/sbin -/usr/local/bin'
+  if [ "$(cat "$PRIV_DROPIN" 2>/dev/null)" != "$PRIV_WANT" ]; then
+    echo "[citadel-update] Allowing the service to run its scoped sudo helpers..."
+    mkdir -p "$DROPIN_DIR"
+    printf '%s\n' "$PRIV_WANT" > "$PRIV_DROPIN"
+    sys daemon-reload
+  fi
+fi
+
 if service_manager_available && sys is-active --quiet "$SERVICE" 2>/dev/null; then
   echo "[citadel-update] Restarting $SERVICE..."
   if ! sys restart "$SERVICE"; then

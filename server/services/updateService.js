@@ -324,6 +324,9 @@ async function triggerUpdate({ fanout = true } = {}) {
     const precheck = spawnSync('sudo', ['-n', UPDATER_PATH, '--check'], { encoding: 'utf8' });
     if (precheck.status !== 0) {
       const detail = (precheck.stderr || precheck.stdout || '').trim();
+      if (/no new privileges/i.test(detail)) {
+        throw new Error('The service sandbox blocks sudo (NoNewPrivileges). Run "sudo citadel update" once over SSH; it applies the fix and later in-panel updates will work.');
+      }
       throw new Error(`Updater precheck failed: ${detail || 'not permitted (check sudoers)'}`);
     }
     const child = spawn('sudo', ['-n', UPDATER_PATH], { detached: true, stdio: 'ignore' });

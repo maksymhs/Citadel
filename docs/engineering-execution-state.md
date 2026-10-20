@@ -1435,3 +1435,18 @@ README/.env.example/architecture. No commits/pushes/deploys.
   The UI explains that Cloudflare lists only the root zone (e.g. maksym.site)
   and that the subdomain (server.maksym.site) is created automatically.
 - Version bumped to `0.33.8`; asset cache-buster token moved to `v0338`.
+
+## 83. In-panel update blocked by "no new privileges" (v0.33.9)
+- **Bug.** The installer enables the scoped-sudo updater (and tunnel helper) by
+  default, but the shipped unit sets `NoNewPrivileges=true`, so `sudo` inside the
+  service failed ("no new privileges" flag is set) and the updater precheck
+  aborted. `ProtectSystem=full` would also have made the helpers' targets
+  read-only.
+- **Fix.** A drop-in `updater-privileges.conf` (NoNewPrivileges=false plus
+  `ReadWritePaths=-` for /etc/systemd, /etc/sudoers.d, /etc/profile.d,
+  /usr/local/sbin, /usr/local/bin) is written by the installer and, idempotently,
+  by `update.sh` when the sudoers rules exist. The panel now explains the error
+  and the one-time `sudo citadel update` over SSH. The root-owned updater copy
+  refreshes itself at the end of a run, so the drop-in lands on the second run
+  from an older install.
+- Version bumped to `0.33.9`; asset cache-buster token moved to `v0339`.
