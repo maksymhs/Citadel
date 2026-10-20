@@ -1414,3 +1414,14 @@ README/.env.example/architecture. No commits/pushes/deploys.
   `citadel qr`) mint the invitation for exactly the URL being displayed, so the
   single QR is always the dual-purpose open + pair code.
 - Version bumped to `0.33.6`; asset cache-buster token moved to `v0336`.
+
+## 81. Claude Code–style installer and uninstaller (v0.33.7)
+- Installer: a single spinner line (`⠋ Installing Citadel · <step>`, ASCII
+  frames on non-UTF-8 locales), then `✔ Citadel vX running`, the address, the
+  single QR and a one-line "Manage with" hint. Non-terminal runs print
+  `Installing Citadel…` once; `CITADEL_VERBOSE=1` and `--check-only` keep the
+  numbered trace.
+- Uninstaller: `Uninstalling Citadel…` then `✔ Citadel uninstalled`; step
+  messages only with `CITADEL_VERBOSE=1`. Dry run, warnings and the kept-source
+  notes are unchanged.
+- Version bumped to `0.33.7`; asset cache-buster token moved to `v0337`.

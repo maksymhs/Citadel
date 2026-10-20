@@ -227,14 +227,21 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
 fi
 
-echo "=================================================="
-echo "          Citadel — Uninstall                     "
-echo "=================================================="
-echo "Install directory: $TARGET_DIR"
-echo "Agents directory:  $AGENTS_DIR"
+# Minimal output by default (CITADEL_VERBOSE=1 shows every step).
+VERBOSE="${CITADEL_VERBOSE:-0}"
+say() { [ "$VERBOSE" = "1" ] && echo "$@" || true; }
+CLR=""
+if [ "$VERBOSE" != "1" ] && [ -t 1 ]; then
+  CLR=$'\r\033[K'
+  printf '  Uninstalling Citadel…'
+else
+  [ "$VERBOSE" = "1" ] || echo "Uninstalling Citadel…"
+fi
+say "Install directory: $TARGET_DIR"
+say "Agents directory:  $AGENTS_DIR"
 
 if command -v systemctl >/dev/null 2>&1; then
-  echo "Stopping and disabling ${SERVICE}.service..."
+  say "Stopping and disabling ${SERVICE}.service..."
   $SUDO systemctl stop "$SERVICE" 2>/dev/null || true
   $SUDO systemctl disable "$SERVICE" 2>/dev/null || true
   $SUDO rm -f "/etc/systemd/system/${SERVICE}.service"
@@ -242,7 +249,7 @@ if command -v systemctl >/dev/null 2>&1; then
   $SUDO systemctl daemon-reload 2>/dev/null || true
   $SUDO systemctl reset-failed "$SERVICE" 2>/dev/null || true
 
-  echo "Stopping and removing the Cloudflare tunnel (if any)..."
+  say "Stopping and removing the Cloudflare tunnel (if any)..."
   $SUDO systemctl stop citadel-tunnel 2>/dev/null || true
   $SUDO systemctl disable citadel-tunnel 2>/dev/null || true
   $SUDO rm -f /etc/systemd/system/citadel-tunnel.service
@@ -252,7 +259,7 @@ fi
 
 POWER_DROPIN="${CITADEL_LOGIND_DROPIN_DIR:-/etc/systemd/logind.conf.d}/90-citadel-24-7.conf"
 if [ -f "$POWER_DROPIN" ]; then
-  echo "Restoring system sleep policy (24/7 mode)..."
+  say "Restoring system sleep policy (24/7 mode)..."
   POWER_HELPER="${CITADEL_APP_DIR:-$TARGET_DIR/app}/scripts/power.sh"
   if [ -f "$POWER_HELPER" ] && command -v systemctl >/dev/null 2>&1; then
     $SUDO bash "$POWER_HELPER" off 2>/dev/null || true
@@ -263,10 +270,10 @@ if [ -f "$POWER_DROPIN" ]; then
   fi
 fi
 
-echo "Removing sudoers rules..."
+say "Removing sudoers rules..."
 $SUDO rm -f /etc/sudoers.d/citadel-terminal /etc/sudoers.d/citadel-updater /etc/sudoers.d/citadel-tunnel
 
-echo "Removing helper scripts..."
+say "Removing helper scripts..."
 $SUDO rm -f /usr/local/sbin/citadel-tunnel /usr/local/sbin/citadel-update /usr/local/sbin/.citadel-update.new
 $SUDO rm -f /usr/local/bin/citadel-git-credential /usr/local/bin/citadel-creds
 $SUDO rm -f /usr/local/bin/citadel
@@ -275,17 +282,17 @@ $SUDO rm -f /etc/profile.d/citadel-agents.sh
 if command -v git >/dev/null 2>&1; then
   HELPER="$($SUDO git config --system --get credential.helper 2>/dev/null || true)"
   if [ "$HELPER" = "/usr/local/bin/citadel-git-credential" ]; then
-    echo "Removing system git credential helper..."
+    say "Removing system git credential helper..."
     $SUDO git config --system --unset-all credential.helper 2>/dev/null || true
   fi
 fi
 
 if [ "$PURGE" = true ]; then
-  echo "Deleting all data in $TARGET_DIR..."
+  say "Deleting all data in $TARGET_DIR..."
   $SUDO rm -rf "$TARGET_DIR"
   # Shared CLI agents installed from the panel (opencode, claude, codex…).
   if [ -e "$AGENTS_DIR" ]; then
-    echo "Removing shared CLI agents in $AGENTS_DIR..."
+    say "Removing shared CLI agents in $AGENTS_DIR..."
     $SUDO rm -rf "$AGENTS_DIR"
     # Only tidy the (now empty) parent when it is exactly the standard /opt/citadel.
     if [ "$(dirname "$AGENTS_DIR")" = "/opt/citadel" ]; then
@@ -293,22 +300,18 @@ if [ "$PURGE" = true ]; then
     fi
   fi
   if id "$RUN_USER" >/dev/null 2>&1; then
-    echo "Removing service user '$RUN_USER'..."
+    say "Removing service user '$RUN_USER'..."
     $SUDO userdel -r "$RUN_USER" 2>/dev/null || $SUDO userdel "$RUN_USER" 2>/dev/null || true
   fi
-  echo "Citadel and all its data have been removed from the system."
+  echo "${CLR}✔ Citadel uninstalled (all data removed)"
 else
-  echo "Citadel has been uninstalled from the system."
-  echo "[INFO] Your projects and databases have been preserved in:"
-  echo "       - $TARGET_DIR/data"
-  echo "       - $TARGET_DIR/projects"
-  echo "       - database snapshots in $TARGET_DIR/data/backups"
-  echo "To remove everything (including the '$RUN_USER' user): $0"
+  echo "${CLR}✔ Citadel uninstalled"
+  echo "  Your data is kept in $TARGET_DIR (remove everything: $0 --purge)"
 fi
 
 # Remove local source checkout(s) only on explicit opt-in AND interactive consent.
 if [ "$REMOVE_SOURCE" = true ]; then
-  echo "Source removal requested (--remove-source)."
+  say "Source removal requested (--remove-source)."
   seen=""
   for dir in "$RECORDED_SOURCE" "$SCRIPT_SOURCE"; do
     [ -n "$dir" ] || continue
@@ -325,7 +328,7 @@ if [ "$REMOVE_SOURCE" = true ]; then
     read -r answer
     if [ "$answer" = "yes" ]; then
       cd / 2>/dev/null || true
-      echo "Removing local source checkout: $dir"
+      say "Removing local source checkout: $dir"
       $SUDO rm -rf "$dir" 2>/dev/null || true
     else
       echo "Preserved the source checkout: $dir"

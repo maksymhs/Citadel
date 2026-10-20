@@ -20,6 +20,10 @@ INSTALL_LOG="$(mktemp -t citadel-install.XXXXXX 2>/dev/null || echo /tmp/citadel
 detail() { [ "$VERBOSE" = "1" ] && echo "$@" || true; }
 
 PROGRESS=false          # decided after argument parsing (needs CHECK_ONLY)
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+  *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) FRAMES='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' ;;
+  *) FRAMES='|/-\' ;;
+esac
 CLR=""                  # clears the progress line before a warning is printed
 STEP_LINE=""
 init_progress() {
@@ -28,16 +32,20 @@ init_progress() {
     CLR=$'\r\033[K'
   fi
 }
-# step <n> <message>: self-updating "Citadel ████░░░░ 3/8 message" line.
+# step <n> <message>: in the default view only the label changes, next to a
+# spinner ("⠋ Installing Citadel · Checking Node.js"). Verbose/check mode keeps
+# the numbered trace; a piped (non-terminal) run prints a single line.
 step() {
   local n="$1"; shift
   if [ "$PROGRESS" = true ]; then
-    local bar="" i
-    for i in 1 2 3 4 5 6 7 8; do [ "$i" -le "$n" ] && bar="${bar}█" || bar="${bar}░"; done
-    STEP_LINE="  Citadel ${bar} ${n}/8 $*"
-    printf '\r\033[K%s' "$STEP_LINE"
-  else
+    local label="$*"
+    label="${label%...}"
+    STEP_LINE="Installing Citadel · ${label}"
+    printf '\r\033[K  %s %s' "${FRAMES:0:1}" "$STEP_LINE"
+  elif [ "$VERBOSE" = "1" ] || [ "$CHECK_ONLY" = true ]; then
     echo "[$n/8] $*"
+  elif [ "$n" = "1" ]; then
+    echo "Installing Citadel…"
   fi
 }
 # quiet_run <command...>: hide output (animated spinner on a terminal) unless
@@ -46,12 +54,12 @@ quiet_run() {
   if [ "$VERBOSE" = "1" ]; then "$@"; return $?; fi
   if [ "$PROGRESS" = true ]; then
     ( "$@" ) >>"$INSTALL_LOG" 2>&1 &
-    local pid=$! frames='|/-\' i=0
+    local pid=$! i=0 n=${#FRAMES}
     while kill -0 "$pid" 2>/dev/null; do
-      printf '\r\033[K%s %s' "$STEP_LINE" "${frames:i++%4:1}"
-      sleep 0.15
+      printf '\r\033[K  %s %s' "${FRAMES:i++%n:1}" "$STEP_LINE"
+      sleep 0.1
     done
-    printf '\r\033[K%s' "$STEP_LINE"
+    printf '\r\033[K  %s %s' "${FRAMES:0:1}" "$STEP_LINE"
     wait "$pid"
     local rc=$?
   else
@@ -810,14 +818,15 @@ else
     false) STATUS_MARK="${YELLOW}…${NC}"; STATUS_TEXT="still starting (check: citadel status)" ;;
     *) STATUS_MARK="${GREEN}✔${NC}"; STATUS_TEXT="installed" ;;
   esac
-  echo -e "  ${STATUS_MARK} Citadel ${CITADEL_VERSION:+v$CITADEL_VERSION }${STATUS_TEXT} · $ACCESS_URL"
+  echo -e "${STATUS_MARK} Citadel ${CITADEL_VERSION:+v$CITADEL_VERSION }${STATUS_TEXT}"
+  echo "  $ACCESS_URL"
   if [ "$TUNNEL" = true ] || [ "$LAN_EXPOSED" = true ]; then
     echo -e "  ${YELLOW}Create your admin account now: until then the first visitor can claim it.${NC}"
   fi
   if [ "$PAIR_QR" = true ]; then
-    echo "  Scan: opens the panel from a phone, or pairs from another Citadel (Pair a machine)."
+    echo "  Scan to open on your phone, or to pair from another Citadel."
   else
-    echo "  Scan with your phone to open the panel."
+    echo "  Scan to open on your phone."
   fi
   if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
     (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$ACCESS_URL") || true
@@ -829,5 +838,5 @@ else
       qrencode -t ANSIUTF8 -m 2 "$QR_TEXT" || true
     fi
   fi
-  echo "  citadel status | qr | update | doctor    (details: CITADEL_VERBOSE=1)"
+  echo "  Manage with: citadel status | qr | update | doctor"
 fi
