@@ -1545,3 +1545,12 @@ README/.env.example/architecture. No commits/pushes/deploys.
   as "interrupted" on the next start.
 - Tests: `tests/update-rollout.test.js` (order, halt on failure, skip, unreachable,
   and the start-up rules). Version bumped to `0.36.0`; cache-buster token `v0360`.
+
+## 91. macOS installer: empty array under `set -u` (v0.36.1)
+- **Bug.** `curl .../install.sh | bash` on macOS stopped with
+  `PLATFORM_ARGS[@]: unbound variable`: macOS ships bash 3.2, where expanding an
+  empty array under `set -u` is an error.
+- **Fix.** Use the portable `${arr[@]+"${arr[@]}"}` form when delegating to the
+  platform scripts. Verified by stubbing `uname` as Darwin (no arguments, `--uninstall`,
+  `--lan`); the macOS scripts contain no other bash ≥4 constructs.
+- Version bumped to `0.36.1`; asset cache-buster token moved to `v0361`.

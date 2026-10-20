@@ -185,13 +185,13 @@ done
 INSTALL_OS="$(uname -s)"
 if [ "$INSTALL_OS" = "Darwin" ]; then
   if [ "$UNINSTALL" = true ]; then
-    delegate_platform_script uninstall-macos.sh "${PLATFORM_ARGS[@]}"
+    delegate_platform_script uninstall-macos.sh ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"}
   fi
-  delegate_platform_script install-macos.sh "${PLATFORM_ARGS[@]}"
+  delegate_platform_script install-macos.sh ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"}
 fi
 
 if [ "$UNINSTALL" = true ]; then
-  delegate_platform_script uninstall.sh "${PLATFORM_ARGS[@]}"
+  delegate_platform_script uninstall.sh ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"}
 fi
 
 # Validate the requested privileged-terminal user BEFORE touching the system: an
