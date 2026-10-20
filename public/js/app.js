@@ -50,7 +50,6 @@
     dashboardPaused: false,
     tmuxAvailable: false,
     filesPath: '/',
-    machineId: null, // machine shown on the machine screen
     settingsSection: null, // null = Settings hub, otherwise a section id
     filesMode: 'grid', // 'grid' (folder view, default) | 'list' (tree); list only lasts until you leave Files
     dashboardWidgets: null, // ordered widget ids, persisted per browser
@@ -77,14 +76,14 @@
     { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
   ];
   const KNOWN_VIEWS = [
-    ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity', 'machine',
+    ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity',
     ...OPTIONAL_NAV.map((n) => n.view),
   ];
   // Legacy view ids → current ids, so a persisted view still resolves.
   const LEGACY_VIEW_MAP = {
     repos: 'projects', terminal: 'workspace', logs: 'activity',
     plugins: 'settings', modules: 'settings', deployments: 'proxy',
-    system: 'settings', machines: 'dashboard', processes: 'dashboard', terminals: 'dashboard',
+    system: 'settings', machines: 'dashboard', machine: 'dashboard', processes: 'dashboard', terminals: 'dashboard',
   };
 
   // Default dashboard widget order. Widgets whose module is disabled/unavailable
@@ -962,8 +961,6 @@
   function resolveView(viewId) {
     let view = LEGACY_VIEW_MAP[viewId] || viewId;
     if (!KNOWN_VIEWS.includes(view)) view = 'dashboard';
-    // The machine screen needs a selected machine (not kept across reloads).
-    if (view === 'machine' && !state.machineId) view = 'dashboard';
     const optional = OPTIONAL_NAV.find((n) => n.view === view);
     if (optional && !moduleEnabled(optional.module)) view = 'dashboard';
     return view;
@@ -986,7 +983,7 @@
   // Secondary screens reached from another one get a Back button at the top
   // left. It returns to the screen the user came from, or to a sensible parent
   // when the page was opened directly on it.
-  const DETAIL_VIEWS = { machine: 'dashboard', activity: 'settings' };
+  const DETAIL_VIEWS = { activity: 'settings' };
 
   function updateBackButton(view) {
     const btn = document.getElementById('top-bar-back');
@@ -1040,9 +1037,6 @@
     } else if (view === 'settings') {
       titleEl.textContent = 'Settings';
       renderSettingsView();
-    } else if (view === 'machine') {
-      titleEl.textContent = 'Machine';
-      window.CitadelMonitor.renderMachine(monitorCtx(), state.machineId);
     } else if (view === 'files') {
       titleEl.textContent = 'File Explorer';
       renderFilesView();
@@ -1095,7 +1089,9 @@
     return {
       localApi, escapeHtml, showToast, openModal, reloadWhenServerReady,
       isAdmin: Boolean(state.user && state.user.role === 'admin'),
-      openMachine: (id) => { state.machineId = id; navigateTo('machine'); },
+      activeHostId: () => state.activeHostId,
+      // Picking a card is the same as choosing that machine in the selector.
+      openMachine: (id) => { if (id !== state.activeHostId) switchHost(id); },
       useMachine,
       openProject: openProjectOn,
       installAgent: installAgentOn,
@@ -1149,7 +1145,10 @@
   function dashboardWidgetHtml(id) {
     switch (id) {
       case 'machines':
-        return `<div class="dash-widget" data-widget="machines"><div id="dash-machines-body"><div class="mon-muted">Loading…</div></div></div>`;
+        return `<div class="dash-widget" data-widget="machines">
+          <div id="dash-machines-body"><div class="mon-muted">Loading…</div></div>
+          <div id="dash-machine-pane" class="dash-machine-pane"></div>
+        </div>`;
       case 'fleet':
         return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
             <div>
@@ -1228,6 +1227,7 @@
     if (widgets.includes('machines')) {
       window.CitadelMonitor.setupDashboardActions(monitorCtx());
       window.CitadelMonitor.renderWidget(monitorCtx());
+      window.CitadelMonitor.renderMachine(monitorCtx(), state.activeHostId);
     }
   }
 

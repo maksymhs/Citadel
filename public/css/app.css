@@ -2241,52 +2241,21 @@ html.is-mobile-ui .data-table tr:hover td {
 .mon-mini-down.mon-muted strong { color: inherit; }
 .mon-mini-foot { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
 
-/* The card adapts to its own width: stacked when narrow, one row when wide
-   (a lone machine stretches across the whole widget). */
-.mon-mini-inner { display: flex; flex-direction: column; gap: 14px; }
-.mon-mini-info { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-@container (min-width: 440px) {
-  .mon-mini-inner { flex-direction: row; align-items: center; justify-content: space-between; gap: 28px; }
-  .mon-mini-info { flex: 1; }
-  .mon-mini-head strong { font-size: 16px; }
-  .mon-rings { grid-template-columns: repeat(3, 76px); gap: 20px; flex-shrink: 0; }
-  .mon-ring svg { width: 68px; height: 68px; }
-  .mon-ring strong { height: 68px; font-size: 16px; }
-  .mon-mini-down { min-height: 0; align-items: flex-end; text-align: right; }
-}
-
-/* Settings hub + secondary screens */
-.settings-screen { max-width: 980px; margin: 0 auto; }
-.settings-screen-head { margin-bottom: 20px; }
-.settings-screen-head h2 { font-size: 20px; margin-bottom: 4px; }
-.settings-screen-head p { color: var(--text-secondary); font-size: 13px; line-height: 1.5; max-width: 70ch; }
-.settings-hero-title strong { font-size: 20px; }
-.settings-hero-body { gap: 10px; justify-content: center; align-self: stretch; }
-.settings-tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
-  gap: 12px;
-}
-.settings-tile {
-  display: flex; align-items: center; gap: 14px; text-align: left;
-  padding: 16px 18px; font: inherit; color: inherit; cursor: pointer;
-  background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px;
-  transition: border-color 0.15s ease, transform 0.15s ease;
-}
-.settings-tile:hover, .settings-tile:focus-visible { border-color: var(--accent-color); transform: translateY(-1px); outline: none; }
-.settings-tile-icon {
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  width: 40px; height: 40px; border-radius: 10px;
-  background: var(--accent-bg); color: var(--accent-color);
-}
-.settings-tile-icon svg { width: 20px; height: 20px; }
-.settings-tile-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.settings-tile-text strong { font-size: 15px; }
-.settings-tile-text span { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.settings-tile-chev { color: var(--text-muted); font-size: 22px; line-height: 1; }
-.settings-panel { display: flex; flex-direction: column; gap: 14px; }
-.settings-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; max-width: 360px; }
-.settings-screen .card { margin-bottom: 16px; }
+/* Compact cards: one row per machine, small rings, active one highlighted */
+.mon-mini-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 10px; }
+.mon-mini-card { padding: 10px 14px; border-radius: 10px; }
+.mon-mini-card.active { border-color: var(--accent-color); box-shadow: 0 0 0 1px var(--accent-color); }
+.mon-mini-inner { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 14px; }
+.mon-mini-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.mon-mini-head strong { font-size: 14px; }
+.mon-mini-head .mon-chips { margin-left: 0; }
+.mon-rings { display: flex; gap: 8px; flex-shrink: 0; }
+.mon-ring svg { width: 42px; height: 42px; }
+.mon-ring strong { height: 42px; font-size: 11px; }
+.mon-ring strong small { display: none; }
+.mon-ring span { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+.mon-mini-down { min-height: 0; align-items: flex-end; text-align: right; }
+.dash-machine-pane { margin-top: 20px; }
 
 /* Machine screen */
 .mon-machine-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; padding: 16px 20px; }
@@ -2327,3 +2296,5 @@ label.mon-row:hover { border-color: #444c56; }
 @media (max-width: 600px) {
   .mon-machine-actions { margin-left: 0; width: 100%; }
 }
+.mon-overview-rings .mon-ring strong small { display: inline; }
+.mon-overview-rings .mon-ring span { font-size: 12px; text-transform: none; letter-spacing: 0; }

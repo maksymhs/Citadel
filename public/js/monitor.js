@@ -111,7 +111,7 @@
       h.latencyMs !== null && !h.isLocal ? `⇄ ${h.latencyMs} ms` : null,
       h.version ? `v${h.version}` : null,
     ].filter(Boolean).map(esc).join(' · ');
-    return `<button type="button" class="mon-mini-card mon-${status}" data-mon-machine="${esc(h.id)}" title="Open ${esc(h.name)}">
+    return `<button type="button" class="mon-mini-card mon-${status}${h.id === ctx.activeHostId() ? ' active' : ''}" data-mon-machine="${esc(h.id)}" title="Open ${esc(h.name)}">
       <span class="mon-mini-inner">
         <span class="mon-mini-info">
           <span class="mon-mini-head">
@@ -239,11 +239,11 @@
   let machineTab = 'overview';
   let machineTimer = null;
 
-  async function renderMachine(ctx, hostId, tab) {
+  // Renders the detail of one machine into the dashboard pane under the cards.
+  async function renderMachine(ctx, hostId, tab, retry = true) {
     const { localApi, escapeHtml: esc } = ctx;
-    const content = document.getElementById('main-content');
-    document.getElementById('top-bar-actions').innerHTML = '';
-    clearInterval(refreshTimer);
+    const content = document.getElementById('dash-machine-pane');
+    if (!content) return;
     clearInterval(machineTimer);
     if (tab) machineTab = tab;
     content.innerHTML = '<div id="mon-machine"><div class="mon-muted">Loading…</div></div>';
@@ -257,7 +257,9 @@
       return;
     }
     if (!host) {
-      content.innerHTML = '<div class="card mon-empty"><strong>Machine not found</strong><span class="mon-muted">It may have been unpaired. Go back to the dashboard.</span></div>';
+      // The first health check runs a few seconds after boot.
+      content.innerHTML = '<div class="mon-muted">Waiting for the first health check…</div>';
+      if (retry) setTimeout(() => { if (document.getElementById('dash-machine-pane')) renderMachine(ctx, hostId, undefined, false); }, 5000);
       return;
     }
 
@@ -274,7 +276,7 @@
         </div>
         <div class="mon-chips">${host.alerts.map((k) => `<span class="badge ${k === 'offline' ? 'badge-danger' : 'badge-warning'}">${esc(ALERT_LABELS[k] || k)}</span>`).join('')}</div>
         <div class="mon-actions mon-machine-actions">
-          <button class="btn btn-primary btn-sm" id="mon-use-btn" ${offline ? 'disabled' : ''}>Work on this machine</button>
+          ${host.id === ctx.activeHostId() ? '' : `<button class="btn btn-primary btn-sm" id="mon-use-btn" ${offline ? 'disabled' : ''}>Work on this machine</button>`}
           ${ctx.isAdmin ? `<button class="btn btn-secondary btn-sm" id="mon-logs-btn" ${offline ? 'disabled' : ''}>Logs</button>
           <button class="btn btn-secondary btn-sm" id="mon-restart-btn" ${offline ? 'disabled' : ''}>Restart</button>` : ''}
         </div>
@@ -284,11 +286,11 @@
       </div>
       <div id="mon-tab-body"></div>`;
 
-    document.getElementById('mon-use-btn').onclick = () => ctx.useMachine(host.id);
+    document.getElementById('mon-use-btn')?.addEventListener('click', () => ctx.useMachine(host.id));
     document.getElementById('mon-logs-btn')?.addEventListener('click', () => showLogs(host, ctx));
-    document.getElementById('mon-restart-btn')?.addEventListener('click', () => confirmRestart(host, ctx, () => renderMachine(ctx, hostId)));
+    document.getElementById('mon-restart-btn')?.addEventListener('click', () => confirmRestart(host, ctx, () => renderMachine(ctx, hostId, undefined, false)));
     root.querySelectorAll('[data-mon-tab]').forEach((b) => {
-      b.onclick = () => renderMachine(ctx, hostId, b.getAttribute('data-mon-tab'));
+      b.onclick = () => renderMachine(ctx, hostId, b.getAttribute('data-mon-tab'), false);
     });
 
     const body = document.getElementById('mon-tab-body');
