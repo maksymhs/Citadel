@@ -62,7 +62,7 @@ That command installs the service **local-only and unprivileged by default**. Ev
 | `--lan` (or `--host=ADDR`) | Reachable on your local network (QR from your phone) |
 | `--no-tunnel` | Skip the public Cloudflare Quick Tunnel (on by default) |
 | `--admin-terminal[=user]` | Root-capable System Terminal (privileged) |
-| `--enable-updater` | Root-owned in-panel updater |
+| `--no-updater` | Skip the root-owned in-panel updater (on by default) |
 | `--24-7` (or `--keep-awake`) | Default: ignore lid close and block suspend/hibernate |
 | `--no-24-7` (or `--no-keep-awake`) | Allow the host to suspend normally |
 
@@ -158,12 +158,12 @@ sudo bash install.sh --no-admin-terminal         # unprivileged service user onl
 
 The named user must exist on the host; the installer validates it and refuses to continue otherwise. It installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. **Security warning:** it makes the panel root-equivalent — anyone able to log into the panel can obtain a root shell on the host. Only enable it on a personal, single-admin server.
 
-### In-panel Updater (opt-in)
+### In-panel Updater
 
-Citadel checks GitHub for new releases (System view) and — when the updater is installed — can update itself with one click. It is **disabled by default**; enable it explicitly:
+Citadel checks GitHub for new releases (System view) and — when the updater is installed — can update itself with one click. It is **enabled by default**; skip it with `--no-updater`. To add it to an existing install, re-run the installer:
 
 ```bash
-sudo bash install.sh --enable-updater
+sudo bash install.sh --update
 ```
 
 It installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. Before running it the panel verifies the helper is a regular, root-owned file that is not group/world-writable, and refuses otherwise. Without the helper the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.

@@ -25,7 +25,7 @@ UNINSTALL=false
 # domain) so the QR code works from any network on first boot. The privileged
 # capabilities still must be requested explicitly:
 #   --admin-terminal[=user]  privileged System Terminal (root-capable)
-#   --enable-updater         root-owned in-panel updater
+#   --no-updater             skip the root-owned in-panel updater (on by default)
 #   --lan / --host=ADDR      also bind on the local network (QR from phone)
 #   --no-tunnel              keep the panel off the public internet
 #   --no-24-7                allow the host to suspend normally
@@ -36,7 +36,7 @@ if [ -z "$DEFAULT_ADMIN_USER" ]; then
   DEFAULT_ADMIN_USER="$(id -un)"
 fi
 ADMIN_TERMINAL_USER=""
-ENABLE_UPDATER=false
+ENABLE_UPDATER=true
 LAN_ACCESS=false
 LOCAL_ONLY=false
 LAN_EXPOSED=false
