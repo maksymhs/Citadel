@@ -4643,7 +4643,7 @@
 
         <div style="margin-top:28px;margin-bottom:20px;">
           <h2 style="font-size:18px;margin-bottom:6px;">System</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">Details of this host and the optional modules it runs.</p>
+          <p style="color:var(--text-secondary);font-size:13px;">Details of this host.</p>
         </div>
 
         <div class="card" style="margin-bottom:24px;">
@@ -4667,18 +4667,8 @@
             </div>
           </div>
         </div>
-
-        <div style="margin-top:28px;margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Optional modules</h2>
-          <p style="color:var(--text-secondary);font-size:13px;">
-            Enable only what you use. Disabled modules are hidden from navigation and their
-            endpoints are locked, but your data is never deleted.
-          </p>
-        </div>
-        ${modulesSectionHtml()}
       `;
 
-      bindModuleToggles(renderSettingsView);
       bindUpdatesCard();
       bindSecretsCard();
       bindActivityButtons();
@@ -5092,55 +5082,6 @@
   }
 
   // Modules & Extensions management, rendered inside the Settings screen.
-  function modulesSectionHtml() {
-    const optional = state.modules.filter((m) => !m.core);
-    return `
-      <div class="card">
-        <div class="module-grid">
-          ${optional.map((m) => {
-            const blocked = !m.ready && !m.enabled;
-            const badge = m.enabled
-              ? '<span class="badge badge-success">Enabled</span>'
-              : (m.ready ? '<span class="badge badge-muted">Disabled</span>' : '<span class="badge badge-warning">Unavailable</span>');
-            return `
-              <div class="module-card">
-                <div class="module-card-head">
-                  <strong>${escapeHtml(m.name)}</strong>
-                  ${badge}
-                </div>
-                <p class="module-desc">${escapeHtml(m.description)}</p>
-                ${m.reason && !m.enabled ? `<p class="module-reason">${escapeHtml(m.reason)}</p>` : ''}
-                <button class="btn ${m.enabled ? 'btn-secondary' : 'btn-primary'} btn-sm module-toggle-btn"
-                  data-module-id="${m.id}" data-enabled="${m.enabled ? '1' : '0'}"
-                  ${blocked ? 'disabled' : ''}>
-                  ${m.enabled ? 'Disable' : 'Enable'}
-                </button>
-              </div>`;
-          }).join('')}
-        </div>
-      </div>`;
-  }
-
-  function bindModuleToggles(rerender) {
-    document.querySelectorAll('.module-toggle-btn').forEach((btn) => {
-      btn.onclick = async () => {
-        const id = btn.getAttribute('data-module-id');
-        const target = btn.getAttribute('data-enabled') !== '1';
-        btn.disabled = true;
-        try {
-          await api(`/api/modules/${id}/state`, { method: 'POST', body: { enabled: target } });
-          showToast(`Module "${id}" ${target ? 'enabled' : 'disabled'}.`, 'success');
-          await loadModules();
-          renderSidebarNav();
-          rerender();
-        } catch (err) {
-          btn.disabled = false;
-          showToast(err.message, 'error');
-        }
-      };
-    });
-  }
-
   // Run on page load
   document.addEventListener('DOMContentLoaded', init);
 })();
