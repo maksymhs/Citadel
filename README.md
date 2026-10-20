@@ -224,7 +224,7 @@ The **Files** view browses the host filesystem: navigate directories, read and e
 
 Scan a QR from your phone, pair several Citadel machines and expose the panel globally (Cloudflare Quick Tunnel, or a stable URL on your own domain from **Settings → Tunnel**). Quick start: `citadel qr` (or `citadel qr --url` on small terminals), `citadel tunnel`, `citadel tunnel --domain=HOST --token=TOKEN`. Full details: [docs/remote-access.md](docs/remote-access.md).
 
-**Mesh pairing (opt-in).** In **Settings → Machines** turn on *Auto-pair with all my machines* on each Citadel that should join. Machines that are already paired then introduce them to each other, so every machine ends up paired with every other one (single-use invitations, one token per direction, no credential vault merge). Once paired, the machine selector under the logo opens any machine's terminals, logs and processes. Machines with mesh off refuse introductions; *Unpair* removes a machine from both sides.
+**Mesh pairing (always on).** Machines that are already paired introduce each other, so every machine ends up paired with every other one (single-use invitations, one token per direction, no credential vault merge), with no setting to turn on. Once paired, the machine selector under the logo opens any machine's terminals, logs and processes. *Unpair* removes a machine from both sides.
 
 **Update propagation (always on).** Once this machine is updated and healthy, it updates each paired machine that is behind, waiting for it to come back on the new version before starting the next, and stops at the first one that does not. *Update paired machines now* runs it on demand. Machines updated this way do not propagate further.
 

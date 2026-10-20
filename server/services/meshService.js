@@ -1,13 +1,13 @@
 /**
- * Mesh pairing: machines that opted in (Settings → Machines) are introduced to
- * each other by any machine they are already paired with, so every machine ends
- * up paired with every other one.
+ * Mesh pairing: paired machines are introduced to each other by any machine
+ * they are already paired with, so every machine ends up paired with every
+ * other one.
  *
  * An introducer A that is paired with X and Y (and sees they are not paired
  * with each other) asks Y for a single-use invitation and hands it to X, which
  * redeems it through the normal handshake. Each side keeps its own token for
- * the other, and no credential vault is merged. Both X and Y must have mesh
- * enabled locally, so nothing happens on a machine whose admin did not opt in.
+ * the other, and no credential vault is merged. Unpairing removes a machine
+ * from both sides.
  */
 const hostService = require('./hostService');
 
@@ -35,7 +35,6 @@ function planIntroductions(peers) {
 }
 
 async function syncMesh() {
-  if (!hostService.getMeshEnabled()) return { enabled: false, introduced: [], skipped: 'mesh is off' };
   if (running) return { enabled: true, introduced: [], skipped: 'already running' };
   running = true;
   const introduced = [];
@@ -75,7 +74,6 @@ async function syncMesh() {
 
 /** Debounced background sync, e.g. right after a pairing completes. */
 function scheduleSync(delayMs = 3000) {
-  if (!hostService.getMeshEnabled()) return;
   if (pending) clearTimeout(pending);
   pending = setTimeout(() => {
     pending = null;

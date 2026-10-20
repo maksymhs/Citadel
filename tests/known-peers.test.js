@@ -57,15 +57,8 @@ describe('Peer discovery', () => {
     assert.equal(res.statusCode, 401);
   });
 
-  test('mesh endpoints are refused until the admin opts in', async () => {
-    hostService.setMeshEnabled(false);
+  test('mesh endpoints are always available to a paired peer', async () => {
     const headers = { authorization: `Bearer ${tokenB}` };
-    const off = await app.inject({ method: 'POST', url: '/api/host/peers/mesh/invite', headers, payload: {} });
-    assert.equal(off.statusCode, 403);
-    const offJoin = await app.inject({ method: 'POST', url: '/api/host/peers/mesh/join', headers, payload: { link: 'x' } });
-    assert.equal(offJoin.statusCode, 403);
-
-    hostService.setMeshEnabled(true);
     const on = await app.inject({ method: 'POST', url: '/api/host/peers/mesh/invite', headers, payload: {} });
     assert.equal(on.statusCode, 200);
     const { link } = JSON.parse(on.payload);
@@ -73,7 +66,6 @@ describe('Peer discovery', () => {
     // Joining with a code that points at this very host is rejected.
     const self = await app.inject({ method: 'POST', url: '/api/host/peers/mesh/join', headers, payload: { link } });
     assert.equal(self.statusCode, 400);
-    hostService.setMeshEnabled(false);
   });
 
   test('mesh endpoints need a peer token', async () => {
