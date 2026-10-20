@@ -2203,25 +2203,6 @@ html.is-mobile-ui .data-table tr:hover td {
 }
 
 /* Dashboard "Machines" widget: one card per machine with ring gauges */
-.mon-mini-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-  gap: 12px;
-}
-.mon-mini-card {
-  display: block; container-type: inline-size;
-  padding: 16px 18px; text-align: left; font: inherit; color: inherit; cursor: pointer;
-  background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 10px;
-  transition: border-color 0.15s ease, transform 0.15s ease;
-}
-.mon-mini-card:hover, .mon-mini-card:focus-visible { border-color: var(--accent-color); transform: translateY(-1px); outline: none; }
-.mon-mini-card.mon-down { border-color: rgba(248, 81, 73, 0.5); background: linear-gradient(180deg, var(--danger-bg), var(--bg-tertiary)); }
-.mon-mini-card.mon-warn { border-color: rgba(210, 153, 34, 0.5); }
-.mon-mini-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
-.mon-mini-head strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.mon-mini-head .mon-chips { margin-left: auto; }
-.mon-tag { font-size: 10px; color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 10px; padding: 0 6px; }
-.mon-rings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .mon-ring { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--success-color); }
 .mon-ring.mon-lvl-warn { color: var(--warning-color); }
 .mon-ring.mon-lvl-crit { color: var(--danger-color); }
@@ -2236,25 +2217,12 @@ html.is-mobile-ui .data-table tr:hover td {
 }
 .mon-ring strong small { font-size: 9px; color: var(--text-muted); margin-left: 1px; }
 .mon-ring span { font-size: 11px; color: var(--text-secondary); }
-.mon-mini-down { display: flex; flex-direction: column; gap: 2px; min-height: 76px; justify-content: center; font-size: 13px; }
-.mon-mini-down strong { color: var(--danger-color); font-size: 15px; }
-.mon-mini-down.mon-muted strong { color: inherit; }
-.mon-mini-foot { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
 
 /* Compact cards: one row per machine, small rings, active one highlighted */
-.mon-mini-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 10px; }
-.mon-mini-card { padding: 10px 14px; border-radius: 10px; }
-.mon-mini-card.active { border-color: var(--accent-color); box-shadow: 0 0 0 1px var(--accent-color); }
-.mon-mini-inner { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 14px; }
-.mon-mini-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
-.mon-mini-head strong { font-size: 14px; }
-.mon-mini-head .mon-chips { margin-left: 0; }
-.mon-rings { display: flex; gap: 8px; flex-shrink: 0; }
 .mon-ring svg { width: 42px; height: 42px; }
 .mon-ring strong { height: 42px; font-size: 11px; }
 .mon-ring strong small { display: none; }
 .mon-ring span { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
-.mon-mini-down { min-height: 0; align-items: flex-end; text-align: right; }
 .dash-machine-pane { margin-top: 20px; }
 
 /* Machine screen */
@@ -2298,3 +2266,4 @@ label.mon-row:hover { border-color: #444c56; }
 }
 .mon-overview-rings .mon-ring strong small { display: inline; }
 .mon-overview-rings .mon-ring span { font-size: 12px; text-transform: none; letter-spacing: 0; }
+#dash-machines-body:empty + .dash-machine-pane { margin-top: 0; }

@@ -87,48 +87,10 @@
     </div>`;
   }
 
-  function miniCardHtml(h, ctx) {
-    const esc = ctx.escapeHtml;
-    const status = statusOf(h);
-    const dot = status === 'ok' ? 'host-dot-on' : status === 'down' ? 'host-dot-off' : status === 'warn' ? 'mon-dot-warn' : '';
-    const hl = h.health;
-    const chips = h.alerts.map((k) => `<span class="badge ${k === 'offline' ? 'badge-danger' : 'badge-warning'}">${esc(ALERT_LABELS[k] || k)}</span>`).join('');
-    let body;
-    if (h.online === false) {
-      body = `<div class="mon-mini-down"><strong>Offline</strong><span>since ${esc(fmtAgo(h.since))}</span></div>`;
-    } else if (!hl) {
-      body = `<div class="mon-mini-down mon-muted">${h.online ? 'Online — update this machine for live metrics' : 'Checking…'}</div>`;
-    } else {
-      const load = Math.min(100, Math.round((hl.loadPerCore || 0) * 100));
-      body = `<div class="mon-rings">
-        ${ring(esc, 'CPU', load, 70, 100)}
-        ${ring(esc, 'RAM', hl.memory && hl.memory.usedPercent, 80, 95)}
-        ${ring(esc, 'Disk', hl.disk && hl.disk.usedPercent, 80, 90)}
-      </div>`;
-    }
-    const foot = [
-      hl ? `⏱ ${fmtDuration(hl.uptimeSeconds)}` : null,
-      h.latencyMs !== null && !h.isLocal ? `⇄ ${h.latencyMs} ms` : null,
-      h.version ? `v${h.version}` : null,
-    ].filter(Boolean).map(esc).join(' · ');
-    return `<button type="button" class="mon-mini-card mon-${status}${h.id === ctx.activeHostId() ? ' active' : ''}" data-mon-machine="${esc(h.id)}" title="Open ${esc(h.name)}">
-      <span class="mon-mini-inner">
-        <span class="mon-mini-info">
-          <span class="mon-mini-head">
-            <span class="host-dot ${dot}"></span>
-            <strong>${esc(h.name)}</strong>
-            ${h.isLocal ? '<span class="mon-tag">this machine</span>' : ''}
-            <span class="mon-chips">${chips}</span>
-          </span>
-          <span class="mon-mini-foot">${foot || '&nbsp;'}</span>
-        </span>
-        ${body}
-      </span>
-    </button>`;
-  }
-
   // --- Dashboard ------------------------------------------------------------
 
+  // Cross-machine alerts strip. The machines themselves are chosen in the
+  // selector; this only surfaces problems on any of them.
   async function renderWidget(ctx) {
     const body = document.getElementById('dash-machines-body');
     if (!body) return;
@@ -138,14 +100,9 @@
       if (!target) { clearInterval(refreshTimer); return; }
       try {
         const data = await ctx.localApi('/api/monitor/overview');
-        target.innerHTML = `${data.alerts.length ? alertsHtml(data.alerts.slice(0, 3), ctx) : ''}
-          ${data.hosts.length ? `<div class="mon-mini-grid">${data.hosts.map((h) => miniCardHtml(h, ctx)).join('')}</div>`
-    : '<div class="mon-muted">First check in progress…</div>'}`;
-        target.querySelectorAll('[data-mon-machine]').forEach((el) => {
-          el.onclick = () => ctx.openMachine(el.getAttribute('data-mon-machine'));
-        });
-      } catch (err) {
-        target.innerHTML = `<div class="mon-muted">${ctx.escapeHtml(err.message)}</div>`;
+        target.innerHTML = data.alerts.length ? alertsHtml(data.alerts.slice(0, 3), ctx) : '';
+      } catch {
+        target.innerHTML = '';
       }
     };
     await draw();

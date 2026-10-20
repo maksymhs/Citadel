@@ -1090,8 +1090,6 @@
       localApi, escapeHtml, showToast, openModal, reloadWhenServerReady,
       isAdmin: Boolean(state.user && state.user.role === 'admin'),
       activeHostId: () => state.activeHostId,
-      // Picking a card is the same as choosing that machine in the selector.
-      openMachine: (id) => { if (id !== state.activeHostId) switchHost(id); },
       useMachine,
       openProject: openProjectOn,
       installAgent: installAgentOn,
@@ -1146,7 +1144,7 @@
     switch (id) {
       case 'machines':
         return `<div class="dash-widget" data-widget="machines">
-          <div id="dash-machines-body"><div class="mon-muted">Loading…</div></div>
+          <div id="dash-machines-body"></div>
           <div id="dash-machine-pane" class="dash-machine-pane"></div>
         </div>`;
       case 'fleet':
