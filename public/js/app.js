@@ -1186,11 +1186,11 @@
       case 'projects':
         return card(`<div class="card-title">ACTIVE PROJECTS</div>
           <div class="card-value">${state.projects.length}</div>
-          <div class="card-subtitle">${node.stats.activeSessions} persistent terminals</div>`);
+          <div class="card-subtitle">${node.stats.activeSessions} persistent terminals</div>`, 'terminals');
       case 'host':
         return card(`<div class="card-title">VPS HOST</div>
           <div class="card-value" style="font-size:18px;">${escapeHtml(node.hostname)}</div>
-          <div class="card-subtitle">${escapeHtml(node.platform)} ${escapeHtml(node.release)} (${node.arch})</div>`);
+          <div class="card-subtitle">${escapeHtml(node.platform)} ${escapeHtml(node.release)} (${node.arch})</div>`, 'settings');
       case 'integrations':
         return card(`<h3 class="widget-heading">Platform integrations</h3>
           <div class="integration-list">
@@ -1293,6 +1293,74 @@
       showToast(err.message, 'error');
     }
   }
+  // Window listing every persistent terminal on the active machine, to pick
+  // some and kill them (tmux session and PTY are removed).
+  async function killTerminals(ids) {
+    for (const id of ids) {
+      disposeTerminalItem(state.terminals.get(id) || state.sysTerminals.get(id));
+      state.terminals.delete(id);
+      state.sysTerminals.delete(id);
+      await api(`/api/terminals/${id}`, { method: 'DELETE' }).catch(() => {});
+    }
+    await loadSessions();
+    if (state.currentView === 'dashboard') renderDashboardView();
+  }
+
+  async function showTerminalsModal() {
+    let sessions;
+    try {
+      const res = await api('/api/terminals');
+      sessions = (res.sessions || []).filter((t) => t.isAlive || t.status === 'active');
+    } catch (err) {
+      showToast(err.message, 'error');
+      return;
+    }
+    const projectName = (id) => {
+      if (!id) return 'System';
+      const p = state.projects.find((x) => x.id === id);
+      return p ? p.name : 'Unknown project';
+    };
+    const rowHtml = (t) => `
+      <label class="term-row">
+        <input type="checkbox" class="term-check" value="${escapeHtml(t.id)}">
+        <span class="term-info">
+          <strong>${escapeHtml(t.name)}</strong>
+          <span class="mon-muted">${escapeHtml(projectName(t.project_id))} · started ${escapeHtml(new Date(t.created_at).toLocaleString())}${t.connectedClients ? ` · ${t.connectedClients} viewing` : ''}</span>
+        </span>
+        <span class="badge ${t.isAlive ? 'badge-success' : 'badge-danger'}">${t.isAlive ? 'running' : 'dead'}</span>
+        <button type="button" class="btn btn-danger btn-sm term-kill-one" data-id="${escapeHtml(t.id)}">Kill</button>
+      </label>`;
+    openModal({
+      title: `Persistent terminals (${sessions.length})`,
+      confirmText: 'Kill selected',
+      bodyHtml: sessions.length === 0
+        ? '<div class="mon-muted">No persistent terminals are running.</div>'
+        : `<div class="term-toolbar">
+            <label><input type="checkbox" id="term-select-all"> Select all</label>
+            <span class="mon-muted">Killing a terminal ends its tmux session and everything running in it.</span>
+          </div>
+          <div class="term-list">${sessions.map(rowHtml).join('')}</div>`,
+      onConfirm: async () => {
+        const ids = Array.from(document.querySelectorAll('.term-check:checked')).map((c) => c.value);
+        if (ids.length === 0) throw new Error('Select at least one terminal.');
+        await killTerminals(ids);
+        showToast(`${ids.length} terminal${ids.length === 1 ? '' : 's'} killed.`, 'success');
+      },
+    });
+    document.getElementById('term-select-all')?.addEventListener('change', (e) => {
+      document.querySelectorAll('.term-check').forEach((c) => { c.checked = e.target.checked; });
+    });
+    document.querySelectorAll('.term-kill-one').forEach((btn) => {
+      btn.onclick = async (e) => {
+        e.preventDefault();
+        btn.disabled = true;
+        await killTerminals([btn.getAttribute('data-id')]);
+        showToast('Terminal killed.', 'success');
+        showTerminalsModal();
+      };
+    });
+  }
+
   async function renderDashboardView() {
     const content = document.getElementById('main-content');
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading system metrics...</div>';
@@ -1330,7 +1398,11 @@
 
       // Memory/CPU cards open the dedicated live processes screen.
       document.querySelectorAll('.dash-widget-clickable[data-target-view]').forEach((el) => {
-        const go = () => navigateTo(el.getAttribute('data-target-view'));
+        const go = () => {
+          const target = el.getAttribute('data-target-view');
+          if (target === 'terminals') showTerminalsModal();
+          else navigateTo(target);
+        };
         el.onclick = go;
         el.onkeydown = (e) => {
           if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
