@@ -488,3 +488,17 @@ describe('Pairing redeem (scanner side)', () => {
     assert.match(JSON.parse(res.payload).error, /same host/i);
   });
 });
+
+describe('parsePairingCode forms', () => {
+  const hostService = require('../server/services/hostService');
+  const compact = 'https://abc.trycloudflare.com/#pair=v1.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+  test('accepts full links and the bare pair= fragment', () => {
+    assert.equal(hostService.parsePairingCode(compact).url, 'https://abc.trycloudflare.com');
+    assert.throws(() => hostService.parsePairingCode('pair=v1.AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'), /must include its link address/);
+  });
+
+  test('a plain panel address explains how to get a pairing code', () => {
+    assert.throws(() => hostService.parsePairingCode('https://abc.trycloudflare.com/'), /Settings → Connection/);
+  });
+});

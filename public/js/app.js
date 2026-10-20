@@ -4363,16 +4363,19 @@
         api('/api/system/node'),
         api('/api/system/version'),
         api('/api/secrets'),
-        canPair ? api('/api/pair/invite', { method: 'POST' }).catch(() => null) : Promise.resolve(null),
+        canPair ? api('/api/pair/invite', { method: 'POST' }).catch((err) => ({ inviteError: err.message || 'failed' })) : Promise.resolve(null),
       ]);
       await loadModules();
       const s = settingsRes.connect || {};
       const connect = connectRes.connect || {};
       const node = nodeRes.node || {};
       const invite = inviteRes && inviteRes.invite ? inviteRes.invite : null;
+      const inviteError = inviteRes && inviteRes.inviteError ? inviteRes.inviteError : null;
       // One code, two jobs: any camera opens the panel, and another Citadel's
       // Pair screen reads the same invitation from the fragment.
-      const qrSvg = (invite && invite.qrSvg) || connect.qrSvg || '';
+      // Never show the plain-address QR when an administrator's invitation
+      // failed: it opens the panel but cannot pair, which looked like a bug.
+      const qrSvg = (invite && invite.qrSvg) || (inviteError ? '' : connect.qrSvg) || '';
       const qrLink = (invite && invite.link) || connect.url || '';
       const qrAddress = (invite && invite.payload && invite.payload.url) || connect.url || '';
       const ver = versionRes.version || {};
@@ -4523,7 +4526,9 @@
                     This pairing code works once and expires ${escapeHtml(new Date(invite.expiresAt).toLocaleTimeString())}.
                     ${invite.reachableWarning ? `<span style="color:var(--warning-color);display:block;margin-top:4px;">${escapeHtml(invite.reachableWarning)}</span>` : ''}
                   </div>`
-                : '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Sign in as an administrator to generate a pairing code.</div>'}
+                : inviteError
+                  ? `<div style="margin-top:10px;font-size:12px;color:var(--danger-color);">Could not create a pairing code: ${escapeHtml(inviteError)}. Reload Settings to retry.</div>`
+                  : '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Sign in as an administrator to generate a pairing code.</div>'}
             </div>
           </div>
         </div>

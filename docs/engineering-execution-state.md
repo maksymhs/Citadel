@@ -1384,3 +1384,14 @@ README/.env.example/architecture. No commits/pushes/deploys.
   opens the panel from a phone camera and pairs from another Citadel's Pair
   screen. `citadel tunnel` run by hand still prints its QR.
 - Version bumped to `0.33.3`; asset cache-buster token moved to `v0333`.
+
+## 78. Pairing QR scan errors (v0.33.4)
+- **Bug.** Scanning a Settings pairing QR from another Citadel reported "That
+  link does not contain a pairing code". The Settings QR silently fell back to
+  the plain panel address when the invite request failed, and the dense
+  full-JSON QR was hard to scan.
+- **Fix.** The Settings QR now encodes the compact invite (98 vs 400 bytes); a
+  failed invite shows an error instead of a pairing-less QR; `parsePairingCode`
+  accepts a bare `pair=` fragment and explains how to get a real pairing code
+  when given a plain address.
+- Version bumped to `0.33.4`; asset cache-buster token moved to `v0334`.

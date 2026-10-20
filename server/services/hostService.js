@@ -432,7 +432,9 @@ function createInvite({ userId, url } = {}) {
     encoded,
     link,
     compactLink,
-    qrSvg: connectService.qrSvg(link),
+    // The compact link encodes far fewer bytes, so the QR is lower density and
+    // scans reliably from a phone camera or across a screen.
+    qrSvg: connectService.qrSvg(compactLink),
     reachableWarning: /^http:\/\/(127\.0\.0\.1|localhost|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(identity.url)
       ? 'This address only works on the same network. Use Tailscale or a tunnel URL so the other machine can reach it.'
       : null,
@@ -446,7 +448,7 @@ function parsePairingCode(code) {
   const raw = String(code || '').trim();
   if (!raw) throw new Error('Paste the pairing link or scan its QR code.');
   let linkUrl = null;
-  let encoded = raw;
+  let encoded = raw.replace(/^#?pair=/i, '');
   if (/^https?:\/\//i.test(raw)) {
     try {
       const url = new URL(raw);
@@ -456,7 +458,7 @@ function parsePairingCode(code) {
       url.hash = '';
       linkUrl = url.toString().replace(/\/+$/, '');
     } catch {
-      throw new Error('That link does not contain a pairing code.');
+      throw new Error('That is the plain panel address, not a pairing code. On the other Citadel open Settings → Connection (signed in as admin) and scan the QR shown there, or copy its full link including the #pair=… part.');
     }
   }
 
