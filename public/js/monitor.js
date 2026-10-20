@@ -155,6 +155,7 @@
     { id: 'tools', label: 'Tools' },
   ];
   let machineTab = 'overview';
+  let showMissingTools = false;
   let machineTimer = null;
 
   // Renders the detail of one machine into the dashboard pane under the cards.
@@ -392,26 +393,23 @@
           { id: 'caddy', name: 'Caddy', group: 'Network', installed: Boolean(integ.caddy && integ.caddy.available) },
           { id: 'docker', name: 'Docker', group: 'Containers', installed: Boolean(integ.docker && integ.docker.available) },
         ];
-        const chip = (t) => `<div class="mon-tool ${t.installed ? 'on' : 'off'}" title="${esc(t.path || '')}">
-          <span class="status-dot ${t.installed ? 'ok' : 'off'}"></span>${esc(t.name)}${t.version ? `<span class="mon-tool-ver">${esc(t.version)}</span>` : ''}${t.installed && running[t.id] ? '<span class="badge badge-success">running</span>' : ''}
+        const tile = (t) => `<div class="mon-tile${t.installed ? '' : ' off'}" title="${esc(t.path || `${t.name} is not installed`)}">
+          <span class="mon-tile-badge g-${esc(t.group.toLowerCase())}">${esc(t.name.slice(0, 2))}</span>
+          <span class="mon-tile-text"><b>${esc(t.name)}</b><i>${esc(t.installed ? (t.version || 'installed') : 'not installed')}</i></span>
+          ${t.installed && running[t.id] ? '<span class="mon-tile-live" title="Running"></span>' : ''}
         </div>`;
         const groups = ['Runtimes', 'Development', 'Containers', 'Network', 'System'];
+        const visible = (t) => t.installed || showMissingTools;
         const groupHtml = groups.map((g) => {
-          const items = tools.filter((t) => t.group === g);
-          const have = items.filter((t) => t.installed);
-          const missing = items.filter((t) => !t.installed);
+          const items = tools.filter((t) => t.group === g && visible(t));
           if (!items.length) return '';
-          return `<div class="mon-tool-group">
-            <div class="mon-muted mon-tool-title">${esc(g)} <span>${have.length}/${items.length}</span></div>
-            <div class="mon-tools">${have.map(chip).join('') || '<span class="mon-muted">None detected</span>'}</div>
-            ${missing.length ? `<details class="mon-tool-missing"><summary>${missing.length} not installed</summary><div class="mon-tools">${missing.map(chip).join('')}</div></details>` : ''}
-          </div>`;
+          return `<div class="mon-tool-group"><div class="mon-tool-title">${esc(g)}</div><div class="mon-tiles">${items.map(tile).join('')}</div></div>`;
         }).join('');
-        const installedCount = tools.filter((t) => t.installed).length;
+        const missingCount = tools.filter((t) => !t.installed).length;
         body.innerHTML = `
           <div class="card">
-            <div class="mon-tab-toolbar"><span class="mon-muted">${installedCount} of ${tools.length} common tools installed</span></div>
-            ${groupHtml}
+            ${missingCount ? `<label class="mon-tools-toggle"><input type="checkbox" id="mon-show-missing" ${showMissingTools ? 'checked' : ''}> Show not installed (${missingCount})</label>` : ''}
+            ${groupHtml || '<div class="mon-muted">No common tools detected.</div>'}
           </div>
           <div class="card">
             <div class="mon-muted" style="margin-bottom:8px;">AI coding agents</div>
@@ -424,6 +422,10 @@
               </div>`).join('')}
             </div>
           </div>`;
+        document.getElementById('mon-show-missing')?.addEventListener('change', (e) => {
+          showMissingTools = e.target.checked;
+          renderMachine(ctx, hostId, 'tools', false);
+        });
         body.querySelectorAll('[data-mon-install]').forEach((b) => {
           b.onclick = () => ctx.installAgent(host.id, b.getAttribute('data-mon-install'), b.getAttribute('data-name'));
         });
