@@ -173,7 +173,9 @@ delegate_platform_script() {
   fi
   local branch="${CITADEL_REPO_BRANCH:-main}"
   local raw_base="${CITADEL_RAW_BASE_URL:-https://raw.githubusercontent.com/maksymhs/Citadel/$branch}"
-  curl -fsSL "$raw_base/scripts/$script_name" | bash -s -- "$@"
+  # raw.githubusercontent.com caches files for ~5 minutes; a unique query string
+  # makes sure the platform script matches the repository head just cloned.
+  curl -fsSL "$raw_base/scripts/$script_name?cb=$(date +%s)" | bash -s -- "$@"
   exit $?
 }
 

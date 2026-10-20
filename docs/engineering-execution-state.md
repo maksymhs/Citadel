@@ -1569,3 +1569,11 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Verified on Linux with stubs for `uname`, `launchctl` and `cloudflared` (flow,
   output and QR); `mktemp` uses a portable template. Not run on a real Mac.
 - Version bumped to `0.36.2`; asset cache-buster token moved to `v0362`.
+
+## 93. Installer fetches platform scripts without the CDN cache (v0.36.3)
+- Right after a release, `curl .../install.sh | bash` could run the previous
+  `install-macos.sh`: raw.githubusercontent.com caches files for 5 minutes. The
+  delegated fetch now appends a unique `?cb=<epoch>` so the platform script is
+  always current. (`install.sh` itself, fetched by the user's `curl`, can still
+  be up to 5 minutes stale after a push.)
+- Version bumped to `0.36.3`; asset cache-buster token moved to `v0363`.
