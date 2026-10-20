@@ -12,8 +12,7 @@ test('print-qr renders a scannable grid', () => {
     encoding: 'utf8',
     env: { ...process.env, TERM: 'xterm-256color', LANG: 'en_US.UTF-8', LC_ALL: '', LC_CTYPE: '' },
   });
-  assert.match(out, /\x1b\[30;47m/);
-  assert.match(out, /[█▀▄]/);
+  assert.match(out, /\x1b\[38;5;(16|231);48;5;(16|231)m▀/);
   assert.ok(out.split('\n').length > 10);
 });
 
@@ -96,4 +95,43 @@ test('power helper documents how to enable and restore', () => {
   assert.match(out, /citadel power on/);
   assert.match(out, /citadel power off/);
   assert.match(out, /suspend\/hibernate/);
+});
+
+test('print-qr unicode output decodes back to the original text', () => {
+  const jsQR = require('jsqr');
+  const text = 'https://evolution-gifts-significant-cas.trycloudflare.com/#pair=v1.lgGchkRcTQ62aLZcGZhzGA.8c2p57Hz_w-6BSNO3GfZAR-Ui2N8Gtqy';
+  const out = execFileSync(process.execPath, [PRINT_QR, text], {
+    encoding: 'utf8',
+    env: { ...process.env, TERM: 'xterm-256color', LANG: 'en_US.UTF-8', LC_ALL: '', LC_CTYPE: '', COLUMNS: '100', LINES: '40' },
+  });
+  // Rebuild the module grid from the escape sequences: each ▀ is two modules.
+  const rows = [];
+  for (const line of out.split('\n').filter(Boolean)) {
+    const top = [];
+    const bottom = [];
+    let fg = 231;
+    let bg = 231;
+    const re = /\x1b\[38;5;(\d+);48;5;(\d+)m|▀/g;
+    let m;
+    while ((m = re.exec(line))) {
+      if (m[1]) { fg = Number(m[1]); bg = Number(m[2]); } else { top.push(fg === 16); bottom.push(bg === 16); }
+    }
+    rows.push(top, bottom);
+  }
+  const scale = 4;
+  const size = rows[0].length;
+  const width = size * scale;
+  const height = rows.length * scale;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const dark = rows[Math.floor(y / scale)][Math.floor(x / scale)];
+      const o = (y * width + x) * 4;
+      data[o] = data[o + 1] = data[o + 2] = dark ? 0 : 255;
+      data[o + 3] = 255;
+    }
+  }
+  const decoded = jsQR(data, width, height);
+  assert.ok(decoded, 'the rendered grid is a valid QR code');
+  assert.equal(decoded.data, text);
 });

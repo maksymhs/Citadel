@@ -69,23 +69,31 @@ const LAYOUTS = [
   { quiet: 1, reserved: 1 },
 ];
 
+// Every cell is the same "upper half block" glyph; the module above is its
+// foreground and the module below its background, both fixed 256-colour values
+// (16 = black, 231 = white) that do not depend on the terminal theme. Solid
+// areas therefore never show seams, which the mix of █ ▀ ▄ glyphs used to leave
+// on terminals whose font draws block elements slightly short (macOS Terminal).
+const DARK = 16;
+const LIGHT = 231;
+
 function renderUnicode(code) {
-  // Force black-on-white so the code keeps its polarity on dark terminals.
-  let out = '\x1b[30;47m';
+  let out = '';
   for (let row = 0; row < code.size; row += 2) {
+    let current = '';
     for (let col = 0; col < code.size; col++) {
-      const top = code.isDark(row, col);
-      const bottom = code.isDark(row + 1, col);
-      if (top && bottom) out += '█';
-      else if (top) out += '▀';
-      else if (bottom) out += '▄';
-      else out += ' ';
+      const fg = code.isDark(row, col) ? DARK : LIGHT;
+      const bg = code.isDark(row + 1, col) ? DARK : LIGHT;
+      const sgr = `\x1b[38;5;${fg};48;5;${bg}m`;
+      if (sgr !== current) {
+        out += sgr;
+        current = sgr;
+      }
+      out += '▀';
     }
-    if (row + 2 < code.size) {
-      out += '\x1b[0m\n\x1b[30;47m';
-    }
+    out += '\x1b[0m\n';
   }
-  return `${out}\x1b[0m\n`;
+  return out;
 }
 
 function renderAscii(code) {

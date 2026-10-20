@@ -1577,3 +1577,15 @@ README/.env.example/architecture. No commits/pushes/deploys.
   always current. (`install.sh` itself, fetched by the user's `curl`, can still
   be up to 5 minutes stale after a push.)
 - Version bumped to `0.36.3`; asset cache-buster token moved to `v0363`.
+
+## 94. Terminal QR drawn with one glyph and fixed colours (v0.36.4)
+- On macOS Terminal the QR looked broken: the renderer mixed `█ ▀ ▄` glyphs on a
+  theme-dependent black/white pair, and fonts that draw block elements slightly
+  short leave seams. Each cell now uses only `▀` with explicit 256-colour
+  foreground/background (16 black, 231 white), so solid areas have no seams and
+  the code does not depend on the terminal theme.
+- Test: the rendered escape sequences are parsed back into a module grid and
+  decoded with jsQR; the result equals the pairing link. If a terminal still
+  distorts it, `CITADEL_QR_MODE=ascii citadel qr` draws full coloured cells
+  (needs about 45 rows).
+- Version bumped to `0.36.4`; asset cache-buster token moved to `v0364`.
