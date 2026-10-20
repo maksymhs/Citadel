@@ -408,10 +408,6 @@
         const missingCount = tools.filter((t) => !t.installed).length;
         body.innerHTML = `
           <div class="card">
-            ${missingCount ? `<label class="mon-tools-toggle"><input type="checkbox" id="mon-show-missing" ${showMissingTools ? 'checked' : ''}> Show not installed (${missingCount})</label>` : ''}
-            ${groupHtml || '<div class="mon-muted">No common tools detected.</div>'}
-          </div>
-          <div class="card">
             <div class="mon-muted" style="margin-bottom:8px;">AI coding agents</div>
             <div class="mon-rows">
               ${(integ.agents || []).map((a) => `<div class="mon-row">
@@ -421,6 +417,10 @@
     : `<button class="btn btn-secondary btn-sm" data-mon-install="${esc(a.id)}" data-name="${esc(a.name)}" ${ctx.isAdmin ? '' : 'disabled'}>Install</button>`}
               </div>`).join('')}
             </div>
+          </div>
+          <div class="card">
+            ${missingCount ? `<label class="mon-tools-toggle"><input type="checkbox" id="mon-show-missing" ${showMissingTools ? 'checked' : ''}> Show not installed (${missingCount})</label>` : ''}
+            ${groupHtml || '<div class="mon-muted">No common tools detected.</div>'}
           </div>`;
         document.getElementById('mon-show-missing')?.addEventListener('change', (e) => {
           showMissingTools = e.target.checked;
