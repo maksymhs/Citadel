@@ -437,6 +437,18 @@ function initDatabase(customPath = null) {
       details TEXT
     );
 
+    -- One reachability/health probe per machine, for uptime % and history.
+    CREATE TABLE IF NOT EXISTS host_checks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      online INTEGER NOT NULL,
+      latency_ms INTEGER,
+      load_per_core REAL,
+      mem_percent INTEGER,
+      disk_percent INTEGER
+    );
+
     -- Periodic resource samples for historical charts and export.
     CREATE TABLE IF NOT EXISTS metric_samples (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -473,6 +485,7 @@ function initDatabase(customPath = null) {
     CREATE INDEX IF NOT EXISTS idx_tasks_lease ON tasks(lease_until);
     CREATE INDEX IF NOT EXISTS idx_tasks_reconcile ON tasks(status, reconcile_state);
     CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+    CREATE INDEX IF NOT EXISTS idx_host_checks_host_ts ON host_checks(host_id, ts);
     CREATE INDEX IF NOT EXISTS idx_events_level ON events(level);
     CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
     CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metric_samples(ts);

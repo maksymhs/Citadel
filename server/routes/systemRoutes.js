@@ -11,6 +11,7 @@ const updateService = require('../services/updateService');
 const updateRolloutService = require('../services/updateRolloutService');
 const auditService = require('../services/auditService');
 const connectService = require('../services/connectService');
+const serviceLogs = require('../services/serviceLogService');
 const agentInstallService = require('../services/agentInstallService');
 
 function requireAdmin(request, reply, done) {
@@ -36,6 +37,41 @@ async function systemRoutes(fastify) {
     return {
       metrics: await nodeService.getMetrics(),
     };
+  });
+
+  // Compact health snapshot (load, memory, disk, uptime) read by the fleet
+  // monitor on the machine that watches this one.
+  fastify.get('/api/system/health', async () => {
+    const info = updateService.getVersionInfo();
+    return {
+      health: await nodeService.getHealth(),
+      version: info.version,
+      commit: info.commit,
+    };
+  });
+
+  // Tail of the service log, for diagnosing a machine without opening a shell.
+  fastify.get('/api/system/logs', { preHandler: requireAdmin }, async (request) => {
+    const lines = Math.min(Math.max(parseInt(request.query?.lines, 10) || 200, 10), 1000);
+    return serviceLogs.tail(lines);
+  });
+
+  // Restart the Citadel service. The process exits cleanly and the service
+  // manager (systemd Restart=always / launchd KeepAlive) brings it back; tmux
+  // terminals keep running meanwhile.
+  fastify.post('/api/system/restart', { preHandler: requireAdmin }, async (request, reply) => {
+    auditService.logAction({
+      userId: request.user.id,
+      action: 'system_restart_requested',
+      targetType: 'system',
+      targetId: 'citadel',
+      ip: request.ip,
+    });
+    const scheduled = serviceLogs.scheduleRestart();
+    if (!scheduled) {
+      return reply.status(409).send({ error: 'Restart is disabled in this environment.' });
+    }
+    return { restarting: true };
   });
 
   // Top running processes by CPU and memory usage

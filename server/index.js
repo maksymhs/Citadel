@@ -31,6 +31,7 @@ const terminalRoutes = require('./routes/terminalRoutes');
 const systemRoutes = require('./routes/systemRoutes');
 const peerRoutes = require('./routes/peerRoutes');
 const fleetRoutes = require('./routes/fleetRoutes');
+const monitorRoutes = require('./routes/monitorRoutes');
 const taskRoutes = require('./routes/taskRoutes');
 const logRoutes = require('./routes/logRoutes');
 const fileRoutes = require('./routes/fileRoutes');
@@ -47,6 +48,7 @@ const hostService = require('./services/hostService');
 const meshService = require('./services/meshService');
 const secretSyncService = require('./services/secretSyncService');
 const updateRolloutService = require('./services/updateRolloutService');
+const monitorService = require('./services/monitorService');
 
 async function buildServer(options = {}) {
   // Only honour X-Forwarded-* from explicitly trusted peers (default loopback).
@@ -156,6 +158,7 @@ async function buildServer(options = {}) {
   await fastify.register(systemRoutes);
   await fastify.register(peerRoutes);
   await fastify.register(fleetRoutes);
+  await fastify.register(monitorRoutes);
   await fastify.register(taskRoutes);
   await fastify.register(logRoutes);
   await fastify.register(fileRoutes);
@@ -198,6 +201,7 @@ async function startServer() {
   // Observability: start sampling resources and recording node health.
   logService.record({ category: 'system', action: 'server_started', message: `Citadel started (v${APP_VERSION}).` });
   logService.startSampler();
+  monitorService.start();
 
   // Peer address announcements. A Cloudflare Quick Tunnel URL changes on every
   // restart, so paired hosts re-learn this host's current address shortly after
@@ -259,6 +263,7 @@ async function startServer() {
         clearTimeout(vaultSyncStartup);
         clearTimeout(announceStartup);
         logService.stopSampler();
+        monitorService.stop();
         await fastify.close();
         closeDatabase();
         console.log('[Citadel] Server and database closed cleanly.');

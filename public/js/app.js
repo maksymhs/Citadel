@@ -63,12 +63,13 @@
   // gone: host diagnostics/updates and Activity & Audit live in Settings.
   const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace'];
   const CORE_NAV = [
+    { view: 'machines', label: 'Machines', icon: 'machines' },
     { view: 'files', label: 'Files', icon: 'files' },
     { view: 'settings', label: 'Settings', icon: 'settings' },
   ];
 
   // Always called on this machine, never proxied to the selected host.
-  const LOCAL_ONLY_API = ['/api/auth/', '/api/pair/', '/api/hosts', '/api/host/', '/api/fleet/'];
+  const LOCAL_ONLY_API = ['/api/auth/', '/api/pair/', '/api/hosts', '/api/host/', '/api/fleet/', '/api/monitor/'];
   const OPTIONAL_NAV = [
     { module: 'proxy', view: 'proxy', label: 'Proxy & Domains', icon: 'globe-icon' },
     { module: 'docker', view: 'docker', label: 'Docker', icon: 'docker-icon' },
@@ -88,7 +89,7 @@
   // Default dashboard widget order. Widgets whose module is disabled/unavailable
   // are dropped at render time so the layout always stays valid.
   const DEFAULT_DASHBOARD_WIDGETS = [
-    'memory', 'cpu', 'projects', 'host', 'fleet',
+    'machines', 'memory', 'cpu', 'projects', 'host', 'fleet',
     'integrations', 'quick-access',
   ];
   const WIDGET_REQUIRES = { fleet: 'fleet', metrics: 'metrics' };
@@ -167,6 +168,7 @@
     files: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6"/>',
     proxy: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
     docker: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>',
+    machines: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>',
     fleet: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.003 0 003 15z"/>',
   };
 
@@ -1009,6 +1011,9 @@
     } else if (view === 'settings') {
       titleEl.textContent = 'Settings';
       renderSettingsView();
+    } else if (view === 'machines') {
+      titleEl.textContent = 'Machines';
+      window.CitadelMonitor.renderView(monitorCtx());
     } else if (view === 'processes') {
       titleEl.textContent = 'Top processes';
       renderProcessesView();
@@ -1093,11 +1098,21 @@
     }
   }
 
+  // Shared helpers handed to monitor.js (the Machines screen and dashboard widget).
+  function monitorCtx() {
+    return {
+      localApi, escapeHtml, showToast, openModal,
+      isAdmin: Boolean(state.user && state.user.role === 'admin'),
+      switchHost: (id) => (id === state.activeHostId ? navigateTo('dashboard') : switchHost(id)),
+    };
+  }
+
   // 1. Dashboard View
   // --- Dashboard widgets ----------------------------------------------------
   // Each widget is independently ordered/toggled and persisted per browser.
   // Widgets backed by an optional module disappear when that module is off.
   const DASHBOARD_WIDGETS = {
+    machines: { title: 'Machines — health & alerts', size: 12, module: 'dashboard' },
     memory: { title: 'Memory usage', size: 3, module: 'dashboard' },
     cpu: { title: 'CPU load (1m)', size: 3, module: 'dashboard' },
     projects: { title: 'Active projects', size: 3, module: 'projects' },
@@ -1185,6 +1200,15 @@
                 <button class="btn btn-secondary btn-sm open-workspace-btn" data-project-id="${p.id}">Open</button>
               </div>`).join('')}
           </div>`);
+      case 'machines':
+        return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;">
+            <div>
+              <h3 class="widget-heading">Machines</h3>
+              <div id="dash-machines-summary" class="mon-muted" style="margin-top:2px;">Checking…</div>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="dash-machines-open">Open</button>
+          </div>
+          <div id="dash-machines-body"><div class="mon-muted">Loading…</div></div>`);
       case 'fleet':
         return card(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
             <div>
@@ -1295,6 +1319,10 @@
       });
 
       if (widgets.includes('fleet')) refreshDashboardFleet();
+      if (widgets.includes('machines')) {
+        document.getElementById('dash-machines-open')?.addEventListener('click', () => navigateTo('machines'));
+        window.CitadelMonitor.renderWidget(monitorCtx());
+      }
 
       document.querySelectorAll('.install-agent-btn').forEach((btn) => {
         btn.onclick = () => installAgent(btn.getAttribute('data-tool'), btn.getAttribute('data-name') || btn.getAttribute('data-tool'), btn);

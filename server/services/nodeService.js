@@ -6,6 +6,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const { getDatabase } = require('../database/db');
+const { DATA_DIR } = require('../config');
 
 const PROCESS_LIMIT_DEFAULT = 15;
 const PROCESS_LIMIT_MAX = 100;
@@ -105,6 +106,58 @@ class LocalNodeService extends INodeService {
       memoryUsedPercent: Math.round((usedMem / totalMem) * 100),
       freeMemMB: Math.round(freeMem / (1024 * 1024)),
       totalMemMB: Math.round(totalMem / (1024 * 1024)),
+    };
+  }
+
+  /**
+   * One compact snapshot for the fleet monitor: load, memory, disk and uptime.
+   * Disk usage covers the data directory's filesystem (where projects live).
+   */
+  async getHealth() {
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const cores = os.cpus().length || 1;
+    const load1 = os.loadavg()[0];
+
+    let disk = null;
+    try {
+      const st = fs.statfsSync(DATA_DIR);
+      const total = st.blocks * st.bsize;
+      const free = st.bavail * st.bsize;
+      if (total > 0) {
+        disk = {
+          totalBytes: total,
+          freeBytes: free,
+          usedPercent: Math.round(((total - free) / total) * 100),
+        };
+      }
+    } catch {
+      // statfs is unavailable on some platforms; the disk gauge is optional.
+    }
+
+    let activeTerminals = 0;
+    try {
+      activeTerminals = getDatabase()
+        .prepare("SELECT COUNT(*) AS c FROM term_sessions WHERE status = 'active'").get().c;
+    } catch {
+      // Ignore if db is busy.
+    }
+
+    return {
+      timestamp: Date.now(),
+      hostname: os.hostname(),
+      platform: os.platform(),
+      arch: os.arch(),
+      uptimeSeconds: Math.round(os.uptime()),
+      cores,
+      load1: round(load1, 2),
+      loadPerCore: round(load1 / cores, 2),
+      memory: {
+        totalBytes: totalMem,
+        usedPercent: Math.round(((totalMem - freeMem) / totalMem) * 100),
+      },
+      disk,
+      activeTerminals,
     };
   }
 

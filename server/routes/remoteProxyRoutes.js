@@ -23,6 +23,7 @@ const LOCAL_ONLY_PREFIXES = [
   '/api/hosts',
   '/api/host/',
   '/api/fleet/',
+  '/api/monitor/',
   '/api/remote/',
 ];
 
