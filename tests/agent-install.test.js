@@ -40,7 +40,7 @@ describe('AI coding agent install integrations', () => {
     const { agents } = JSON.parse(res.payload).integrations;
     assert.ok(Array.isArray(agents));
     const ids = agents.map((a) => a.id);
-    assert.deepEqual(ids, ['opencode', 'claude', 'codex', 'antigravity']);
+    assert.deepEqual(ids, ['opencode', 'claude', 'codex', 'antigravity', 'kilocode', 'qwen']);
     for (const a of agents) {
       assert.equal(typeof a.available, 'boolean');
       assert.ok('version' in a);
@@ -50,7 +50,7 @@ describe('AI coding agent install integrations', () => {
   test('dashboard and agents API share one catalogue', () => {
     const svc = require('../server/services/agentInstallService');
     const agentRegistry = require('../server/services/agentRegistry');
-    for (const id of ['opencode', 'claude', 'codex', 'antigravity']) {
+    for (const id of ['opencode', 'claude', 'codex', 'antigravity', 'kilocode', 'qwen']) {
       assert.equal(svc.getAgent(id), agentRegistry.builtinAgents.find((a) => a.id === id));
     }
     assert.equal(svc.getAgent('antigravity').binaryName, 'agy');

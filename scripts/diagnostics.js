@@ -979,7 +979,7 @@ function collectCitadel(deps) {
     }
   }
 
-  const detectedAgents = ['claude', 'codex', 'opencode', 'agy'].filter((agent) => deps.which(agent));
+  const detectedAgents = ['claude', 'codex', 'opencode', 'agy', 'kilo', 'qwen'].filter((agent) => deps.which(agent));
   findings.push(detectedAgents.length > 0
     ? finding('ok', 'citadel.agents', 'citadel', 'CLI agents', detectedAgents.join(', '))
     : finding('skip', 'citadel.agents', 'citadel', 'CLI agents',

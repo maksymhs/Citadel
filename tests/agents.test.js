@@ -64,7 +64,7 @@ describe('AI Agent Registry & Launcher Tests', () => {
 
   test('built-in agents advertise an official one-line installer', () => {
     const list = agentRegistry.listAgents();
-    for (const id of ['claude', 'codex', 'opencode', 'antigravity']) {
+    for (const id of ['claude', 'codex', 'opencode', 'antigravity', 'kilocode', 'qwen']) {
       const agent = list.find((a) => a.id === id);
       assert.ok(agent, `${id} should be registered`);
       assert.equal(typeof agent.installCommand, 'string');

@@ -77,6 +77,24 @@ class AgentRegistry {
         versionArg: '--version',
         installCommand: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
       },
+      {
+        id: 'kilocode',
+        name: 'Kilo Code CLI',
+        binaryName: 'kilo',
+        description: 'Open-source agentic coding CLI from Kilo Code',
+        defaultArgs: [],
+        versionArg: '--version',
+        installCommand: 'npm install -g --prefix "$HOME/.local" @kilocode/cli',
+      },
+      {
+        id: 'qwen',
+        name: 'Qwen Code',
+        binaryName: 'qwen',
+        description: "Alibaba's open-source terminal coding agent",
+        defaultArgs: [],
+        versionArg: '--version',
+        installCommand: 'npm install -g --prefix "$HOME/.local" @qwen-code/qwen-code',
+      },
     ];
   }
 
