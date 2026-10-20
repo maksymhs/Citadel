@@ -174,7 +174,13 @@ async function finishSetup(domain) {
   }
 
   setJob({ message: `Pointing ${domain} at the tunnel…`, detail: '' });
-  const routed = await run(['tunnel', 'route', 'dns', name, domain]);
+  let routed = await run(['tunnel', 'route', 'dns', name, domain]);
+  if (routed.code !== 0 && /already exists/i.test(routed.stderr + routed.stdout)) {
+    // A leftover record (earlier attempt or manual) blocks the route; the user
+    // chose this hostname for the panel, so repoint it at the tunnel.
+    logSetup(`  ${domain} already has a DNS record; overwriting it to point at the tunnel`);
+    routed = await run(['tunnel', 'route', 'dns', '--overwrite-dns', name, domain]);
+  }
   if (routed.code !== 0) {
     throw new Error(`Creating the DNS record failed: ${lastLine(routed.stderr || routed.stdout)}`);
   }

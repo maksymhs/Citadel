@@ -1606,3 +1606,10 @@ README/.env.example/architecture. No commits/pushes/deploys.
   macOS installer. Releasing it so existing installs stop showing "only available
   on Linux hosts".
 - Version bumped to `0.36.6`; asset cache-buster token moved to `v0366`.
+
+## 97. Tunnel setup tolerates an existing DNS record (v0.36.7)
+- `cloudflared tunnel route dns` fails with code 1003 when the hostname already
+  has an A/AAAA/CNAME record (leftover attempt or manual record). The setup now
+  retries once with `--overwrite-dns` in that case, since the user chose the
+  hostname for the panel.
+- Version bumped to `0.36.7`; asset cache-buster token moved to `v0367`.
