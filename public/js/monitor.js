@@ -146,25 +146,6 @@
     return `<div class="mon-band">${points.map((p) => `<span class="${p.online === 1 ? 'up' : p.online === 0 ? 'down' : 'part'}" title="${new Date(p.ts).toLocaleString()}"></span>`).join('')}</div>`;
   }
 
-  async function showLogs(host, ctx) {
-    const { localApi, escapeHtml: esc } = ctx;
-    ctx.openModal({
-      title: `Logs — ${host.name}`,
-      confirmText: 'Close',
-      bodyHtml: '<pre class="mon-logs" id="mon-logs">Loading…</pre>',
-    });
-    try {
-      const res = await localApi(`${remotePath(host, '/system/logs')}?lines=300`);
-      const pre = document.getElementById('mon-logs');
-      if (!pre) return;
-      pre.innerHTML = `${esc(res.text || '(empty)')}`;
-      pre.scrollTop = pre.scrollHeight;
-    } catch (err) {
-      const pre = document.getElementById('mon-logs');
-      if (pre) pre.textContent = err.message;
-    }
-  }
-
   function confirmRestart(host, ctx, onChange) {
     const { localApi, escapeHtml: esc, showToast } = ctx;
     ctx.openModal({
@@ -244,7 +225,7 @@
       <div id="mon-tab-body"></div>`;
 
     document.getElementById('mon-use-btn')?.addEventListener('click', () => ctx.useMachine(host.id));
-    document.getElementById('mon-logs-btn')?.addEventListener('click', () => showLogs(host, ctx));
+    document.getElementById('mon-logs-btn')?.addEventListener('click', () => ctx.openLogs());
     document.getElementById('mon-restart-btn')?.addEventListener('click', () => confirmRestart(host, ctx, () => renderMachine(ctx, hostId, undefined, false)));
     root.querySelectorAll('[data-mon-tab]').forEach((b) => {
       b.onclick = () => renderMachine(ctx, hostId, b.getAttribute('data-mon-tab'), false);

@@ -930,7 +930,7 @@
     state.workspaceContext = ui.workspaceContext || null;
     state.workspaceNavOpen = ui.workspaceNavOpen !== false;
     state.workspaceNavContexts = Array.isArray(ui.workspaceNavContexts) ? ui.workspaceNavContexts.slice() : [];
-    state.activityTab = ui.activityTab === 'audit' ? 'audit' : 'activity';
+    state.activityTab = ['audit', 'service'].includes(ui.activityTab) ? ui.activityTab : 'activity';
     state.dashboardWidgets = Array.isArray(ui.dashboardWidgets) ? ui.dashboardWidgets.slice() : null;
     state.activeHostId = typeof ui.activeHostId === 'string' && ui.activeHostId ? ui.activeHostId : 'local';
     await loadLocalModules();
@@ -1091,6 +1091,7 @@
       isAdmin: Boolean(state.user && state.user.role === 'admin'),
       activeHostId: () => state.activeHostId,
       useMachine,
+      openLogs: () => { state.activityTab = 'service'; saveUiState({ activityTab: 'service' }); navigateTo('activity'); },
       openProject: openProjectOn,
       installAgent: installAgentOn,
       // A terminal killed from the machine screen may be open in this browser.
@@ -3805,15 +3806,16 @@
   async function renderActivityView() {
     const content = document.getElementById('main-content');
     const actions = document.getElementById('top-bar-actions');
-    const tab = state.activityTab === 'audit' ? 'audit' : 'activity';
+    const tab = ['audit', 'service'].includes(state.activityTab) ? state.activityTab : 'activity';
 
     actions.innerHTML = `
       <div class="segmented" role="tablist">
         <button class="seg-btn ${tab === 'activity' ? 'active' : ''}" data-activity-tab="activity" role="tab">Activity</button>
         <button class="seg-btn ${tab === 'audit' ? 'active' : ''}" data-activity-tab="audit" role="tab">Audit</button>
+        <button class="seg-btn ${tab === 'service' ? 'active' : ''}" data-activity-tab="service" role="tab">Service log</button>
       </div>
-      <button class="btn btn-secondary btn-sm" id="logs-export-json">Export JSON</button>
-      <button class="btn btn-secondary btn-sm" id="logs-export-csv">Export CSV</button>
+      ${tab === 'service' ? '' : `<button class="btn btn-secondary btn-sm" id="logs-export-json">Export JSON</button>
+      <button class="btn btn-secondary btn-sm" id="logs-export-csv">Export CSV</button>`}
       <button class="btn btn-secondary btn-sm" id="logs-refresh">Refresh</button>`;
 
     document.querySelectorAll('[data-activity-tab]').forEach((btn) => {
@@ -3823,15 +3825,39 @@
         renderActivityView();
       };
     });
-    document.getElementById('logs-export-json').onclick = () => exportLogs('json');
-    document.getElementById('logs-export-csv').onclick = () => exportLogs('csv');
-    document.getElementById('logs-refresh').onclick = () => (tab === 'audit' ? refreshAudit() : refreshLogs());
+    document.getElementById('logs-export-json')?.addEventListener('click', () => exportLogs('json'));
+    document.getElementById('logs-export-csv')?.addEventListener('click', () => exportLogs('csv'));
+    document.getElementById('logs-refresh').onclick = () => (tab === 'audit' ? refreshAudit() : tab === 'service' ? refreshServiceLog() : refreshLogs());
 
-    content.innerHTML = `<div style="color:var(--text-secondary);">Loading ${tab === 'audit' ? 'audit trail' : 'activity'}…</div>`;
-    if (tab === 'audit') {
+    content.innerHTML = `<div style="color:var(--text-secondary);">Loading ${tab === 'audit' ? 'audit trail' : tab === 'service' ? 'service log' : 'activity'}…</div>`;
+    if (tab === 'service') {
+      await refreshServiceLog();
+    } else if (tab === 'audit') {
       await refreshAudit();
     } else {
       await refreshLogs();
+    }
+  }
+
+  // Tail of the Citadel service log on the active machine.
+  async function refreshServiceLog() {
+    const content = document.getElementById('main-content');
+    if (!content) return;
+    try {
+      const res = await api('/api/system/logs?lines=500');
+      const sources = { journal: 'System journal', file: 'Log file', events: 'Panel events (no journal access)' };
+      content.innerHTML = `
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
+            <h3 style="font-size:14px;font-weight:600;">Service log</h3>
+            <span style="font-size:12px;color:var(--text-muted);">${escapeHtml(sources[res.source] || res.source)} · last 500 lines</span>
+          </div>
+          <pre class="mon-logs" id="service-log-text" style="max-height:none;height:calc(100vh - 250px);min-height:240px;">${escapeHtml(res.text || '(empty)')}</pre>
+        </div>`;
+      const pre = document.getElementById('service-log-text');
+      if (pre) pre.scrollTop = pre.scrollHeight;
+    } catch (err) {
+      content.innerHTML = `<div style="color:var(--danger-color);">Failed to load the service log: ${escapeHtml(err.message)}</div>`;
     }
   }
 
