@@ -21,12 +21,26 @@ const path = require('node:path');
 
 const APP_DIR = process.env.CITADEL_APP_DIR || path.resolve(__dirname, '..');
 const BRANCH = process.env.CITADEL_REPO_BRANCH || 'main';
+const DATA_DIR = process.env.CITADEL_DATA_DIR || path.join(APP_DIR, 'data');
 const REPO = process.env.CITADEL_REPO || 'maksymhs/Citadel';
 const SERVICE = process.env.CITADEL_SERVICE || 'citadel';
 const SERVER_PID = parseInt(process.env.CITADEL_SERVER_PID || '0', 10) || null;
 const LOG_PATH = process.env.CITADEL_UPDATE_LOG || path.join(APP_DIR, 'data', 'update.log');
 const STATUS_PATH = process.env.CITADEL_UPDATE_STATUS || path.join(APP_DIR, 'data', 'update-status.json');
 const LOCK_PATH = process.env.CITADEL_UPDATE_LOCK || path.join(APP_DIR, 'data', 'update.lock');
+
+// "stable" follows the latest vX.Y.Z release tag; anything else follows BRANCH.
+function readChannel() {
+  let value = process.env.CITADEL_UPDATE_CHANNEL || '';
+  if (!value) {
+    try {
+      value = fs.readFileSync(path.join(DATA_DIR, 'update-channel'), 'utf8');
+    } catch {
+      value = '';
+    }
+  }
+  return value.trim() === 'stable' ? 'stable' : 'main';
+}
 
 const CURRENT_LOCK_MS = 60 * 60 * 1000;
 
@@ -192,14 +206,28 @@ function main() {
 
     restartNeeded = true;
 
-    writeStatus({ message: `Fetching origin/${BRANCH}...` });
-    if (git('fetch', '--tags', '--prune', 'origin').status !== 0) {
+    const channel = readChannel();
+    let target = `origin/${BRANCH}`;
+    writeStatus({ channel, message: channel === 'stable' ? 'Fetching releases...' : `Fetching origin/${BRANCH}...` });
+    if (git('fetch', '--tags', '--prune', '--force', 'origin').status !== 0) {
       writeStatus({ state: 'failed', finishedAt: new Date().toISOString(), error: 'git fetch failed.' });
       return;
     }
 
-    writeStatus({ message: `Updating to origin/${BRANCH}...` });
-    if (git('reset', '--hard', `origin/${BRANCH}`).status !== 0) {
+    if (channel === 'stable') {
+      const tags = git('tag', '--list', 'v[0-9]*.[0-9]*.[0-9]*', '--sort=-v:refname');
+      const tag = tags.status === 0
+        ? tags.stdout.split('\n').map((t) => t.trim()).find((t) => /^v\d+\.\d+\.\d+$/.test(t))
+        : null;
+      if (!tag) {
+        writeStatus({ state: 'failed', finishedAt: new Date().toISOString(), error: 'No release tag found for the stable channel.' });
+        return;
+      }
+      target = `refs/tags/${tag}^{commit}`;
+    }
+
+    writeStatus({ message: `Updating to ${target}...` });
+    if (git('reset', '--hard', target).status !== 0) {
       writeStatus({ state: 'failed', finishedAt: new Date().toISOString(), error: 'git reset failed.' });
       return;
     }

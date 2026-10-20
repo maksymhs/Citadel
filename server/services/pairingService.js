@@ -132,17 +132,13 @@ async function redeemPairing(code) {
       hostService.announceToPeers().catch(() => {});
       meshService.scheduleSync();
 
-      // Invitations created from an authenticated Settings screen mean both
-      // machines belong to the same operator, so merge the credential vault in
-      // both directions. The startup/installer QR has no user attached and
-      // deliberately does not auto-share secrets; use "Sync credentials" there.
+      // Pairing always merges the credential vault in both directions (the
+      // periodic sync retries it if this attempt cannot run, e.g. over HTTP).
       let secrets = null;
-      if (res.data && res.data.autoSync) {
-        try {
-          secrets = await secretSyncService.syncWithHost(host.id);
-        } catch (err) {
-          secrets = { ok: false, error: err.message };
-        }
+      try {
+        secrets = await secretSyncService.syncWithHost(host.id);
+      } catch (err) {
+        secrets = { ok: false, error: err.message };
       }
 
       return { host, peer, secrets };

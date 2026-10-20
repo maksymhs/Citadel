@@ -264,7 +264,7 @@ describe('Credential vault sync', () => {
     assert.equal(secretStore.getValue('AUTO_FROM_PEER'), 'peer-value');
   });
 
-  test('redeem skips auto-merge when the invite has no owner', async (t) => {
+  test('redeem always attempts the vault merge, even for an installer invite', async (t) => {
     let syncCalls = 0;
     let upstreamUrl = null;
     const upstream = http.createServer((req, res) => {
@@ -311,7 +311,60 @@ describe('Credential vault sync', () => {
       payload: { code },
     });
     assert.equal(res.statusCode, 200);
-    assert.equal(JSON.parse(res.payload).secrets, null);
-    assert.equal(syncCalls, 0);
+    const body = JSON.parse(res.payload);
+    assert.equal(syncCalls, 1);
+    // The upstream stub has no sync endpoint, so the attempt is reported, not fatal.
+    assert.equal(body.secrets.ok, false);
+  });
+});
+
+describe('Credential vault deletions', () => {
+  const testDb = path.resolve(__dirname, '../data/test-secret-tombstones.db');
+  let app;
+
+  before(async () => {
+    cleanDb(testDb);
+    app = await buildServer({ customDbPath: testDb, logger: false });
+  });
+
+  after(async () => {
+    await app.close();
+    closeDatabase();
+    cleanDb(testDb);
+  });
+
+  test('a deletion propagates, and an older copy from a peer does not resurrect it', () => {
+    secretStore.setSecret('GONE_TOKEN', 'v1', { kind: 'env' });
+    const old = secretStore.getSecret('GONE_TOKEN').updated_at;
+
+    const future = new Date(Date.now() + 60000).toISOString();
+    const result = secretSyncService.importSecrets([], [{ name: 'GONE_TOKEN', deleted_at: future }]);
+    assert.equal(result.removed, 1);
+    assert.equal(secretStore.getSecret('GONE_TOKEN'), null);
+
+    const again = secretSyncService.importSecrets([
+      { name: 'GONE_TOKEN', value: 'v1', kind: 'env', updated_at: old },
+    ]);
+    assert.equal(again.imported, 0);
+    assert.equal(secretStore.getSecret('GONE_TOKEN'), null);
+  });
+
+  test('a value saved after the deletion survives it and is shared back', () => {
+    secretStore.setSecret('KEPT_TOKEN', 'v1', { kind: 'env' });
+    secretStore.removeSecret('KEPT_TOKEN');
+    assert.ok(secretStore.getTombstone('KEPT_TOKEN'));
+    secretStore.setSecret('KEPT_TOKEN', 'v2', { kind: 'env' });
+    assert.equal(secretStore.getTombstone('KEPT_TOKEN'), null);
+
+    const stale = new Date(Date.now() - 60000).toISOString();
+    const result = secretSyncService.importSecrets([], [{ name: 'KEPT_TOKEN', deleted_at: stale }]);
+    assert.equal(result.removed, 0);
+    assert.equal(secretStore.getSecret('KEPT_TOKEN').value, 'v2');
+  });
+
+  test('removeSecret records a tombstone that is exported to peers', () => {
+    secretStore.setSecret('EXPORT_ME', 'x', { kind: 'env' });
+    secretStore.removeSecret('EXPORT_ME');
+    assert.ok(secretSyncService.exportDeleted().some((d) => d.name === 'EXPORT_ME'));
   });
 });

@@ -22,6 +22,8 @@ const {
 const UPDATE_LOG_PATH = path.join(DATA_DIR, 'update.log');
 const UPDATE_STATUS_PATH = path.join(DATA_DIR, 'update-status.json');
 const UPDATE_LOCK_PATH = path.join(DATA_DIR, 'update.lock');
+const UPDATE_CHANNEL_PATH = path.join(DATA_DIR, 'update-channel');
+const CHANNELS = ['stable', 'main'];
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 let cache = { at: 0, data: null };
@@ -94,6 +96,27 @@ function selfUpdateUsable() {
   return checkSelfUpdate();
 }
 
+// "stable" tracks the latest vX.Y.Z release tag; "main" tracks the branch head.
+// Kept in a plain file so the root update helper can read it without our env.
+function getChannel() {
+  try {
+    const value = fs.readFileSync(UPDATE_CHANNEL_PATH, 'utf8').trim();
+    return CHANNELS.includes(value) ? value : 'main';
+  } catch {
+    return 'main';
+  }
+}
+
+function setChannel(channel) {
+  if (!CHANNELS.includes(channel)) {
+    throw new Error(`Unknown update channel "${channel}" (use ${CHANNELS.join(' or ')}).`);
+  }
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(UPDATE_CHANNEL_PATH, `${channel}\n`);
+  cache = { at: 0, data: null };
+  return channel;
+}
+
 function getVersionInfo() {
   const helper = checkUpdaterHelper();
   const self = selfUpdateUsable();
@@ -103,6 +126,7 @@ function getVersionInfo() {
     commit: getCurrentCommit(),
     repo: UPDATE_REPO,
     branch: UPDATE_BRANCH,
+    channel: getChannel(),
     service: SERVICE_NAME,
     updaterAvailable: helper.ok,
     updaterProblem: helper.ok ? null : helper.reason,
@@ -198,9 +222,11 @@ async function checkForUpdates({ force = false } = {}) {
     return cache.data;
   }
 
+  const channel = getChannel();
   const result = {
     version: APP_VERSION,
     commit: getCurrentCommit(),
+    channel,
     latest: null,
     latestCommit: null,
     releaseName: null,
@@ -212,7 +238,9 @@ async function checkForUpdates({ force = false } = {}) {
 
   const headers = { 'User-Agent': 'Citadel', Accept: 'application/vnd.github+json' };
   try {
-    const remote = await fetchRemoteBranch(headers);
+    const remote = channel === 'stable'
+      ? { version: null, commit: null }
+      : await fetchRemoteBranch(headers);
     if (remote.version || remote.commit) {
       result.latest = remote.version || APP_VERSION;
       result.latestCommit = remote.commit ? remote.commit.slice(0, 7) : null;
@@ -286,6 +314,8 @@ function triggerSelfUpdate() {
       CITADEL_APP_DIR: ROOT_DIR,
       CITADEL_REPO: UPDATE_REPO,
       CITADEL_REPO_BRANCH: UPDATE_BRANCH,
+      CITADEL_UPDATE_CHANNEL: getChannel(),
+      CITADEL_DATA_DIR: DATA_DIR,
       CITADEL_SERVICE: SERVICE_NAME,
       CITADEL_SERVER_PID: String(process.pid),
       CITADEL_UPDATE_LOG: UPDATE_LOG_PATH,
@@ -366,4 +396,6 @@ module.exports = {
   getUpdateStatus,
   checkForUpdates,
   triggerUpdate,
+  getChannel,
+  setChannel,
 };

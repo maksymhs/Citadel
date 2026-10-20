@@ -45,6 +45,7 @@ const remoteProxyRoutes = require('./routes/remoteProxyRoutes');
 const wsTerminalRoutes = require('./routes/wsTerminal');
 const hostService = require('./services/hostService');
 const meshService = require('./services/meshService');
+const secretSyncService = require('./services/secretSyncService');
 const updateRolloutService = require('./services/updateRolloutService');
 
 async function buildServer(options = {}) {
@@ -234,6 +235,19 @@ async function startServer() {
   if (typeof announceStartup.unref === 'function') announceStartup.unref();
   if (typeof announceTimer.unref === 'function') announceTimer.unref();
 
+  // Keep the credential vault identical on every paired machine: right after
+  // boot (peers may have changed while this one was off) and every 5 minutes,
+  // which also retries a pairing whose first sync could not run.
+  const syncVault = () => {
+    secretSyncService.syncWithAllPeers().catch((err) => {
+      fastify.log.debug(`[Citadel] Vault sync failed: ${err.message}`);
+    });
+  };
+  const vaultSyncStartup = setTimeout(syncVault, 15000);
+  const vaultSyncTimer = setInterval(syncVault, 5 * 60 * 1000);
+  if (typeof vaultSyncStartup.unref === 'function') vaultSyncStartup.unref();
+  if (typeof vaultSyncTimer.unref === 'function') vaultSyncTimer.unref();
+
   // Graceful shutdown
   const signals = ['SIGINT', 'SIGTERM'];
   for (const signal of signals) {
@@ -241,6 +255,8 @@ async function startServer() {
       console.log(`\n[Citadel] Received ${signal}. Shutting down gracefully...`);
       try {
         clearInterval(announceTimer);
+        clearInterval(vaultSyncTimer);
+        clearTimeout(vaultSyncStartup);
         clearTimeout(announceStartup);
         logService.stopSampler();
         await fastify.close();

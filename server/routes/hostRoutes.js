@@ -183,14 +183,13 @@ async function hostRoutes(fastify) {
         details: { instanceId: result.host.instanceId, name: result.host.name },
         ip: request.ip,
       });
-      // The scanner may auto-merge the credential vault, but only when the
-      // invite came from an authenticated Settings screen. Do not leak the
-      // inviting user id; a boolean is all the peer needs.
+      // Every pairing shares the credential vault: both machines belong to the
+      // same operator, so the scanner merges it right after pairing.
       return {
         host: result.host,
         token: result.token,
         peer: result.peer,
-        autoSync: Boolean(result.invitedBy),
+        autoSync: true,
       };
     } catch (err) {
       return reply.status(400).send({ error: err.message });
@@ -288,8 +287,10 @@ async function hostRoutes(fastify) {
   }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     try {
-      const result = secretSyncService.importSecrets(request.body ? request.body.secrets : []);
+      const body = request.body || {};
+      const result = secretSyncService.importSecrets(body.secrets, body.deleted);
       const secrets = secretSyncService.exportLocal();
+      const deleted = secretSyncService.exportDeleted();
       auditService.logAction({
         userId: request.user.id,
         action: 'peer_secrets_synced',
@@ -303,7 +304,7 @@ async function hostRoutes(fastify) {
         },
         ip: request.ip,
       });
-      return { ...result, secrets };
+      return { ...result, secrets, deleted };
     } catch (err) {
       return reply.status(400).send({ error: err.message });
     }

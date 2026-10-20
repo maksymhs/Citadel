@@ -9,6 +9,7 @@
 const { requireAuth } = require('../security/auth');
 const secretStore = require('../services/secretStore');
 const auditService = require('../services/auditService');
+const secretSyncService = require('../services/secretSyncService');
 
 function requireAdmin(request, reply, done) {
   if (!request.user || request.user.role !== 'admin') {
@@ -27,6 +28,7 @@ async function secretRoutes(fastify) {
     const { name, value, kind, metadata } = request.body || {};
     try {
       const res = secretStore.setSecret(name, value, { kind, metadata: metadata || null });
+      secretSyncService.scheduleSync();
       auditService.logAction({
         userId: request.user.id,
         action: 'secret_saved',
@@ -44,6 +46,7 @@ async function secretRoutes(fastify) {
   fastify.delete('/api/secrets/:name', { preHandler: requireAdmin }, async (request, reply) => {
     const res = secretStore.removeSecret(request.params.name);
     if (!res.success) return reply.status(404).send({ error: 'Secret not found.' });
+    secretSyncService.scheduleSync();
     auditService.logAction({
       userId: request.user.id,
       action: 'secret_deleted',

@@ -99,6 +99,30 @@ describe('Staged update propagation', () => {
     assert.ok(summary.halted);
   });
 
+  test('a forced rollout updates every machine, even one on the same version', async () => {
+    const statuses = { h1: { startedAt: 'a' }, h2: { startedAt: 'a' }, h3: { startedAt: 'a' } };
+    const base = hostService.requestHost;
+    hostService.requestHost = async (id, apiPath, o = {}) => {
+      if (apiPath === '/api/system/update/status') {
+        return { ok: true, status: 200, data: { update: { status: statuses[id] } } };
+      }
+      if (apiPath === '/api/system/update') {
+        calls.push(`POST ${id} /api/system/update`);
+        statuses[id] = { startedAt: 'b', state: 'success' };
+        return { ok: true, status: 200, data: { started: true } };
+      }
+      return base(id, apiPath, o);
+    };
+    try {
+      versions.h2 = { version: '2.0.0' };
+      const summary = await rollout.rollout({ ...opts, force: true, timeoutMs: 500 });
+      assert.deepEqual(summary.hosts.map((h) => h.status), ['updated', 'updated', 'updated']);
+      assert.equal(calls.filter((c) => c.startsWith('POST')).length, 3);
+    } finally {
+      hostService.requestHost = base;
+    }
+  });
+
   test('propagation runs only after an upgrade, when enabled, and not for propagated updates', async () => {
     const { APP_VERSION } = require('../server/config');
     rollout.setPropagationEnabled(false);

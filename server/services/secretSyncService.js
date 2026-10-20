@@ -11,7 +11,8 @@
  *     the whole vault to the network in clear text.
  *   - The newest `updated_at` wins. Equal values are left alone, so repeated
  *     syncs are cheap and idempotent.
- *   - Deletions stay local: syncing never removes an existing secret.
+ *   - Deletions propagate as tombstones: a secret removed on one machine is
+ *     removed on its peers unless it was changed again after the deletion.
  *   - Values are never written to logs or returned to the browser.
  */
 const secretStore = require('./secretStore');
@@ -67,11 +68,15 @@ function exportLocal() {
   return secretStore.exportSecrets();
 }
 
+function exportDeleted() {
+  return secretStore.exportTombstones();
+}
+
 /**
  * Merge secrets received from a peer. Invalid entries are skipped and counted
  * instead of discarding the whole batch (one bad row must not break pairing).
  */
-function importSecrets(entries) {
+function importSecrets(entries, deleted = []) {
   if (!Array.isArray(entries)) throw new Error('secrets must be an array.');
   if (entries.length > MAX_ENTRIES) throw new Error('Too many secrets in one sync.');
 
@@ -79,6 +84,22 @@ function importSecrets(entries) {
   let imported = 0;
   let skipped = 0;
   let invalid = 0;
+  let removed = 0;
+
+  // Older peers do not send deletions; tolerate a missing or malformed list.
+  for (const raw of (Array.isArray(deleted) ? deleted : []).slice(0, MAX_ENTRIES)) {
+    const name = raw && typeof raw.name === 'string' ? raw.name.trim() : '';
+    const deletedAt = raw ? validTimestamp(raw.deleted_at) : null;
+    if (!name || !deletedAt) {
+      invalid += 1;
+      continue;
+    }
+    try {
+      if (secretStore.applyTombstone(name, deletedAt)) removed += 1;
+    } catch {
+      invalid += 1;
+    }
+  }
 
   for (const raw of entries) {
     const incoming = sanitizeEntry(raw);
@@ -88,6 +109,13 @@ function importSecrets(entries) {
     }
     totalBytes += Buffer.byteLength(incoming.value, 'utf8');
     if (totalBytes > MAX_TOTAL_BYTES) throw new Error('Secret sync payload is too large.');
+
+    // A newer local deletion beats an older copy still held by the peer.
+    const tombstone = secretStore.getTombstone(incoming.name);
+    if (tombstone && (!incoming.updated_at || incoming.updated_at <= tombstone)) {
+      skipped += 1;
+      continue;
+    }
 
     const local = secretStore.getSecret(incoming.name);
     if (local) {
@@ -111,6 +139,7 @@ function importSecrets(entries) {
       secretStore.setSecret(incoming.name, incoming.value, {
         kind: incoming.kind,
         metadata: incoming.metadata,
+        updatedAt: incoming.updated_at,
       });
       imported += 1;
     } catch {
@@ -118,7 +147,7 @@ function importSecrets(entries) {
     }
   }
 
-  return { imported, skipped, invalid };
+  return { imported, skipped, invalid, removed };
 }
 
 /**
@@ -128,7 +157,7 @@ function importSecrets(entries) {
 async function syncWithHost(hostId, { timeout = SYNC_TIMEOUT_MS } = {}) {
   const res = await hostService.requestHost(hostId, SYNC_PATH, {
     method: 'POST',
-    body: { secrets: exportLocal() },
+    body: { secrets: exportLocal(), deleted: exportDeleted() },
     timeout,
     secureOnly: true,
   });
@@ -140,22 +169,56 @@ async function syncWithHost(hostId, { timeout = SYNC_TIMEOUT_MS } = {}) {
     throw new Error('The peer did not return a credential list.');
   }
 
-  const merged = importSecrets(res.data.secrets);
+  const merged = importSecrets(res.data.secrets, res.data.deleted);
   return {
     ok: true,
     baseUrl: res.baseUrl,
     imported: merged.imported,
     skipped: merged.skipped,
     invalid: merged.invalid,
+    removed: merged.removed,
     remoteImported: res.data.imported || 0,
     remoteSkipped: res.data.skipped || 0,
     remoteInvalid: res.data.invalid || 0,
   };
 }
 
+/**
+ * Sync with every paired machine, one after another. Best-effort: an offline
+ * or HTTP-only peer is reported and never blocks the others; the next run
+ * (periodic, after a vault change, or at startup) retries it.
+ */
+async function syncWithAllPeers() {
+  const rows = hostService.listHostRows().filter((row) => row.instance_id);
+  const results = [];
+  for (const row of rows) {
+    try {
+      results.push({ id: row.id, name: row.name, ...(await syncWithHost(row.id)) });
+    } catch (err) {
+      results.push({ id: row.id, name: row.name, ok: false, error: err.message });
+    }
+  }
+  return results;
+}
+
+let scheduled = null;
+
+/** Debounced syncWithAllPeers, for "the vault just changed here". */
+function scheduleSync(delayMs = 3000) {
+  clearTimeout(scheduled);
+  scheduled = setTimeout(() => {
+    scheduled = null;
+    syncWithAllPeers().catch(() => {});
+  }, delayMs);
+  if (typeof scheduled.unref === 'function') scheduled.unref();
+}
+
 module.exports = {
   SYNC_PATH,
   exportLocal,
+  exportDeleted,
+  syncWithAllPeers,
+  scheduleSync,
   importSecrets,
   syncWithHost,
 };

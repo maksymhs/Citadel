@@ -52,6 +52,15 @@ DB_PATH="${DATABASE_PATH:-$DATA_DIR_RESOLVED/citadel.db}"
 BACKUP_DIR="${CITADEL_BACKUP_DIR:-$DATA_DIR_RESOLVED/backups}"
 BACKUP_KEEP="${CITADEL_BACKUP_KEEP:-5}"
 
+# Update channel: "stable" follows the latest vX.Y.Z release tag, "main" (the
+# default) follows the head of $BRANCH. The panel persists the choice in
+# $DATA_DIR/update-channel so the root helper sees it without an environment.
+CHANNEL="${CITADEL_UPDATE_CHANNEL:-}"
+if [ -z "$CHANNEL" ] && [ -r "$DATA_DIR_RESOLVED/update-channel" ]; then
+  CHANNEL="$(tr -d '[:space:]' < "$DATA_DIR_RESOLVED/update-channel")"
+fi
+case "$CHANNEL" in stable) ;; *) CHANNEL=main ;; esac
+
 service_manager_available() { command -v systemctl >/dev/null 2>&1; }
 sys() { $SUDO systemctl "$@"; }
 
@@ -254,10 +263,22 @@ CURRENT_SHA="$(git_safe rev-parse HEAD 2>/dev/null || echo unknown)"
 CURRENT_SHORT="$(git_safe rev-parse --short HEAD 2>/dev/null || echo unknown)"
 echo "[citadel-update] Current commit: $CURRENT_SHORT"
 
-echo "[citadel-update] Fetching origin/$BRANCH..."
-git_safe fetch --depth 1 origin "$BRANCH"
-TARGET_SHA="$(git_safe rev-parse "origin/$BRANCH")"
-TARGET_SHORT="$(git_safe rev-parse --short "origin/$BRANCH")"
+if [ "$CHANNEL" = stable ]; then
+  TAG="$(git_safe ls-remote --tags --refs origin 'v[0-9]*' | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)"
+  if [ -z "$TAG" ]; then
+    echo "[citadel-update] ERROR: no release tag found for the stable channel." >&2
+    exit 1
+  fi
+  echo "[citadel-update] Fetching stable release $TAG..."
+  git_safe fetch --depth 1 origin "+refs/tags/$TAG:refs/tags/$TAG"
+  TARGET_REF="refs/tags/$TAG^{commit}"
+else
+  echo "[citadel-update] Fetching origin/$BRANCH..."
+  git_safe fetch --depth 1 origin "$BRANCH"
+  TARGET_REF="origin/$BRANCH"
+fi
+TARGET_SHA="$(git_safe rev-parse "$TARGET_REF")"
+TARGET_SHORT="$(git_safe rev-parse --short "$TARGET_REF")"
 echo "[citadel-update] Available commit: $TARGET_SHORT"
 
 if [ "$CHECK_ONLY" = true ]; then
@@ -281,7 +302,7 @@ else
 
   echo "[citadel-update] Updating $CURRENT_SHORT -> $TARGET_SHORT"
   trap on_error ERR
-  git_safe reset --hard "origin/$BRANCH"
+  git_safe reset --hard "$TARGET_SHA"
   CODE_MODIFIED=true
   chown_tree
   npm_install

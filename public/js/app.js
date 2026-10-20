@@ -4488,6 +4488,14 @@
                     ? 'Built-in updater enabled — updates run as the service user, no root helper required.'
                     : `Automatic updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
               </div>
+              ${canPair ? `
+              <div style="margin-top:12px;font-size:13px;">
+                <label for="update-channel" style="font-weight:600;">Update channel</label>
+                <select id="update-channel" class="input" style="margin-left:8px;">
+                  <option value="stable"${ver.channel === 'stable' ? ' selected' : ''}>Stable (latest release)</option>
+                  <option value="main"${ver.channel !== 'stable' ? ' selected' : ''}>Main (latest commit, may be unstable)</option>
+                </select>
+              </div>` : ''}
               ${canPair && state.hosts.length > 0 ? `
               <div id="update-propagate" style="margin-top:12px;font-size:13px;">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
@@ -4880,6 +4888,19 @@
   function bindUpdatesCard() {
     const statusEl = document.getElementById('update-status');
     const checkBtn = document.getElementById('check-updates-btn');
+    const channelSel = document.getElementById('update-channel');
+    if (channelSel) {
+      channelSel.onchange = async () => {
+        const previous = channelSel.value === 'stable' ? 'main' : 'stable';
+        try {
+          const res = await api('/api/system/update/channel', { method: 'PUT', body: { channel: channelSel.value } });
+          showToast(`Update channel: ${res.channel}. Check for updates to see what it would install.`, 'success');
+        } catch (err) {
+          channelSel.value = previous;
+          showToast(err.message, 'error');
+        }
+      };
+    }
     if (checkBtn) {
       checkBtn.onclick = async () => {
         checkBtn.disabled = true;
@@ -4916,13 +4937,13 @@
     const applyBtn = document.getElementById('apply-update-btn');
     if (applyBtn) {
       applyBtn.onclick = async () => {
-        if (!confirm('Update Citadel now? The service will restart and brief downtime is expected.')) return;
+        if (!confirm('Update this machine and all paired machines now? Each service restarts, so brief downtime is expected.')) return;
         applyBtn.disabled = true;
         statusEl.style.color = 'var(--text-muted)';
         statusEl.textContent = 'Starting update...';
         try {
           await api('/api/system/update', { method: 'POST' });
-          showToast('Update started. The service will restart shortly.', 'success');
+          showToast('Update started. This machine goes first, then each paired machine one at a time.', 'success');
           statusEl.style.color = 'var(--warning-color)';
           statusEl.textContent = 'Update in progress. This page will reload automatically...';
           pollUpdateStatus(statusEl, applyBtn);

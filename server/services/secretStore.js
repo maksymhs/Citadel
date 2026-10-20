@@ -79,7 +79,7 @@ function getValue(name) {
 }
 
 /** Create or update a secret (upsert by name). Returns metadata, never value. */
-function setSecret(name, value, { kind = 'env', metadata = null } = {}) {
+function setSecret(name, value, { kind = 'env', metadata = null, updatedAt = null } = {}) {
   const cleanName = String(name || '').trim();
   if (!cleanName) throw new Error('A secret name is required.');
 
@@ -94,7 +94,7 @@ function setSecret(name, value, { kind = 'env', metadata = null } = {}) {
   const encrypted = encrypt(String(value));
   const metaJson = metadata ? JSON.stringify(metadata) : null;
   const db = getDatabase();
-  const ts = new Date().toISOString();
+  const ts = updatedAt || new Date().toISOString();
 
   const existing = db.prepare('SELECT name FROM secrets WHERE name = ?').get(cleanName);
   if (existing) {
@@ -108,13 +108,53 @@ function setSecret(name, value, { kind = 'env', metadata = null } = {}) {
     ).run(cleanName, k, encrypted, metaJson, ts, ts);
   }
 
+  db.prepare('DELETE FROM secret_tombstones WHERE name = ?').run(cleanName);
+
   return { name: cleanName, kind: k, metadata, updated_at: ts };
+}
+
+function writeTombstone(db, name, deletedAt) {
+  db.prepare(`
+    INSERT INTO secret_tombstones (name, deleted_at) VALUES (?, ?)
+    ON CONFLICT(name) DO UPDATE SET deleted_at = excluded.deleted_at
+    WHERE excluded.deleted_at > secret_tombstones.deleted_at
+  `).run(name, deletedAt);
 }
 
 function removeSecret(name) {
   const db = getDatabase();
-  const res = db.prepare('DELETE FROM secrets WHERE name = ?').run(String(name));
-  return { success: res.changes > 0, name: String(name) };
+  const cleanName = String(name);
+  const res = db.prepare('DELETE FROM secrets WHERE name = ?').run(cleanName);
+  if (res.changes > 0) writeTombstone(db, cleanName, new Date().toISOString());
+  return { success: res.changes > 0, name: cleanName };
+}
+
+/** Deletions to share with peers: [{ name, deleted_at }]. */
+function exportTombstones() {
+  return getDatabase()
+    .prepare('SELECT name, deleted_at FROM secret_tombstones ORDER BY name')
+    .all();
+}
+
+function getTombstone(name) {
+  const row = getDatabase()
+    .prepare('SELECT deleted_at FROM secret_tombstones WHERE name = ?')
+    .get(String(name));
+  return row ? row.deleted_at : null;
+}
+
+/**
+ * Apply a deletion received from a peer. The secret is removed only when it
+ * was last changed before the deletion; a newer local value wins.
+ */
+function applyTombstone(name, deletedAt) {
+  const db = getDatabase();
+  const cleanName = String(name);
+  const row = db.prepare('SELECT updated_at FROM secrets WHERE name = ?').get(cleanName);
+  if (row && String(row.updated_at) > deletedAt) return false;
+  if (row) db.prepare('DELETE FROM secrets WHERE name = ?').run(cleanName);
+  writeTombstone(db, cleanName, deletedAt);
+  return Boolean(row);
 }
 
 /**
@@ -171,5 +211,8 @@ module.exports = {
   setSecret,
   removeSecret,
   exportSecrets,
+  exportTombstones,
+  getTombstone,
+  applyTombstone,
   envVars,
 };

@@ -16,6 +16,8 @@ const PROPAGATE_KEY = 'update.propagate';
 const LAST_VERSION_KEY = 'update.last_version';
 const SKIP_KEY = 'update.skip_propagation';
 const ROLLOUT_KEY = 'update.rollout';
+const PENDING_KEY = 'update.fleet_pending';
+const FORCE_POLL_MS = 3000;
 const POLL_MS = 10000;
 const COME_BACK_TIMEOUT_MS = 6 * 60 * 1000;
 
@@ -59,6 +61,56 @@ async function peerVersion(hostId) {
   return res.data.version;
 }
 
+async function peerUpdateStatus(hostId) {
+  try {
+    const res = await hostService.requestHost(hostId, '/api/system/update/status', { timeout: 8000, maxCandidates: 3 });
+    const update = res.ok && res.data && res.data.update;
+    return (update && update.status) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wait for a peer that was asked to update unconditionally (same commit or
+ * version is possible, e.g. on the main channel), so the version cannot be the
+ * signal. The built-in updater reports a status file; the root helper does
+ * not, so a version/commit change or a down-then-up restart also counts.
+ * Returns the version the peer reports once done, null on timeout, and throws
+ * when the peer reports that its update failed.
+ */
+async function waitForUpdate(hostId, before, { timeoutMs = COME_BACK_TIMEOUT_MS, pollMs = FORCE_POLL_MS } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let sawDown = false;
+  while (Date.now() < deadline) {
+    await sleep(pollMs);
+    let info;
+    try {
+      info = await peerVersion(hostId);
+    } catch {
+      sawDown = true;
+      continue;
+    }
+    const status = await peerUpdateStatus(hostId);
+    if (status && status.startedAt && status.startedAt !== before.startedAt) {
+      if (status.state === 'failed') throw new Error(status.error || 'the update failed on that machine');
+      if (status.state === 'success') return info.version;
+      continue; // still running
+    }
+    if (info.version !== before.version || info.commit !== before.commit || sawDown) return info.version;
+  }
+  return null;
+}
+
+/** Ask for a fleet-wide update once this machine has restarted on the new code. */
+function requestFleetUpdate() {
+  hostService.writeConfig(PENDING_KEY, '1');
+}
+
+function cancelFleetUpdate() {
+  hostService.writeConfig(PENDING_KEY, '0');
+}
+
 async function waitForVersion(hostId, target, { timeoutMs = COME_BACK_TIMEOUT_MS, pollMs = POLL_MS } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -77,7 +129,7 @@ async function waitForVersion(hostId, target, { timeoutMs = COME_BACK_TIMEOUT_MS
  * Update every paired machine that is behind `target`, one at a time.
  * Returns the stored summary.
  */
-async function rollout({ target = APP_VERSION, pollMs = POLL_MS, timeoutMs = COME_BACK_TIMEOUT_MS } = {}) {
+async function rollout({ target = APP_VERSION, pollMs = POLL_MS, timeoutMs = COME_BACK_TIMEOUT_MS, force = false } = {}) {
   if (running) return { skipped: 'a rollout is already running' };
   running = true;
   const summary = {
@@ -97,7 +149,7 @@ async function rollout({ target = APP_VERSION, pollMs = POLL_MS, timeoutMs = COM
       try {
         const info = await peerVersion(row.id);
         entry.from = info.version;
-        if (updateService.compareVersions(info.version, target) >= 0) {
+        if (!force && updateService.compareVersions(info.version, target) >= 0) {
           entry.status = 'up-to-date';
           entry.to = info.version;
           continue;
@@ -109,14 +161,19 @@ async function rollout({ target = APP_VERSION, pollMs = POLL_MS, timeoutMs = COM
         }
         entry.status = 'updating';
         saveRollout(summary);
+        const before = force
+          ? { version: info.version, commit: info.commit, startedAt: ((await peerUpdateStatus(row.id)) || {}).startedAt }
+          : null;
         const res = await hostService.requestHost(row.id, '/api/system/update', {
           method: 'POST', body: { propagated: true }, timeout: 20000, maxCandidates: 3,
         });
         if (!res.ok) throw new Error((res.data && res.data.error) || `update HTTP ${res.status}`);
-        const reached = await waitForVersion(row.id, target, { pollMs, timeoutMs });
+        const reached = force
+          ? await waitForUpdate(row.id, before, { pollMs: Math.min(pollMs, FORCE_POLL_MS), timeoutMs })
+          : await waitForVersion(row.id, target, { pollMs, timeoutMs });
         if (!reached) {
           entry.status = 'failed';
-          entry.error = 'did not come back with the new version in time';
+          entry.error = force ? 'did not finish updating in time' : 'did not come back with the new version in time';
           summary.halted = `${row.name} did not come back; remaining machines were left untouched`;
           break;
         }
@@ -162,6 +219,20 @@ async function maybePropagateAfterUpdate() {
 
   const last = hostService.readConfig(LAST_VERSION_KEY);
   hostService.writeConfig(LAST_VERSION_KEY, APP_VERSION);
+
+  // "Update now" asked for the whole fleet: this machine went first (it is the
+  // canary), so now update every paired machine regardless of the opt-in
+  // toggle or of whether the version number changed.
+  const pending = hostService.readConfig(PENDING_KEY) === '1';
+  hostService.writeConfig(PENDING_KEY, '0');
+  if (pending) {
+    hostService.writeConfig(SKIP_KEY, '0');
+    // Do not push a release that just failed here (and was rolled back) on to
+    // the rest of the fleet.
+    const local = (updateService.getUpdateStatus() || {}).status;
+    if (local && local.state === 'failed') return null;
+    return rollout({ target: APP_VERSION, force: true });
+  }
   if (!last || updateService.compareVersions(APP_VERSION, last) <= 0) return null;
 
   const skip = hostService.readConfig(SKIP_KEY) === '1';
@@ -177,5 +248,7 @@ module.exports = {
   markPropagatedUpdate,
   clearPropagatedUpdate,
   rollout,
+  requestFleetUpdate,
+  cancelFleetUpdate,
   maybePropagateAfterUpdate,
 };

@@ -346,6 +346,13 @@ function initDatabase(customPath = null) {
       updated_at TEXT NOT NULL
     );
 
+    -- Deleted vault entries, kept so that peer sync propagates deletions
+    -- instead of resurrecting the secret from a machine that still has it.
+    CREATE TABLE IF NOT EXISTS secret_tombstones (
+      name TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS fleet_hosts (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

@@ -122,6 +122,9 @@ async function systemRoutes(fastify) {
     const propagated = Boolean(request.body && request.body.propagated);
     try {
       if (propagated) updateRolloutService.markPropagatedUpdate();
+      // "Update now" covers every paired machine: this one updates first and,
+      // once back up, the pending flag rolls the update out to the others.
+      else updateRolloutService.requestFleetUpdate();
       const res = await updateService.triggerUpdate({ fanout: !propagated });
       auditService.logAction({
         userId: request.user.id,
@@ -133,7 +136,22 @@ async function systemRoutes(fastify) {
       return res;
     } catch (err) {
       if (propagated) updateRolloutService.clearPropagatedUpdate();
+      else updateRolloutService.cancelFleetUpdate();
       return reply.status(400).send({ error: err.message });
+    }
+  });
+
+  // Update channel: "stable" (latest release) or "main" (branch head).
+  fastify.get('/api/system/update/channel', { preHandler: requireAdmin }, async () => ({
+    channel: updateService.getChannel(),
+  }));
+
+  fastify.put('/api/system/update/channel', { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const channel = updateService.setChannel(String((request.body && request.body.channel) || ''));
+      return { channel };
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
     }
   });
 

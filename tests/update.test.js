@@ -143,3 +143,27 @@ describe('Version, updater and migrations', () => {
     });
   });
 });
+
+describe('Update channel', () => {
+  const channelFile = path.join(require('../server/config').DATA_DIR, 'update-channel');
+  let previous = null;
+
+  before(() => {
+    try { previous = fs.readFileSync(channelFile, 'utf8'); } catch { previous = null; }
+  });
+
+  after(() => {
+    if (previous === null) fs.rmSync(channelFile, { force: true });
+    else fs.writeFileSync(channelFile, previous);
+  });
+
+  test('defaults to main, persists stable and rejects unknown channels', () => {
+    fs.rmSync(channelFile, { force: true });
+    assert.equal(updateService.getChannel(), 'main');
+    assert.equal(updateService.setChannel('stable'), 'stable');
+    assert.equal(updateService.getChannel(), 'stable');
+    assert.equal(updateService.getVersionInfo().channel, 'stable');
+    assert.throws(() => updateService.setChannel('nightly'), /Unknown update channel/);
+    assert.equal(updateService.getChannel(), 'stable');
+  });
+});

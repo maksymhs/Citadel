@@ -4,6 +4,7 @@
 const { requireAuth } = require('../security/auth');
 const gitCredentialsService = require('../services/gitCredentialsService');
 const auditService = require('../services/auditService');
+const secretSyncService = require('../services/secretSyncService');
 
 async function gitRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
@@ -18,6 +19,7 @@ async function gitRoutes(fastify) {
     const { provider, token, username } = request.body || {};
     try {
       const credential = gitCredentialsService.saveCredential({ provider, token, username });
+      secretSyncService.scheduleSync();
       auditService.logAction({
         userId: request.user.id,
         action: 'git_credential_saved',
@@ -36,6 +38,7 @@ async function gitRoutes(fastify) {
   fastify.delete('/api/git/credentials/:provider', async (request, reply) => {
     try {
       const res = gitCredentialsService.deleteCredential(request.params.provider);
+      secretSyncService.scheduleSync();
       auditService.logAction({
         userId: request.user.id,
         action: 'git_credential_deleted',
