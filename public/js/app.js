@@ -4440,58 +4440,22 @@
       const panelHost = (state.hostIdentity && state.hostIdentity.name) || 'this machine';
 
       content.innerHTML = `
-        <div style="margin-bottom:20px;">
-          <h2 style="font-size:18px;margin-bottom:6px;">Settings${activeHost ? ` · ${escapeHtml(activeHost)}` : ''}</h2>
+        <div style="margin-bottom:24px;">
+          <h2 style="font-size:20px;margin-bottom:6px;">Settings${activeHost ? ` · ${escapeHtml(activeHost)}` : ''}</h2>
           <p style="color:var(--text-secondary);font-size:13px;">
-            Configure how this host is reached from other devices. This only changes the address
-            Citadel advertises — it never opens ports or exposes anything by itself.
+            Updates, paired machines, how this host is reached, credentials and modules.
           </p>
         </div>
 
-        <div class="card" style="margin-bottom:24px;">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
-            <div>
-              <h3 style="font-size:16px;font-weight:600;">Machines</h3>
-              <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
-                Pair another Citadel to reach it from this panel. Pairing is bidirectional and survives
-                address changes (including rotating Cloudflare tunnel URLs). A code created here also
-                merges the encrypted credential vault in both directions over HTTPS.
-              </p>
-              <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">
-                Pairing is managed by <strong>${escapeHtml(panelHost)}</strong> (the panel you are connected to)
-                · <span style="font-family:var(--font-mono);">${escapeHtml((state.hostIdentity && state.hostIdentity.url) || '')}</span>
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;flex-shrink:0;">
-              <button class="btn btn-secondary btn-sm" id="settings-pair-btn">Pair a machine</button>
-            </div>
-          </div>
-          <div id="settings-hosts-list" style="margin-top:14px;">
-            ${state.hosts.length === 0
-              ? '<div style="color:var(--text-muted);font-size:13px;">No paired machines yet.</div>'
-              : state.hosts.map((h) => `
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:8px;">
-                  <div style="min-width:0;">
-                    <strong>${escapeHtml(h.name)}</strong>
-                    ${state.activeHostId === h.id ? '<span class="badge badge-success" style="margin-left:6px;">Active</span>' : ''}
-                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);word-break:break-all;">${escapeHtml((h.urls && h.urls[0]) || h.baseUrl)}</div>
-                    ${h.lastSeen ? `<div style="font-size:11px;color:var(--text-muted);">Last seen ${escapeHtml(new Date(h.lastSeen).toLocaleString())}</div>` : ''}
-                  </div>
-                  <div style="display:flex;gap:6px;flex-shrink:0;">
-                    ${state.activeHostId === h.id ? '' : `<button class="btn btn-secondary btn-sm" data-use-host="${h.id}">Use</button>`}
-                    <button class="btn btn-secondary btn-sm" data-address-host="${h.id}" title="Set this machine's current address">Address</button>
-                    <button class="btn btn-secondary btn-sm" data-sync-host="${h.id}" title="Merge the credential vault with this machine">Sync credentials</button>
-                    <button class="btn btn-secondary btn-sm" data-unpair-host="${h.id}">Unpair</button>
-                  </div>
-                </div>`).join('')}
-          </div>
-          <div id="settings-suggestions" style="margin-top:6px;"></div>
+        <div style="margin-top:0;margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">Updates</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">Keep this machine and the machines paired with it on the latest version.</p>
         </div>
 
         <div class="card" style="margin-bottom:24px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
             <div>
-              <h3 style="font-size:16px;font-weight:600;">Updates</h3>
+              <h3 style="font-size:16px;font-weight:600;">Version &amp; updates</h3>
               <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
                 Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
                 ${ver.commit ? `<span style="color:var(--text-muted);">(${escapeHtml(ver.commit)})</span>` : ''}
@@ -4531,54 +4495,53 @@
           </div>
         </div>
 
-        <div class="card" style="margin-bottom:24px;">
-          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">About this host</h3>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;font-size:13px;">
-            <div>
-              <span style="color:var(--text-muted);">Hostname:</span>
-              <strong style="display:block;margin-top:2px;">${escapeHtml(node.hostname || '')}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Operating System:</span>
-              <strong style="display:block;margin-top:2px;">${escapeHtml(node.platform || '')} ${escapeHtml(node.release || '')}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Node.js Runtime:</span>
-              <strong style="display:block;margin-top:2px;color:var(--accent-color);">${escapeHtml(node.nodeVersion || '')}</strong>
-            </div>
-            <div>
-              <span style="color:var(--text-muted);">Uptime:</span>
-              <strong style="display:block;margin-top:2px;">${node.uptimeSeconds ? `${Math.round(node.uptimeSeconds / 3600)} hours` : '—'}</strong>
-            </div>
-          </div>
+        <div style="margin-top:28px;margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">Machines</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">Pair other Citadels to reach them from this panel, with live health and alerts under Machines.</p>
         </div>
 
         <div class="card" style="margin-bottom:24px;">
-          <h3 class="widget-heading">Public URL</h3>
-          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;line-height:1.6;">
-            The address you use to reach this panel (your domain or server IP). It feeds the connection
-            QR code and is trusted as a WebSocket origin, so terminals work when opened through it.
-          </p>
-          ${s.envLocked ? `<p class="settings-warn">Fixed by the <code>CITADEL_PUBLIC_URL</code> environment variable (<code>${escapeHtml(s.envPublicUrl)}</code>). Unset it to edit here.</p>` : ''}
-          <div class="settings-row">
-            <input type="text" id="settings-public-url" class="form-input" placeholder="https://panel.example.com or http://203.0.113.10:3000" value="${escapeHtml(s.publicUrl || '')}" ${s.envLocked ? 'disabled' : ''} />
-            <button class="btn btn-primary btn-sm" id="settings-save-url" ${s.envLocked ? 'disabled' : ''}>Save</button>
-            <button class="btn btn-secondary btn-sm" id="settings-clear-url" ${(!s.publicUrl || s.envLocked) ? 'disabled' : ''}>Clear</button>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+            <div>
+              <h3 style="font-size:16px;font-weight:600;">Paired machines</h3>
+              <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
+                Pair another Citadel to reach it from this panel. Pairing is bidirectional and survives
+                address changes (including rotating Cloudflare tunnel URLs). A code created here also
+                merges the encrypted credential vault in both directions over HTTPS.
+              </p>
+              <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">
+                Pairing is managed by <strong>${escapeHtml(panelHost)}</strong> (the panel you are connected to)
+                · <span style="font-family:var(--font-mono);">${escapeHtml((state.hostIdentity && state.hostIdentity.url) || '')}</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0;">
+              <button class="btn btn-secondary btn-sm" id="settings-pair-btn">Pair a machine</button>
+            </div>
           </div>
-          <div style="margin-top:18px;">
-            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Effective address</div>
-            <a href="${escapeHtml(connect.url || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(connect.url || '')}</a>
-            <div style="margin-top:8px;font-size:12px;color:var(--text-secondary);line-height:1.5;">${connectSourceNote(connect.source, connect.url)}</div>
+          <div id="settings-hosts-list" style="margin-top:14px;">
+            ${state.hosts.length === 0
+              ? '<div style="color:var(--text-muted);font-size:13px;">No paired machines yet.</div>'
+              : state.hosts.map((h) => `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:8px;">
+                  <div style="min-width:0;">
+                    <strong>${escapeHtml(h.name)}</strong>
+                    ${state.activeHostId === h.id ? '<span class="badge badge-success" style="margin-left:6px;">Active</span>' : ''}
+                    <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);word-break:break-all;">${escapeHtml((h.urls && h.urls[0]) || h.baseUrl)}</div>
+                    ${h.lastSeen ? `<div style="font-size:11px;color:var(--text-muted);">Last seen ${escapeHtml(new Date(h.lastSeen).toLocaleString())}</div>` : ''}
+                  </div>
+                  <div style="display:flex;gap:6px;flex-shrink:0;">
+                    ${state.activeHostId === h.id ? '' : `<button class="btn btn-secondary btn-sm" data-use-host="${h.id}">Use</button>`}
+                    <button class="btn btn-secondary btn-sm" data-address-host="${h.id}" title="Set this machine's current address">Address</button>
+                    <button class="btn btn-secondary btn-sm" data-sync-host="${h.id}" title="Merge the credential vault with this machine">Sync credentials</button>
+                    <button class="btn btn-secondary btn-sm" data-unpair-host="${h.id}">Unpair</button>
+                  </div>
+                </div>`).join('')}
           </div>
+          <div id="settings-suggestions" style="margin-top:6px;"></div>
         </div>
 
-        <div class="card" style="margin-bottom:24px;" id="tunnel-card">
-          <h3 class="widget-heading">Tunnel (your own domain)</h3>
-          <div id="tunnel-body" style="margin-top:6px;font-size:13px;color:var(--text-secondary);">Loading…</div>
-        </div>
-
-        <div class="card">
-          <h3 class="widget-heading">Connection</h3>
+        <div class="card" style="margin-bottom:24px;">
+          <h3 class="widget-heading">Pairing code</h3>
           <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;line-height:1.6;">
             Scan this code with any camera to open the panel on another device.
             From another Citadel, open <strong>Pair a machine</strong> and scan the
@@ -4607,6 +4570,35 @@
         </div>
 
         <div style="margin-top:28px;margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">Network &amp; access</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">The address Citadel advertises to other devices. This only changes the advertised address; it never opens ports or exposes anything by itself.</p>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <h3 class="widget-heading">Public URL</h3>
+          <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;line-height:1.6;">
+            The address you use to reach this panel (your domain or server IP). It feeds the connection
+            QR code and is trusted as a WebSocket origin, so terminals work when opened through it.
+          </p>
+          ${s.envLocked ? `<p class="settings-warn">Fixed by the <code>CITADEL_PUBLIC_URL</code> environment variable (<code>${escapeHtml(s.envPublicUrl)}</code>). Unset it to edit here.</p>` : ''}
+          <div class="settings-row">
+            <input type="text" id="settings-public-url" class="form-input" placeholder="https://panel.example.com or http://203.0.113.10:3000" value="${escapeHtml(s.publicUrl || '')}" ${s.envLocked ? 'disabled' : ''} />
+            <button class="btn btn-primary btn-sm" id="settings-save-url" ${s.envLocked ? 'disabled' : ''}>Save</button>
+            <button class="btn btn-secondary btn-sm" id="settings-clear-url" ${(!s.publicUrl || s.envLocked) ? 'disabled' : ''}>Clear</button>
+          </div>
+          <div style="margin-top:18px;">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Effective address</div>
+            <a href="${escapeHtml(connect.url || '#')}" target="_blank" rel="noopener" style="display:inline-block;margin-top:2px;color:var(--accent-color);word-break:break-all;font-family:var(--font-mono);font-size:13px;">${escapeHtml(connect.url || '')}</a>
+            <div style="margin-top:8px;font-size:12px;color:var(--text-secondary);line-height:1.5;">${connectSourceNote(connect.source, connect.url)}</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;" id="tunnel-card">
+          <h3 class="widget-heading">Tunnel (your own domain)</h3>
+          <div id="tunnel-body" style="margin-top:6px;font-size:13px;color:var(--text-secondary);">Loading…</div>
+        </div>
+
+        <div style="margin-top:28px;margin-bottom:20px;">
           <h2 style="font-size:18px;margin-bottom:6px;">Credentials</h2>
           <p style="color:var(--text-secondary);font-size:13px;">
             One encrypted vault for everything agents and git need. Environment
@@ -4630,6 +4622,33 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="activity">Open Activity</button>
             <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="audit">Open Audit</button>
+          </div>
+        </div>
+
+        <div style="margin-top:28px;margin-bottom:20px;">
+          <h2 style="font-size:18px;margin-bottom:6px;">System</h2>
+          <p style="color:var(--text-secondary);font-size:13px;">Details of this host and the optional modules it runs.</p>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;">
+          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px;">About this host</h3>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;font-size:13px;">
+            <div>
+              <span style="color:var(--text-muted);">Hostname:</span>
+              <strong style="display:block;margin-top:2px;">${escapeHtml(node.hostname || '')}</strong>
+            </div>
+            <div>
+              <span style="color:var(--text-muted);">Operating System:</span>
+              <strong style="display:block;margin-top:2px;">${escapeHtml(node.platform || '')} ${escapeHtml(node.release || '')}</strong>
+            </div>
+            <div>
+              <span style="color:var(--text-muted);">Node.js Runtime:</span>
+              <strong style="display:block;margin-top:2px;color:var(--accent-color);">${escapeHtml(node.nodeVersion || '')}</strong>
+            </div>
+            <div>
+              <span style="color:var(--text-muted);">Uptime:</span>
+              <strong style="display:block;margin-top:2px;">${node.uptimeSeconds ? `${Math.round(node.uptimeSeconds / 3600)} hours` : '—'}</strong>
+            </div>
           </div>
         </div>
 
