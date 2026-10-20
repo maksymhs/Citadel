@@ -2228,12 +2228,12 @@ html.is-mobile-ui .data-table tr:hover td {
 /* Dashboard "Machines" widget: one card per machine with ring gauges */
 .mon-mini-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 12px;
 }
 .mon-mini-card {
-  display: flex; flex-direction: column; gap: 12px;
-  padding: 14px; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  display: block; container-type: inline-size;
+  padding: 16px 18px; text-align: left; font: inherit; color: inherit; cursor: pointer;
   background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 10px;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
@@ -2263,3 +2263,17 @@ html.is-mobile-ui .data-table tr:hover td {
 .mon-mini-down strong { color: var(--danger-color); font-size: 15px; }
 .mon-mini-down.mon-muted strong { color: inherit; }
 .mon-mini-foot { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+
+/* The card adapts to its own width: stacked when narrow, one row when wide
+   (a lone machine stretches across the whole widget). */
+.mon-mini-inner { display: flex; flex-direction: column; gap: 14px; }
+.mon-mini-info { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+@container (min-width: 440px) {
+  .mon-mini-inner { flex-direction: row; align-items: center; justify-content: space-between; gap: 28px; }
+  .mon-mini-info { flex: 1; }
+  .mon-mini-head strong { font-size: 16px; }
+  .mon-rings { grid-template-columns: repeat(3, 76px); gap: 20px; flex-shrink: 0; }
+  .mon-ring svg { width: 68px; height: 68px; }
+  .mon-ring strong { height: 68px; font-size: 16px; }
+  .mon-mini-down { min-height: 0; align-items: flex-end; text-align: right; }
+}

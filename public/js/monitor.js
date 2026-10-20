@@ -251,14 +251,18 @@
       h.version ? `v${h.version}` : null,
     ].filter(Boolean).map(esc).join(' · ');
     return `<button type="button" class="mon-mini-card mon-${status}" data-mon-overview title="Open Machines overview">
-      <span class="mon-mini-head">
-        <span class="host-dot ${dot}"></span>
-        <strong>${esc(h.name)}</strong>
-        ${h.isLocal ? '<span class="mon-tag">this machine</span>' : ''}
-        <span class="mon-chips">${chips}</span>
+      <span class="mon-mini-inner">
+        <span class="mon-mini-info">
+          <span class="mon-mini-head">
+            <span class="host-dot ${dot}"></span>
+            <strong>${esc(h.name)}</strong>
+            ${h.isLocal ? '<span class="mon-tag">this machine</span>' : ''}
+            <span class="mon-chips">${chips}</span>
+          </span>
+          <span class="mon-mini-foot">${foot || '&nbsp;'}</span>
+        </span>
+        ${body}
       </span>
-      ${body}
-      <span class="mon-mini-foot">${foot || '&nbsp;'}</span>
     </button>`;
   }
 

@@ -1232,7 +1232,6 @@
               <h3 class="widget-heading">Machines</h3>
               <div id="dash-machines-summary" class="mon-muted" style="margin-top:2px;">Checking…</div>
             </div>
-            <button class="btn btn-secondary btn-sm" id="dash-machines-open">Machines overview &rarr;</button>
           </div>
           <div id="dash-machines-body"><div class="mon-muted">Loading…</div></div>`);
       case 'fleet':
@@ -1459,7 +1458,6 @@
 
       if (widgets.includes('fleet')) refreshDashboardFleet();
       if (widgets.includes('machines')) {
-        document.getElementById('dash-machines-open')?.addEventListener('click', () => navigateTo('machines'));
         window.CitadelMonitor.renderWidget(monitorCtx());
       }
 
