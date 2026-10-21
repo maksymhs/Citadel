@@ -120,13 +120,23 @@ Fastify + SQLite (WAL). Runs on 512 MB of RAM. Plugin system with fault isolatio
 
 <table>
 <tr>
-<td width="34%" valign="top"><img src="docs/img/machine-selector-dark.png" alt="Machine selector listing four paired machines with their addresses and status"><br><sub><b>One URL, many machines.</b> Switch between paired Citadels without leaving the page.</sub></td>
-<td width="44%" valign="top"><img src="docs/img/machine-alert-dark.png" alt="Machine detail with a critical disk gauge, availability bar with an outage and recent incidents"><br><sub><b>Health and incidents.</b> Gauges, 24 h availability, latency and an incident trail per machine.</sub></td>
-<td width="22%" valign="top"><img src="docs/img/mobile-dark.png" alt="The dashboard on a phone"><br><sub><b>Built for phones.</b> Responsive, with touch-friendly terminals.</sub></td>
+<td width="50%" valign="top"><img src="docs/img/terminal-dark.png" alt="A persistent web terminal in the acme-api project showing a passing test run"><br><sub><b>Persistent terminals.</b> Close the browser or restart the panel: your sessions keep running in tmux.</sub></td>
+<td width="50%" valign="top"><img src="docs/img/files-dark.png" alt="File explorer in grid view showing a project folder"><br><sub><b>Files.</b> Browse, edit, upload and clean up the host, with a disk analyser built in.</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="docs/img/machine-alert-dark.png" alt="Machine detail with a critical disk gauge, availability bar with an outage and recent incidents"><br><sub><b>Health and incidents.</b> Gauges, 24 h availability, latency and an incident trail for every machine.</sub></td>
+<td width="50%" valign="top"><img src="docs/img/machine-selector-dark.png" alt="Machine selector listing four paired machines with their addresses and status"><br><sub><b>One URL, many machines.</b> Pair Citadels with a QR code and switch between them without leaving the page.</sub></td>
 </tr>
 </table>
 
-<sub>Screenshots show a demo instance with simulated machines (regenerate them with `scripts/screenshots.js`).</sub>
+<div align="center">
+<img src="docs/img/mobile-dark.png" alt="The dashboard on a phone" width="260"><br>
+<sub><b>Built for phones too.</b> Responsive layout, on-screen terminal keys and native text selection.</sub>
+</div>
+
+<br>
+
+<sub>Screenshots show a demo instance with simulated machines and projects (regenerate them with <code>scripts/screenshots.js</code>).</sub>
 
 ## 🔒 Secure by default
 

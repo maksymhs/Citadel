@@ -242,3 +242,17 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Observation, not fixed: this host's root filesystem is 86 % full; about 4.4 GB is a
   Flutter/Chrome toolchain under `/srv/citadel/projects/.toolchain`, which is not part of
   Citadel.
+
+## 110. README gallery redesigned
+- "A look inside" now shows a persistent terminal and the file explorer next to the
+  machine screens, in two rows of two large images plus a centred phone view. The demo
+  instance in `scripts/screenshots.js` gained three projects with files and two real
+  tmux terminals replaying a test run; those run on a private tmux server
+  (`TMUX_TMPDIR` in the temp directory) and the temp directory is deleted at the end.
+- Details that would have leaked the real host were fixed before publishing: the shell
+  prompt and tmux status line use made-up names, the explorer is walked straight into the
+  demo project (its path is shown as `/home/ada/projects/acme-api`), and the demo's own
+  helper script lives outside the project folder.
+- Known gap: with xterm.js attached, tmux's terminal-capability replies can land on the
+  shell prompt as stray text (`1;2c0;276;0c`) if input is typed before they settle; the
+  script clears the line first. It looks like a product quirk worth a separate look.
