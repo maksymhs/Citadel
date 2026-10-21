@@ -225,7 +225,8 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   session or user changes). AGENTS.md now says to override all four data paths.
 
 ## 109. Test isolation fixes, dead code removal and README screenshots
-- Full suite on this host: 485 tests, 485 pass. Two suites had failed only because of
+- Full suite on this host: 486 tests, 485 pass, 0 fail, 1 skipped (the update-rollback
+  no-systemd branch, unreachable on a host with systemd). Two suites had failed only because of
   the host they ran on: `monitor.test.js` compared against this machine's real disk
   (86 % full, over the test's 85 % threshold) and `terminal.test.js` ran under a shell
   exporting `TERMINAL_ADMIN_USER`, which starts the global session as another user under
