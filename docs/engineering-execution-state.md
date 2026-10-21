@@ -223,3 +223,21 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   seconds and left one `server_started` event and one `plugin_initialized` audit row
   (v0.42.0) in the live `events` and `audit_logs`; no other data changed (no rollout, no
   session or user changes). AGENTS.md now says to override all four data paths.
+
+## 109. Test isolation fixes, dead code removal and README screenshots
+- Full suite on this host: 485 tests, 485 pass. Two suites had failed only because of
+  the host they ran on: `monitor.test.js` compared against this machine's real disk
+  (86 % full, over the test's 85 % threshold) and `terminal.test.js` ran under a shell
+  exporting `TERMINAL_ADMIN_USER`, which starts the global session as another user under
+  a tmux server the test cannot see. Both tests now isolate themselves.
+- Lint is clean (it had five warnings): removed two unused terminal close helpers, an
+  unused constant and function in `app.js`, and unused test variables.
+- README: hero dashboard screenshot (light and dark via `<picture>`) and a three-image
+  gallery in `docs/img/`. They show a demo instance with simulated machines; all five are
+  produced by `scripts/screenshots.js` (isolated temp data, fake machines and history,
+  headless Chrome through `puppeteer-core`, which is not a dependency of the project).
+- Known gaps: screenshots are taken with Chrome for Testing 155 on Linux, so fonts differ
+  from a Mac or phone; they will age as the UI changes (the script regenerates them).
+- Observation, not fixed: this host's root filesystem is 86 % full; about 4.4 GB is a
+  Flutter/Chrome toolchain under `/srv/citadel/projects/.toolchain`, which is not part of
+  Citadel.

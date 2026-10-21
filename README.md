@@ -20,6 +20,13 @@ Self-hosted, lightweight and secure. Runs on a VPS, a Mac or a spare laptop.
 [Docs](#-documentation) ·
 [Changelog](CHANGELOG.md)
 
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/img/dashboard-light.png">
+  <img src="docs/img/dashboard-dark.png" alt="Citadel dashboard: CPU, memory and disk gauges, uptime, availability and incidents for one machine, with an alert about another" width="900">
+</picture>
+
 </div>
 
 ---
@@ -108,6 +115,18 @@ Fastify + SQLite (WAL). Runs on 512 MB of RAM. Plugin system with fault isolatio
 - **Idempotent installer** and systemd unit (Debian/Ubuntu), `launchd` on macOS.
 
 </details>
+
+## 🖼️ A look inside
+
+<table>
+<tr>
+<td width="34%" valign="top"><img src="docs/img/machine-selector-dark.png" alt="Machine selector listing four paired machines with their addresses and status"><br><sub><b>One URL, many machines.</b> Switch between paired Citadels without leaving the page.</sub></td>
+<td width="44%" valign="top"><img src="docs/img/machine-alert-dark.png" alt="Machine detail with a critical disk gauge, availability bar with an outage and recent incidents"><br><sub><b>Health and incidents.</b> Gauges, 24 h availability, latency and an incident trail per machine.</sub></td>
+<td width="22%" valign="top"><img src="docs/img/mobile-dark.png" alt="The dashboard on a phone"><br><sub><b>Built for phones.</b> Responsive, with touch-friendly terminals.</sub></td>
+</tr>
+</table>
+
+<sub>Screenshots show a demo instance with simulated machines (regenerate them with `scripts/screenshots.js`).</sub>
 
 ## 🔒 Secure by default
 
