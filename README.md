@@ -129,6 +129,7 @@ citadel url        # print the panel URL
 citadel qr         # one-time QR code to pair another Citadel (valid 10 minutes)
 citadel logs       # follow the service logs
 citadel restart    # restart the service
+citadel reset-password [--list | USER]  # forgot the panel password: set a new one (needs shell access)
 citadel update     # update to the latest version
 citadel tunnel     # global URL via a Cloudflare Quick Tunnel
 citadel power      # show lid-close/sleep state (laptop hosts)
@@ -137,6 +138,8 @@ citadel power off  # restore the system sleep defaults
 ```
 
 `citadel update`, `citadel tunnel` and `citadel power on|off` need root and re-invoke `sudo` automatically.
+
+`citadel reset-password` is the recovery path for a forgotten panel login. It runs as the account that owns the database (via `sudo` when needed), prompts for the new password (or reads it from stdin), signs out that user's sessions and writes an audit entry. Each instance has its own login, so run it on the machine whose password you lost. Paired-machine tokens and the credential vault are not affected.
 
 ### Laptop server / always-on mode
 

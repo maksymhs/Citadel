@@ -83,6 +83,29 @@ function createInitialAdmin(username, password) {
 }
 
 /**
+ * Replace a user's password and revoke every session. This is the offline
+ * recovery path (`citadel reset-password`); there is no unauthenticated route.
+ * Returns the user, or null when the username does not exist.
+ */
+function setUserPassword(username, password) {
+  if (!password || typeof password !== 'string' || password.length < 8) {
+    throw new Error('Password must be at least 8 characters long.');
+  }
+  const db = getDatabase();
+  const user = db.prepare('SELECT id, username, role FROM users WHERE username = ?')
+    .get(String(username || '').trim().toLowerCase());
+  if (!user) return null;
+
+  const { hash, salt } = hashPassword(password);
+  db.transaction(() => {
+    db.prepare('UPDATE users SET password_hash = ?, salt = ?, updated_at = ? WHERE id = ?')
+      .run(hash, salt, new Date().toISOString(), user.id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+  })();
+  return user;
+}
+
+/**
  * Authenticate credentials and create a session
  */
 function login(username, password) {
@@ -276,6 +299,7 @@ module.exports = {
   verifyPassword,
   isSetupComplete,
   createInitialAdmin,
+  setUserPassword,
   login,
   getSessionUser,
   destroySession,

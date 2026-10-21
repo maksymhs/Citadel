@@ -3,6 +3,7 @@
 # Citadel — friendly management CLI
 #   citadel status | url | qr | logs | restart | update | help
 #   citadel doctor | network | wifi list | wifi connect | repair
+#   citadel reset-password [--list | username]
 #   citadel power [status|on|off]
 # Installed as /usr/local/bin/citadel (a thin launcher for this file).
 # ==============================================================================
@@ -58,6 +59,8 @@ Citadel CLI
   citadel qr [--url|--open]  Print a pairing QR code (--url: short, address only;
                          --open: large QR page in the browser)
   citadel logs           Follow the service logs
+  citadel reset-password [--list | USER]
+                         Set a new panel password offline (revokes its sessions)
   citadel restart        Restart the service
   citadel update         Update to the latest version
   citadel tunnel         Expose the panel globally via a Cloudflare tunnel
@@ -159,6 +162,22 @@ case "$cmd" in
       exit 1
     fi
     exec node "$APP_DIR/scripts/doctor.js" "$cmd" "$@"
+    ;;
+
+  reset-password)
+    if ! command -v node >/dev/null 2>&1 || [ ! -f "$APP_DIR/scripts/reset-password.js" ]; then
+      echo "ERROR: Node.js and $APP_DIR/scripts/reset-password.js are required (set CITADEL_APP_DIR)." >&2
+      exit 1
+    fi
+    # Run as the account that owns the database so SQLite's -wal/-shm files do
+    # not end up root-owned and lock the service out.
+    db_owner="$(stat -c %U "$DATA_DIR/citadel.db" 2>/dev/null || stat -f %Su "$DATA_DIR/citadel.db" 2>/dev/null || true)"
+    runner=()
+    if [ -n "$db_owner" ] && [ "$db_owner" != "$(id -un)" ]; then
+      runner=(sudo -u "$db_owner")
+    fi
+    exec ${runner[@]+"${runner[@]}"} env DATA_DIR="$DATA_DIR" DATABASE_PATH="$DATA_DIR/citadel.db" \
+      node "$APP_DIR/scripts/reset-password.js" "$@"
     ;;
 
   power)

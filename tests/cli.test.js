@@ -147,3 +147,50 @@ test('qr-page writes a self-contained page with the QR and the escaped address',
   assert.ok(!html.includes('<x>'));
   assert.equal(fs.statSync(out).mode & 0o077, 0, 'the page holds a one-time secret and is private');
 });
+
+test('reset-password replaces the password, revokes sessions and is audited', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-reset-'));
+  const dbPath = path.join(dir, 'citadel.db');
+  const env = { ...process.env, DATA_DIR: dir, DATABASE_PATH: dbPath };
+  const script = path.join(ROOT, 'scripts', 'reset-password.js');
+  try {
+    const seed = `
+      const { initDatabase, closeDatabase } = require('./server/database/db');
+      const auth = require('./server/security/auth');
+      initDatabase();
+      auth.createInitialAdmin('Admin', 'old-password-1');
+      auth.login('admin', 'old-password-1');
+      closeDatabase();
+    `;
+    execFileSync(process.execPath, ['-e', seed], { cwd: ROOT, env });
+
+    const out = execFileSync(process.execPath, [script], { env, input: 'new-password-2\n', encoding: 'utf8' });
+    assert.match(out, /Password updated for "admin"/);
+
+    const check = `
+      const { initDatabase, getDatabase } = require('./server/database/db');
+      const auth = require('./server/security/auth');
+      initDatabase();
+      const ok = auth.login('admin', 'new-password-2') !== null;
+      const old = auth.login('admin', 'old-password-1') === null;
+      const sessions = getDatabase().prepare('SELECT COUNT(*) c FROM sessions').get().c;
+      const audit = getDatabase().prepare("SELECT COUNT(*) c FROM audit_logs WHERE action='password_reset_cli'").get().c;
+      console.log(JSON.stringify({ ok, old, sessions, audit }));
+    `;
+    const res = JSON.parse(execFileSync(process.execPath, ['-e', check], { cwd: ROOT, env, encoding: 'utf8' }));
+    assert.deepEqual(res, { ok: true, old: true, sessions: 1, audit: 1 });
+
+    assert.throws(
+      () => execFileSync(process.execPath, [script, 'ghost'], { env, input: 'new-password-3\n', stdio: 'pipe' }),
+      /No such user|status 1/,
+    );
+    assert.throws(
+      () => execFileSync(process.execPath, [script], { env, input: 'short\n', stdio: 'pipe' }),
+      /status 1|at least 8/,
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
