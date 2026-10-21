@@ -38,11 +38,16 @@ function parseTrustProxy(value) {
 }
 const TRUST_PROXY = parseTrustProxy(process.env.CITADEL_TRUST_PROXY);
 
-const DATA_DIR = process.env.DATA_DIR || path.join(ROOT_DIR, 'data');
-const DATABASE_PATH = process.env.DATABASE_PATH || path.join(DATA_DIR, 'citadel.db');
-const PROJECTS_DIR = process.env.PROJECTS_DIR || path.join(DATA_DIR, 'projects');
-const LOGS_DIR = process.env.LOGS_DIR || path.join(DATA_DIR, 'logs');
-const PLUGINS_DIR = process.env.PLUGINS_DIR || path.join(ROOT_DIR, 'plugins');
+// Relative paths in .env (e.g. ./data/projects) resolve against the app root,
+// not the process cwd, so child processes started with another cwd (git clone)
+// never see a different location.
+const resolveFromRoot = (value, fallback) => path.resolve(ROOT_DIR, value || fallback);
+
+const DATA_DIR = resolveFromRoot(process.env.DATA_DIR, 'data');
+const DATABASE_PATH = resolveFromRoot(process.env.DATABASE_PATH, path.join(DATA_DIR, 'citadel.db'));
+const PROJECTS_DIR = resolveFromRoot(process.env.PROJECTS_DIR, path.join(DATA_DIR, 'projects'));
+const LOGS_DIR = resolveFromRoot(process.env.LOGS_DIR, path.join(DATA_DIR, 'logs'));
+const PLUGINS_DIR = resolveFromRoot(process.env.PLUGINS_DIR, 'plugins');
 
 // Allowed origins for CORS and WebSocket handshake
 const allowedOriginsEnv = process.env.ALLOWED_ORIGINS || `http://localhost:${PORT},http://127.0.0.1:${PORT}`;
