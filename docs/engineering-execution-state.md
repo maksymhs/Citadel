@@ -1779,7 +1779,7 @@ README/.env.example/architecture. No commits/pushes/deploys.
 - Version bumped to `0.41.0`; asset cache-buster token moved to `v0410`.
 
 
-## 107. macOS Full Disk Access helper
+## 106. macOS Full Disk Access helper
 - macOS asked for permission per protected folder because the LaunchAgent runs `node`
   and everything it starts (terminals, tmux, git, agents) as separate binaries. One
   Full Disk Access grant removes the folder prompts; it can only be made by the user
@@ -1796,3 +1796,18 @@ README/.env.example/architecture. No commits/pushes/deploys.
   `tmux` and any program a prompt names. Local Network, Automation, Photos and camera
   prompts are separate permissions and are not covered. `brew upgrade node` changes the
   real path and loses the grant.
+
+## 107. Release v0.42.0
+- Highlights since v0.41.0: real RAM usage and temperature for macOS machines in the
+  monitor; the machine overview and the machine selector redesigned (gauge cards, KPI
+  tiles, incident timeline, live status); relative `data/projects/logs/plugins` paths
+  resolved against the app root; `ioreg` called by absolute path so the service works
+  under launchd; `citadel permissions` and the Full Disk Access check (entry 106);
+  README and guides rewritten, `AGENTS.md`, generated `docs/code-map.md` and
+  `CHANGELOG.md`, optional Graphify code graph (`npm run graph`).
+- Verification: `node --test` gives 483 tests, 475 pass, 7 fail, in the same three suites
+  that already failed on v0.41.0 (doctor CLI output, fleet monitor, terminal/tmux copy).
+- Known gaps: the macOS monitor changes and the Full Disk Access flow have not been
+  run on a real Mac by the author of this entry; Graphify was never run for real.
+- Version bumped to `0.42.0`; asset cache-buster token moved to `v0420` (the rc builds
+  still served `v0410`, so browsers could keep stale scripts).

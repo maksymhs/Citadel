@@ -2,10 +2,11 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
-## Unreleased
+## [0.42.0](https://github.com/maksymhs/Citadel/releases/tag/v0.42.0) · 2026-10-21
 
 ### Added
 
+- **macos**: One-time Full Disk Access setup with `citadel permissions`
 - **dev**: Agent guide, generated code map and changelog, optional Graphify graph
 - **ui**: Redesign machine selector with live status, icon tile and richer menu
 - **dashboard**: Redesign machine overview with gauge cards, KPI tiles and incident timeline
