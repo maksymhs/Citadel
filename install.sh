@@ -211,6 +211,16 @@ if [ -n "$ADMIN_TERMINAL_USER" ]; then
   fi
 fi
 
+# Windows Subsystem for Linux is a normal Linux userland, but laptop power
+# settings (24/7 mode) mean nothing there, and a personal Windows PC should not
+# open a public tunnel unless asked. CITADEL_WSL_PROC_VERSION lets tests fake it.
+IS_WSL=false
+if [ "$INSTALL_OS" = "Linux" ] && grep -qi microsoft "${CITADEL_WSL_PROC_VERSION:-/proc/version}" 2>/dev/null; then
+  IS_WSL=true
+  KEEP_AWAKE=false
+  case " $* " in *" --tunnel "*) ;; *) TUNNEL=false ;; esac
+fi
+
 init_progress
 if [ "$CHECK_ONLY" = true ]; then
   echo -e "${CLR}${YELLOW}[CHECK MODE] No changes will be applied to the system.${NC}\n"
@@ -278,6 +288,25 @@ fi
 if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ] && [ "$ARCH" != "arm64" ]; then
   echo -e "${CLR}${RED}[ERROR] Unsupported architecture: $ARCH (x86_64 or arm64/aarch64 required)${NC}"
   exit 1
+fi
+
+# Windows Subsystem for Linux (detected early, see IS_WSL above): Citadel only
+# runs well there with systemd.
+if [ "$IS_WSL" = true ]; then
+  detail "      Running inside WSL"
+  if [ ! -d "${CITADEL_SYSTEMD_RUN_DIR:-/run/systemd/system}" ]; then
+    if [ "$CHECK_ONLY" = true ]; then
+      echo -e "${CLR}${YELLOW}[WARN] systemd is not running in this WSL distro; the real install needs it.${NC}"
+    else
+      echo -e "${CLR}${RED}[ERROR] Citadel needs systemd, which WSL does not start by default.${NC}"
+      echo "  Enable it once:"
+      echo "    1. In this Ubuntu terminal:  printf '[boot]\\nsystemd=true\\n' | sudo tee /etc/wsl.conf"
+      echo "    2. In Windows (PowerShell or CMD):  wsl --shutdown"
+      echo "    3. Open Ubuntu again and re-run this installer."
+      echo "  (Needs Windows 10 2004+ or Windows 11 and WSL 0.67.6+: run 'wsl --update' in Windows if unsure.)"
+      exit 1
+    fi
+  fi
 fi
 
 # Standard layout (created in a later step). Defined early so the CLI launcher
@@ -832,8 +861,19 @@ else
   esac
   echo -e "${STATUS_MARK} Citadel ${CITADEL_VERSION:+v$CITADEL_VERSION }${STATUS_TEXT}"
   echo "  $ACCESS_URL"
-  if [ "$TUNNEL" = true ] || [ "$LAN_EXPOSED" = true ]; then
-    echo -e "  ${YELLOW}Create your admin account now: until then the first visitor can claim it.${NC}"
+  # Creating the first administrator needs a code only this shell can read, so a
+  # stranger who finds the panel first cannot claim it.
+  SETUP_CODE=""
+  SETUP_CODE_RC=0
+  if [ "$UPDATE_MODE" != true ] && [ -n "$DATA_DIR" ] && command -v node >/dev/null 2>&1; then
+    # Empty output with a success status means an administrator already exists.
+    SETUP_CODE="$(run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' DATABASE_PATH='$DATA_DIR/citadel.db' node scripts/setup-code.js --quiet" 2>/dev/null)" || SETUP_CODE_RC=$?
+    SETUP_CODE="${SETUP_CODE##*$'\n'}"
+  fi
+  if [ -n "$SETUP_CODE" ]; then
+    echo -e "  ${YELLOW}Setup code: ${SETUP_CODE}${NC}  (asked when you create the admin account; show it again with: citadel setup-code)"
+  elif [ "$SETUP_CODE_RC" -ne 0 ]; then
+    echo -e "  ${YELLOW}The panel asks for a setup code to create the admin account: run  citadel setup-code${NC}"
   fi
   if [ "$PAIR_QR" = true ]; then
     echo "  Scan to open on your phone, or to pair from another Citadel."

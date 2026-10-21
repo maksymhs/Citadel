@@ -32,8 +32,17 @@ before(() => {
   fake('codesign', 'echo "codesign $*" >> "$TEST_LOG"');
   // `swiftc -O -o <bin> <src> ...` leaves an executable at <bin>.
   fake('swiftc', 'echo "swiftc $*" >> "$TEST_LOG"; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && { : > "$2"; chmod +x "$2"; }; shift; done');
-  // `launchctl print` fails unless a test flips LOADED=1, like an unloaded agent.
-  fake('launchctl', 'echo "launchctl $*" >> "$TEST_LOG"; [ "$1" = "print" ] && [ "${LOADED:-0}" != "1" ] && exit 1; exit 0');
+  fake('xcode-select', 'exit 0');
+  // `launchctl print gui/<uid>` is the graphical session (fails when NO_GUI=1, like
+  // an SSH login); `print gui/<uid>/<label>` is a service and fails unless LOADED=1.
+  fake('launchctl', `echo "launchctl $*" >> "$TEST_LOG"
+if [ "$1" = "print" ]; then
+  case "$2" in
+    gui/*/*) [ "\${LOADED:-0}" = "1" ] || exit 1 ;;
+    gui/*) [ "\${NO_GUI:-0}" = "1" ] && exit 1 ;;
+  esac
+fi
+exit 0`);
 });
 
 after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -62,6 +71,15 @@ describe('macOS menu bar icon', () => {
     assert.match(res.out, /xcode-select --install/);
     assert.ok(!fs.existsSync(agentPlist()));
     assert.ok(!fs.existsSync(bundle()));
+  });
+
+  test('without a graphical login session (SSH) it skips cleanly with its own exit code', () => {
+    const res = run('menubar-macos.sh', ['install'], { NO_GUI: '1' });
+    assert.equal(res.code, 4);
+    assert.match(res.out, /No graphical login session/);
+    assert.ok(!fs.existsSync(agentPlist()));
+    assert.ok(!fs.existsSync(bundle()), 'nothing was built');
+    assert.doesNotMatch(res.calls, /swiftc/);
   });
 
   test('install builds the app, registers the LaunchAgent and starts it', () => {
@@ -120,19 +138,48 @@ describe('macOS menu bar icon', () => {
   });
 });
 
-describe('macOS installer defaults', () => {
-  test('the public tunnel is opt-in and --help says so', () => {
-    const script = path.join(ROOT, 'scripts', 'install-macos.sh');
-    const src = fs.readFileSync(script, 'utf8');
-    assert.match(src, /^TUNNEL=false$/m, 'local-only unless asked');
-    assert.match(src, /--tunnel\) TUNNEL=true/);
-    const res = spawnSync('bash', [script, '--help'], {
+describe('macOS and Linux installers are aligned', () => {
+  const macScript = path.join(ROOT, 'scripts', 'install-macos.sh');
+  const mac = fs.readFileSync(macScript, 'utf8');
+  const linux = fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8');
+  const line = (src, needle) => {
+    const idx = src.split('\n').findIndex((l) => l.includes(needle));
+    assert.ok(idx >= 0, `"${needle}" not found`);
+    return idx;
+  };
+
+  test('macOS also opens the public tunnel by default; --no-tunnel opts out', () => {
+    assert.match(mac, /^TUNNEL=true$/m);
+    assert.match(mac, /--no-tunnel\|--local\) TUNNEL=false/);
+    const res = spawnSync('bash', [macScript, '--help'], {
       encoding: 'utf8',
       env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` },
     });
     assert.equal(res.status, 0, res.stderr);
-    assert.match(res.stdout, /--tunnel .*off by default on macOS/);
-    assert.doesNotMatch(res.stdout, /--no-tunnel/);
+    assert.match(res.stdout, /--no-tunnel .*no public Cloudflare Quick Tunnel/);
+  });
+
+  test('both installers print the setup code right above the QR', () => {
+    for (const [name, src, codeNeedle] of [['macOS', mac, 'Setup code: $SETUP_CODE'], ['Linux', linux, 'Setup code: ${SETUP_CODE}']]) {
+      const code = line(src, codeNeedle);
+      const scan = line(src, 'Scan to open on your phone');
+      const qr = line(src, 'scripts/print-qr.js');
+      assert.ok(code < scan && scan < qr, `${name}: setup code, then the scan hint, then the QR`);
+      assert.ok(qr - code < 20, `${name}: code and QR sit together`);
+    }
+  });
+
+  test('macOS adds the menu bar icon last and never lets it stop the install', () => {
+    // Its result is read with `|| rc=$?`, so `set -e` cannot abort on it.
+    assert.match(mac, /menubar-macos\.sh" install >>"\$INSTALL_LOG" 2>&1 \|\| menubar_rc=\$\?/);
+    for (const code of ['0)', '3)', '4)', '*)']) assert.ok(mac.includes(`    ${code} MENUBAR_NOTE=`), `case ${code}`);
+    assert.ok(line(mac, 'scripts/print-qr.js') < line(mac, '[ -z "$MENUBAR_NOTE" ] || echo "$MENUBAR_NOTE"'), 'the note comes after the QR');
+  });
+
+  test('an existing administrator is not told to look for a setup code', () => {
+    for (const src of [mac, linux]) {
+      assert.match(src, /SETUP_CODE_RC=0/);
+      assert.match(src, /elif \[ "\$SETUP_CODE_RC" -ne 0 \]/, 'the hint only appears when the lookup failed');
+    }
   });
 });
-

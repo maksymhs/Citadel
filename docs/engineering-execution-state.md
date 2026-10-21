@@ -1688,3 +1688,80 @@ README/.env.example/architecture. No commits/pushes/deploys.
   already has the tunnel agent keeps the tunnel unless `--no-tunnel` is passed.
   Linux is unchanged.
 
+## 102. Tailscale wizard and Windows (WSL2) installer (v0.40.x)
+- **Tailscale.** `server/services/tailscaleService.js` reads `tailscale status
+  --json` / `serve status` and manages `tailscale serve` for the panel's own
+  port (new `--bg --https=443` spelling first, then the pre-1.52 `serve https /`).
+  It never runs `funnel`. Routes `GET /api/network/tailscale`, `POST|DELETE
+  /api/network/tailscale/serve` (admin, audited) feed a stepper card in Settings →
+  Network (`public/js/settings-tailscale.js`): install, sign in (link or
+  command), allow Citadel (`tailscale set --operator`), enable the private
+  address; it polls while the user works in a terminal. `connectService` used to
+  advertise `https://<host>.ts.net` as soon as Tailscale had a name even when
+  nothing served it; it now does so only while a serve handler proxies the
+  panel's port (and keeps the old behaviour if serve status cannot be read).
+  `api()` errors now carry the response body as `error.details`. Tests drive a
+  fake `tailscale` CLI through every state; not run against a real tailnet.
+- **Windows is WSL2 only.** Native Windows is out of reach (tmux, node-pty,
+  systemd, sudo, du/find). A PowerShell installer with a stubbed test harness and
+  a Windows CI job was written and then dropped on purpose: Windows users set up
+  WSL2 and run the regular Linux installer. `install.sh` detects WSL
+  (`/proc/version` mentions Microsoft): it defaults to local-only (no tunnel
+  unless `--tunnel`), skips the 24/7 laptop settings and, when systemd is not
+  running, stops before changing anything and prints the `/etc/wsl.conf` +
+  `wsl --shutdown` steps. `tests/install-wsl.test.js` fakes the host with
+  `CITADEL_WSL_PROC_VERSION` / `CITADEL_SYSTEMD_RUN_DIR` and stubs sudo, git, curl
+  and npm so it can never install anything. Not run on a real Windows PC; whether
+  an idle WSL distro keeps Citadel running is unverified.
+
+## 103. First-run setup code and security alerts (v0.40.x)
+- **Setup code.** The first-run screen could be claimed by whoever reached the
+  panel first. `server/security/setupCode.js` keeps a one-time `XXXX-XXXX` code in
+  `DATA_DIR/setup-code` (0600, no ambiguous characters, ~40 bits) that
+  `POST /api/auth/setup` requires while no user exists; the real server turns
+  this on (`buildServer({ requireSetupCode })`, off by default so tests and
+  embedding can create the admin through the API), generates the code at boot and
+  deletes it once the account exists. Five wrong codes replace it with a new one
+  and pause attempts for a minute (an environment-provided code is never rotated),
+  independent of the per-IP rate limit. `citadel setup-code [--quiet]` prints it
+  (runs as the database owner like `reset-password`); the Linux and macOS
+  installers print it, and the screen has a code field. `CITADEL_SETUP_CODE` sets
+  one for automation, `CITADEL_REQUIRE_SETUP_CODE=0` opts out.
+- **Rate limit note.** The credential limiter builds its key in `onRequest`,
+  before the body is parsed, so the username never was part of it: the limit is
+  per client address (the comment said otherwise and was corrected). Guessing
+  spread over many addresses is covered by the new failure-burst alert.
+- **Security alerts.** `server/services/securityAlertService.js` records events
+  under the `security` activity category and pushes them through the monitor's
+  channels (new `securityAlerts` toggle in the monitor config, on by default):
+  sign-in from a new address (table `login_ips`, migration 010; the first address
+  a user ever uses is only remembered), 5+ failed sign-ins from one address in
+  10 minutes, 15+ across 3+ addresses (critical), a machine paired in, admin
+  created, setup code rotated, password reset from the shell. Pushes are throttled
+  (30 min per key) and never block or fail a sign-in; messages name the machine.
+  Tests: `tests/setup-code.test.js`, `tests/security-alerts.test.js` (real webhook
+  receiver). Not covered: sign-ins behind a proxy that hides client addresses all
+  look like one address.
+
+## 104. macOS and Linux installers aligned (v0.40.x)
+- Reverses the macOS-only part of entry 101: the macOS installer opens the public
+  Cloudflare Quick Tunnel by default again (`--no-tunnel` opts out), because
+  creating the first administrator now needs the setup code (entry 103), which
+  removes the "first visitor claims it" risk that motivated the opt-in. Linux is
+  unchanged. WSL stays local-only by default (a personal PC).
+- Both installers end the same way: status, public address, `Setup code: XXXX-XXXX`,
+  the scan hint and the QR right below it. An existing administrator (re-run of
+  the installer) prints no code; the "run citadel setup-code" hint only appears
+  when the lookup itself failed.
+- The macOS menu bar icon is the only difference and can never stop the install:
+  `menubar-macos.sh install` exits 3 without the Xcode tools (checking
+  `xcode-select -p`, since a `swiftc` shim exists even without them) and 4 without
+  a graphical login session (SSH), and the installer maps 0/3/4/other to a note
+  printed after the QR instead of treating a failure as an install error.
+- Verified by running the whole macOS installer on Linux with fake
+  `uname`/`launchctl`/`swiftc`/`git`/`npm`/`curl` and a stubbed tunnel script
+  (icon added; no Xcode tools; SSH session; `--no-tunnel`), plus
+  `tests/menubar.test.js` (exit codes, defaults, output order). The Linux
+  installer was only exercised with `--check-only` and by reading it; not run on
+  a real Mac.
+

@@ -24,6 +24,8 @@ const logService = require('./services/logService');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
+const { isSetupComplete } = require('./security/auth');
+const setupCode = require('./security/setupCode');
 const projectRoutes = require('./routes/projectRoutes');
 const gitRoutes = require('./routes/gitRoutes');
 const agentRoutes = require('./routes/agentRoutes');
@@ -40,6 +42,7 @@ const dockerRoutes = require('./routes/dockerRoutes');
 const pluginRoutes = require('./routes/pluginRoutes');
 const moduleRoutes = require('./routes/moduleRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
+const tailscaleRoutes = require('./routes/tailscaleRoutes');
 const secretRoutes = require('./routes/secretRoutes');
 const hostRoutes = require('./routes/hostRoutes');
 const remoteProxyRoutes = require('./routes/remoteProxyRoutes');
@@ -62,6 +65,11 @@ async function buildServer(options = {}) {
   if (trustProxy === true) {
     fastify.log.warn('[Citadel] trustProxy is set to true: forwarded headers are accepted from any client.');
   }
+
+  // First-run setup needs a code from the host's shell (see security/setupCode.js).
+  // Off unless the caller asks (the real server does), so embedding/tests that
+  // create the admin through the API keep working.
+  fastify.decorate('requireSetupCode', Boolean(options.requireSetupCode));
 
   // 1. Initialize SQLite Database
   initDatabase(options.customDbPath);
@@ -167,6 +175,7 @@ async function buildServer(options = {}) {
   await fastify.register(pluginRoutes);
   await fastify.register(moduleRoutes);
   await fastify.register(settingsRoutes);
+  await fastify.register(tailscaleRoutes);
   await fastify.register(secretRoutes);
   await fastify.register(hostRoutes);
   await fastify.register(remoteProxyRoutes);
@@ -185,7 +194,13 @@ async function buildServer(options = {}) {
 }
 
 async function startServer() {
-  const fastify = await buildServer();
+  const requireSetupCode = process.env.CITADEL_REQUIRE_SETUP_CODE !== '0';
+  const fastify = await buildServer({ requireSetupCode });
+
+  if (requireSetupCode && !isSetupComplete()) {
+    setupCode.ensure();
+    fastify.log.info('[Citadel] First-run setup needs a code: run "citadel setup-code" on this machine.');
+  }
 
   // Mark sessions whose tmux/PTY did not survive the restart as closed so the
   // UI reattaches to live terminals instead of resurrecting dead ones.

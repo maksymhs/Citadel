@@ -200,6 +200,22 @@ const MIGRATIONS = [
       if (!columnExists(db, 'fleet_hosts', 'alias')) db.exec('ALTER TABLE fleet_hosts ADD COLUMN alias TEXT');
     },
   },
+  {
+    name: '010_login_ips',
+    up: (db) => {
+      // Addresses each user has signed in from, so a sign-in from a new one can
+      // raise a security alert.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS login_ips (
+          user_id TEXT NOT NULL,
+          ip TEXT NOT NULL,
+          first_seen TEXT NOT NULL,
+          last_seen TEXT NOT NULL,
+          PRIMARY KEY (user_id, ip)
+        );
+      `);
+    },
+  },
 ];
 
 function columnExists(db, table, column) {

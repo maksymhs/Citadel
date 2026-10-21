@@ -58,7 +58,7 @@ A Quick Tunnel URL is disposable: when `cloudflared` disconnects or restarts, th
 On a laptop, 24/7 mode is enabled during installation by default. Run `sudo citadel power on` to re-enable it later if it was disabled. A laptop behind NAT should use Tailscale or a named tunnel rather than depending on a Quick Tunnel URL.
 
 
-To reach the panel privately instead (only your own devices), use Tailscale:
+To reach the panel privately instead (only your own devices), use Tailscale. **Settings → Network & access → Tailscale** is a step-by-step wizard for it: it checks that Tailscale is installed and signed in (showing the sign-in link or the exact `sudo tailscale up` command), then **Enable private address** publishes the panel on your tailnet with `tailscale serve` (never `funnel`, so nothing becomes public) and turns it off again with one click. The card notices by itself when you finish a step in a terminal. If Citadel is not allowed to manage Tailscale it shows the one-time `sudo tailscale set --operator=<user>` command, and if Serve is not enabled on your tailnet it links to the page that turns it on. The tailnet address is only advertised in the QR and pairing candidates while the panel is actually being served there. The manual steps are:
 
 1. Install Tailscale on the host and on your phone, signing in to the same account.
 2. On the host, proxy the panel onto your tailnet: `tailscale serve https / http://127.0.0.1:3000`.

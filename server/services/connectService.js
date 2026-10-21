@@ -6,6 +6,7 @@ const qrcode = require('qrcode-generator');
 
 const { PUBLIC_URL, PORT, HOST, DATA_DIR } = require('../config');
 const { getTunnelUrl } = require('./tunnelService');
+const tailscaleService = require('./tailscaleService');
 
 const CACHE_TTL_MS = 60 * 1000;
 const STORED_KEY = 'connect.public_url';
@@ -79,20 +80,13 @@ function getConfiguredPublicUrl() {
   return configuredCache;
 }
 
+// The tailnet address only works once `tailscale serve` publishes the panel on
+// it, so it is advertised only then. When serve status cannot be read the old
+// behaviour (advertise the name) is kept.
 function detectTailscale() {
-  try {
-    const res = spawnSync('tailscale', ['status', '--json'], {
-      encoding: 'utf8',
-      timeout: 3000,
-    });
-    if (res.status !== 0 || !res.stdout) return null;
-    const data = JSON.parse(res.stdout);
-    const dnsName = data && data.Self && data.Self.DNSName;
-    if (!dnsName) return null;
-    return { url: `https://${dnsName.replace(/\.$/, '')}`, source: 'tailscale' };
-  } catch {
-    return null;
-  }
+  const found = tailscaleService.detectSync();
+  if (!found || found.serving === false) return null;
+  return { url: `https://${found.dnsName}`, source: 'tailscale' };
 }
 
 function isPrivateIp(ip) {

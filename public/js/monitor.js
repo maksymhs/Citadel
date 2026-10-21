@@ -497,6 +497,7 @@
       bodyHtml: `
         <p class="mon-muted" style="margin-bottom:12px;">This Citadel watches the machines paired with it. To be told when <em>this</em> machine goes down, set up alerts on another machine too.</p>
         <label class="mon-field"><input type="checkbox" id="mon-cfg-enabled" ${cfg.enabled ? 'checked' : ''}/> Alerts enabled</label>
+        <label class="mon-field"><input type="checkbox" id="mon-cfg-security" ${cfg.securityAlerts !== false ? 'checked' : ''}/> Security alerts: sign-ins from a new address, repeated failed sign-ins, machines that pair with this one, password resets</label>
         <div class="mon-field-row">
           <label class="mon-field">Disk ≥ %<input type="number" class="form-input" id="mon-cfg-disk" min="50" max="99" value="${cfg.thresholds.diskPercent}"/></label>
           <label class="mon-field">Memory ≥ %<input type="number" class="form-input" id="mon-cfg-mem" min="50" max="99" value="${cfg.thresholds.memPercent}"/></label>
@@ -535,6 +536,7 @@
       }
       return {
         enabled: document.getElementById('mon-cfg-enabled').checked,
+        securityAlerts: document.getElementById('mon-cfg-security').checked,
         thresholds: {
           diskPercent: Number(val('mon-cfg-disk')),
           memPercent: Number(val('mon-cfg-mem')),

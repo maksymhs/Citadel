@@ -10,6 +10,7 @@ const hostService = require('../services/hostService');
 const pairingService = require('../services/pairingService');
 const secretSyncService = require('../services/secretSyncService');
 const auditService = require('../services/auditService');
+const securityAlerts = require('../services/securityAlertService');
 
 function requireAdmin(request, reply, done) {
   if (!request.user || request.user.role !== 'admin') {
@@ -178,6 +179,7 @@ async function hostRoutes(fastify) {
         details: { instanceId: result.host.instanceId, name: result.host.name },
         ip: request.ip,
       });
+      securityAlerts.peerPaired({ name: result.host.name, ip: request.ip });
       // Every pairing shares the credential vault: both machines belong to the
       // same operator, so the scanner merges it right after pairing.
       return {

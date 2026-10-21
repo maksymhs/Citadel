@@ -2596,3 +2596,20 @@ label.mon-row:hover { border-color: var(--border-hover); }
 .disk-idle { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px 16px; text-align: center; }
 .disk-idle p { max-width: 440px; margin: 0; }
 .disk-idle .disk-crumbs { justify-content: center; flex-wrap: wrap; }
+
+/* Settings → Tailscale wizard (public/js/settings-tailscale.js) */
+.ts-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.ts-step { display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: start; }
+.ts-mark {
+  display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%;
+  border: 1px solid var(--border-color); font-size: 12px; font-weight: 600; color: var(--text-secondary);
+}
+.ts-done .ts-mark { background: var(--success-color); border-color: var(--success-color); color: #fff; }
+.ts-todo .ts-mark { border-color: var(--accent-color); color: var(--accent-color); }
+.ts-wait { opacity: 0.6; }
+.ts-step-body strong { color: var(--text-primary); }
+.ts-step-detail { margin-top: 6px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.ts-step-detail p { margin: 0; }
+.ts-cmd { display: flex; gap: 8px; align-items: center; max-width: 100%; }
+.ts-cmd code { padding: 6px 10px; border-radius: 6px; background: var(--bg-tertiary); font-family: var(--font-mono); font-size: 12px; overflow-x: auto; white-space: nowrap; }
+.ts-url { color: var(--accent-color); font-family: var(--font-mono); word-break: break-all; }

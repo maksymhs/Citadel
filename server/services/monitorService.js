@@ -29,6 +29,7 @@ const NOTIFY_TIMEOUT_MS = 8000;
 
 const DEFAULT_CONFIG = {
   enabled: true,
+  securityAlerts: true,
   thresholds: { diskPercent: 90, memPercent: 95, loadPerCore: 2 },
   channels: {},
 };
@@ -79,6 +80,7 @@ function getConfig() {
   const t = raw.thresholds || {};
   return {
     enabled: raw.enabled !== false,
+    securityAlerts: raw.securityAlerts !== false,
     thresholds: {
       diskPercent: clampNumber(t.diskPercent, 50, 99, DEFAULT_CONFIG.thresholds.diskPercent),
       memPercent: clampNumber(t.memPercent, 50, 99, DEFAULT_CONFIG.thresholds.memPercent),
@@ -126,6 +128,7 @@ function getPublicConfig() {
   };
   return {
     enabled: cfg.enabled,
+    securityAlerts: cfg.securityAlerts,
     intervalSec: Math.round(INTERVAL_MS / 1000),
     thresholds: cfg.thresholds,
     channels: {
@@ -142,9 +145,10 @@ function getPublicConfig() {
  */
 function updateConfig(patch = {}) {
   const current = getConfig();
-  const next = { enabled: current.enabled, thresholds: { ...current.thresholds }, channels: { ...current.channels } };
+  const next = { enabled: current.enabled, securityAlerts: current.securityAlerts, thresholds: { ...current.thresholds }, channels: { ...current.channels } };
 
   if (patch.enabled !== undefined) next.enabled = Boolean(patch.enabled);
+  if (patch.securityAlerts !== undefined) next.securityAlerts = Boolean(patch.securityAlerts);
   if (patch.thresholds && typeof patch.thresholds === 'object') {
     const t = patch.thresholds;
     if (t.diskPercent !== undefined) next.thresholds.diskPercent = clampNumber(t.diskPercent, 50, 99, current.thresholds.diskPercent);

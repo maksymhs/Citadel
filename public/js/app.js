@@ -9,6 +9,7 @@
   // Application State
   const state = {
     setupComplete: true,
+    setupCodeRequired: false,
     user: null,
     currentView: 'dashboard',
     modules: [], // module descriptors from the active host
@@ -255,7 +256,9 @@
     const res = await netFetch(hostApiPath(path), opts);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || data.message || `Request failed (${res.status})`);
+      const error = new Error(data.error || data.message || `Request failed (${res.status})`);
+      error.details = data; // callers that need more than the message (e.g. a hint or link)
+      throw error;
     }
     return data;
   }
@@ -479,6 +482,7 @@
     try {
       const statusRes = await api('/api/auth/status');
       state.setupComplete = statusRes.setupComplete;
+      state.setupCodeRequired = Boolean(statusRes.setupCodeRequired);
 
       if (!state.setupComplete) {
         renderSetupView();
@@ -515,6 +519,11 @@
             <p>Create the initial admin account to protect your server</p>
           </div>
           <form id="setup-form">
+            ${state.setupCodeRequired ? `<div class="form-group">
+              <label class="form-label" for="setup-code">Setup code</label>
+              <input type="text" class="form-input" id="setup-code" placeholder="XXXX-XXXX" required autocomplete="off" autocapitalize="characters" spellcheck="false" style="text-transform:uppercase;letter-spacing:.12em;font-family:var(--font-mono);">
+              <div class="form-hint" style="margin-top:6px;font-size:12px;color:var(--text-muted);">Run <code>citadel setup-code</code> in a terminal on this machine (the installer printed it too). It keeps strangers from creating the account first.</div>
+            </div>` : ''}
             <div class="form-group">
               <label class="form-label">Admin Username</label>
               <input type="text" class="form-input" id="setup-username" placeholder="admin" required minlength="3">
@@ -535,10 +544,11 @@
       e.preventDefault();
       const username = document.getElementById('setup-username').value;
       const password = document.getElementById('setup-password').value;
+      const codeInput = document.getElementById('setup-code');
       try {
         const res = await api('/api/auth/setup', {
           method: 'POST',
-          body: { username, password },
+          body: { username, password, setupCode: codeInput ? codeInput.value : undefined },
         });
         state.user = res.user;
         state.setupComplete = true;
@@ -5046,6 +5056,12 @@
           </div>
         </div>
 
+        ${canPair ? `<div class="card" style="margin-bottom:24px;" id="tailscale-card">
+          <h3 class="widget-heading">Tailscale (private access from your devices)</h3>
+          <p style="margin:6px 0 10px;font-size:13px;color:var(--text-secondary);line-height:1.5;">Reach this panel, and pair other machines, from anywhere without opening ports and without a public address. Works behind home routers and NAT.</p>
+          <div id="tailscale-body" style="font-size:13px;color:var(--text-secondary);">Loading…</div>
+        </div>` : ''}
+
         <div class="card" style="margin-bottom:24px;" id="tunnel-card">
           <h3 class="widget-heading">Tunnel (your own domain)</h3>
           <div id="tunnel-body" style="margin-top:6px;font-size:13px;color:var(--text-secondary);">Loading…</div>
@@ -5245,6 +5261,7 @@
         window.CitadelTunnelCard.init({
           api, escapeHtml, showToast, reload: renderSettingsView,
         });
+        window.CitadelTailscaleCard.init({ api, escapeHtml, showToast });
       }
       const input = document.getElementById('settings-public-url');
       const saveBtn = document.getElementById('settings-save-url');

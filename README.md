@@ -32,7 +32,7 @@ A self-hosted, lightweight, modular and secure web platform to manage multiple s
 
 ## 2. System Requirements
 
-- **Operating System**: Debian 11/12, Ubuntu 20.04/22.04/24.04, or macOS 13+.
+- **Operating System**: Debian 11/12, Ubuntu 20.04/22.04/24.04, macOS 13+, or Windows 10 (2004+) / 11 through WSL2 (see below).
 - **Architecture**: `x86_64` or `arm64 / aarch64`.
 - **Node.js**: v18 LTS, v20 LTS, v22 LTS or later.
 - **tmux**: For full session persistence (optional: direct PTY fallback).
@@ -62,13 +62,13 @@ That command installs the service **local-only and unprivileged by default**. Ev
 | Flag | Effect |
 | --- | --- |
 | `--lan` (or `--host=ADDR`) | Reachable on your local network (QR from your phone) |
-| `--no-tunnel` | Skip the public Cloudflare Quick Tunnel (on by default on Linux; **off by default on macOS**, where `--tunnel` turns it on) |
+| `--no-tunnel` | Skip the public Cloudflare Quick Tunnel (on by default, on Linux and macOS) |
 | `--admin-terminal[=user]` | Root-capable System Terminal (privileged) |
 | `--no-updater` | Skip the root-owned in-panel updater (on by default) |
 | `--24-7` (or `--keep-awake`) | Default: ignore lid close and block suspend/hibernate |
 | `--no-24-7` (or `--no-keep-awake`) | Allow the host to suspend normally |
 
-The panel listens on `127.0.0.1` unless you pass `--lan`/`--host`, and nothing privileged is enabled until a flag asks for it. **Until you create the administrator account, whoever reaches the panel first can claim it** — so prefer the local QR flow, set up the admin, and only then add a tunnel if you need one.
+The panel listens on `127.0.0.1` unless you pass `--lan`/`--host`, and nothing privileged is enabled until a flag asks for it. Creating the first administrator account needs a **setup code** that only someone with shell access to the machine can read: the installer prints it, and `citadel setup-code` shows it again. A stranger who finds the panel first cannot claim it, and five wrong codes replace it with a new one. The code disappears once the account exists. (Set `CITADEL_SETUP_CODE` to choose your own for automation, or `CITADEL_REQUIRE_SETUP_CODE=0` to turn the requirement off, which is not recommended.)
 
 Preview what it will do without changing the system:
 
@@ -78,9 +78,23 @@ curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | 
 
 On macOS, install prerequisites first (`brew install node git tmux`) and run the same command **without** `sudo`. It creates a per-user `launchd` service that starts Citadel after login and restarts it if it exits. Use `~/.local/bin/citadel status`, `logs`, `start`, `stop` and `restart`; add `~/.local/bin` to your `PATH` if necessary. Pair the Mac with the VPS through Tailscale or another reachable private address. A closed MacBook normally sleeps, so keep it powered and awake when it must remain an online paired host.
 
-On macOS the panel is **local-only by default**: no public tunnel is opened unless you pass `--tunnel` (or run `citadel tunnel` later), because the panel gives a shell and file access on your Mac. An existing install that already had a tunnel keeps it on update.
+The macOS installer behaves like the Linux one: it opens a public Cloudflare Quick Tunnel and ends with the public address, the **setup code** (needed to create the administrator account) and a QR in the terminal; pass `--no-tunnel` to keep the panel on this Mac only. Run it as your normal user, with Node 18+, git and tmux already installed (`brew install node git tmux`).
 
-The installer also adds a **menu bar icon** (next to the clock) that shows whether Citadel is running and lets you open the dashboard in the browser, start, stop or restart the service and open the log. It is a tiny Swift app built on your Mac, so it needs the Xcode Command Line Tools (`xcode-select --install`); without them the install continues and the icon is skipped. Skip it with `--no-menubar` (or `CITADEL_NO_MENUBAR=1`), and add or remove it later with `citadel menubar on|off`. **Disk → Quick clean** on macOS looks at `~/Library/Caches` (not `com.apple.*`), `~/Library/Logs`, Xcode (`DerivedData`, archives, device support), simulator caches and Homebrew, plus the cross-platform project and cache categories; it never reads `~/Downloads` or the Trash, which would trigger a macOS permission prompt. On Terminal.app the QR is drawn with coloured cells (no glyphs, so no seams) and the window is enlarged if the code does not fit.
+On macOS only, the installer also tries to add a **menu bar icon** (next to the clock) that shows whether Citadel is running and lets you open the dashboard in the browser, start, stop or restart the service and open the log. It is a tiny Swift app built on your Mac, so it needs the Xcode Command Line Tools (`xcode-select --install`) and a graphical login session; without them (or over SSH) the install still finishes from the command line and tells you how to add the icon later. Skip it with `--no-menubar` (or `CITADEL_NO_MENUBAR=1`), and add or remove it later with `citadel menubar on|off`. **Disk → Quick clean** on macOS looks at `~/Library/Caches` (not `com.apple.*`), `~/Library/Logs`, Xcode (`DerivedData`, archives, device support), simulator caches and Homebrew, plus the cross-platform project and cache categories; it never reads `~/Downloads` or the Trash, which would trigger a macOS permission prompt. On Terminal.app the QR is drawn with coloured cells (no glyphs, so no seams) and the window is enlarged if the code does not fit.
+
+### Security alerts
+
+Besides machine alerts (offline, disk, memory, CPU), the panel can tell you about security events through the same channels (webhook, ntfy, Telegram; **Settings → Alerts**, on by default): a sign-in from an address that user has not used before, repeated failed sign-ins (from one address, or spread over many), a machine that pairs with this one (it gets administrator access), the first administrator being created, a setup code that had to be replaced, and a password reset with `citadel reset-password`. Each message names the machine. Every event is also in the activity log under the `security` category even when pushing is off. Behind a proxy that hides client addresses the "new address" check cannot tell clients apart (see `CITADEL_TRUST_PROXY`).
+
+### Windows (via WSL2)
+
+Citadel does not run natively on Windows (it needs tmux, systemd and POSIX tools). On Windows 10 (2004+) or Windows 11 it runs inside **WSL2 (Ubuntu)**, as one more Linux machine:
+
+1. In PowerShell as administrator: `wsl --install -d Ubuntu-24.04`. Restart if asked and finish creating the Linux user.
+2. Enable systemd once. In the Ubuntu terminal: `printf '[boot]\nsystemd=true\n' | sudo tee /etc/wsl.conf`; then, from Windows, `wsl --shutdown`, and open Ubuntu again.
+3. In the Ubuntu terminal, run the normal Linux one-line installer above.
+
+The installer recognises WSL: the panel stays local-only (no public tunnel unless you pass `--tunnel`), the laptop 24/7 settings are skipped, and if systemd is missing it stops before changing anything and prints step 2. Open `http://localhost:3000` in the Windows browser. To reach it from your other machines, use **Settings → Tailscale** inside Ubuntu. WSL2 needs virtualization enabled in the BIOS/UEFI, so very old PCs without it cannot run this. Windows may stop an idle WSL distro, which takes Citadel offline until a Ubuntu window is opened again; keeping it always on has not been verified. Not tested on a real Windows PC: the WSL detection is covered by `tests/install-wsl.test.js` with a faked host.
 
 ### One-line uninstall (Linux and macOS)
 
@@ -134,6 +148,7 @@ citadel qr         # one-time QR code to pair another Citadel (valid 10 minutes)
 citadel logs       # follow the service logs
 citadel start      # start the service (after `citadel stop`)
 citadel stop       # stop the service
+citadel setup-code # first-run code needed to create the admin account
 citadel restart    # restart the service
 citadel menubar on # macOS: menu bar icon (on|off|status)
 citadel reset-password [--list | USER]  # forgot the panel password: set a new one (needs shell access)

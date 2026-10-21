@@ -56,6 +56,7 @@ async function main() {
   const { initDatabase, getDatabase } = require('../server/database/db');
   const { setUserPassword } = require('../server/security/auth');
   const auditService = require('../server/services/auditService');
+  const securityAlerts = require('../server/services/securityAlertService');
   initDatabase();
   const db = getDatabase();
   const users = db.prepare('SELECT username, role FROM users ORDER BY created_at').all();
@@ -89,6 +90,8 @@ async function main() {
     targetId: user.id,
   });
   console.log(`Password updated for "${user.username}". All of its sessions were signed out.`);
+  // Tell the administrator through the alert channels (waits for delivery).
+  await securityAlerts.passwordReset({ username: user.username });
 }
 
 main().catch((err) => {

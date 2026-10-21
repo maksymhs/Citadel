@@ -4,7 +4,7 @@
 #   citadel status | url | qr | logs | restart | update | help
 #   citadel doctor | network | wifi list | wifi connect | repair
 #   citadel start | stop | menubar [on|off]   (menubar: macOS only)
-#   citadel reset-password [--list | username]
+#   citadel reset-password [--list | username] | setup-code
 #   citadel power [status|on|off]
 # Installed as /usr/local/bin/citadel (a thin launcher for this file).
 # ==============================================================================
@@ -74,6 +74,7 @@ Citadel CLI
                          Set a new panel password offline (revokes its sessions)
   citadel start          Start the service
   citadel stop           Stop the service (until `citadel start` or the next login on macOS)
+  citadel setup-code     Show the first-run code that creating the admin account needs
   citadel restart        Restart the service
   citadel menubar [on|off|status]
                          macOS menu bar icon: status, open dashboard, start/stop
@@ -164,20 +165,22 @@ case "$cmd" in
     exec node "$APP_DIR/scripts/doctor.js" "$cmd" "$@"
     ;;
 
-  reset-password)
-    if ! command -v node >/dev/null 2>&1 || [ ! -f "$APP_DIR/scripts/reset-password.js" ]; then
-      echo "ERROR: Node.js and $APP_DIR/scripts/reset-password.js are required (set CITADEL_APP_DIR)." >&2
+  reset-password|setup-code)
+    script="$cmd"
+    if ! command -v node >/dev/null 2>&1 || [ ! -f "$APP_DIR/scripts/$script.js" ]; then
+      echo "ERROR: Node.js and $APP_DIR/scripts/$script.js are required (set CITADEL_APP_DIR)." >&2
       exit 1
     fi
-    # Run as the account that owns the database so SQLite's -wal/-shm files do
-    # not end up root-owned and lock the service out.
+    # Run as the account that owns the database so SQLite's -wal/-shm files (and
+    # the setup code, which is private to that account) do not end up root-owned
+    # and lock the service out.
     db_owner="$(stat -c %U "$DATA_DIR/citadel.db" 2>/dev/null || stat -f %Su "$DATA_DIR/citadel.db" 2>/dev/null || true)"
     runner=()
     if [ -n "$db_owner" ] && [ "$db_owner" != "$(id -un)" ]; then
       runner=(sudo -u "$db_owner")
     fi
     exec ${runner[@]+"${runner[@]}"} env DATA_DIR="$DATA_DIR" DATABASE_PATH="$DATA_DIR/citadel.db" \
-      node "$APP_DIR/scripts/reset-password.js" "$@"
+      node "$APP_DIR/scripts/$script.js" "$@"
     ;;
 
   power)

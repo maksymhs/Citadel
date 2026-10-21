@@ -9,13 +9,16 @@ const {
   requireAuth,
 } = require('../security/auth');
 const auditService = require('../services/auditService');
+const securityAlerts = require('../services/securityAlertService');
+const setupCode = require('../security/setupCode');
 const { SESSION_TTL_DAYS } = require('../config');
 
-// Throttle credential endpoints per client + username. request.ip is the socket
+// Throttle credential endpoints per client address. request.ip is the socket
 // address for untrusted clients (forwarded headers are only honoured from trusted
 // proxies, see CITADEL_TRUST_PROXY), so spoofing X-Forwarded-For does not reset
-// the bucket; the username component also stops source-IP rotation from
-// brute-forcing a single account.
+// the bucket. The key is built in the onRequest hook, before the body is parsed,
+// so the username is not part of it: the limit is per address. Guessing spread
+// over many addresses is what security alerts (failed-login bursts) are for.
 const credentialRateLimit = {
   max: 8,
   timeWindow: '5 minutes',
@@ -38,16 +41,35 @@ function sessionCookieOptions(request) {
 async function authRoutes(fastify) {
   // Check if system has been initialized
   fastify.get('/api/auth/status', async () => {
+    const setupComplete = isSetupComplete();
     return {
-      setupComplete: isSetupComplete(),
+      setupComplete,
+      // The setup screen asks for the code that `citadel setup-code` prints.
+      setupCodeRequired: !setupComplete && Boolean(fastify.requireSetupCode),
     };
   });
 
   // Setup initial admin account (only allowed once)
   fastify.post('/api/auth/setup', { config: { rateLimit: credentialRateLimit } }, async (request, reply) => {
-    const { username, password } = request.body || {};
+    const { username, password, setupCode: submittedCode } = request.body || {};
+    // Only while setup is open: once an admin exists the code is never consulted.
+    if (fastify.requireSetupCode && !isSetupComplete()) {
+      const check = setupCode.verify(submittedCode);
+      if (!check.ok) {
+        auditService.logAction({ userId: null, action: 'setup_code_rejected', details: { reason: check.reason }, ip: request.ip });
+        if (check.reason === 'locked') {
+          return reply.status(429).send({ error: `Too many wrong setup codes. Try again in ${check.retryAfterSec} seconds.` });
+        }
+        const hint = 'Run "citadel setup-code" on this machine to see it.';
+        const rotated = check.rotated ? ' Too many wrong attempts: a new code was generated.' : '';
+        if (check.rotated) securityAlerts.setupCodeRotated({ ip: request.ip });
+        return reply.status(403).send({ error: `Invalid setup code. ${hint}${rotated}` });
+      }
+    }
     try {
       const user = createInitialAdmin(username, password);
+      setupCode.clear();
+      securityAlerts.setupCompleted({ username: user.username, ip: request.ip });
       auditService.logAction({
         userId: user.id,
         action: 'system_setup_admin_created',
@@ -79,6 +101,7 @@ async function authRoutes(fastify) {
         details: { attemptedUser: username },
         ip: request.ip,
       });
+      securityAlerts.loginFailed({ ip: request.ip, username });
       return reply.status(401).send({ error: 'Invalid username or password.' });
     }
 
@@ -87,6 +110,7 @@ async function authRoutes(fastify) {
       action: 'login_success',
       ip: request.ip,
     });
+    securityAlerts.loginSucceeded({ user: session.user, ip: request.ip, userAgent: request.headers['user-agent'] });
 
     reply.setCookie('session_id', session.sessionId, sessionCookieOptions(request));
 

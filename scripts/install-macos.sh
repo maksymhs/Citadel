@@ -24,10 +24,10 @@ CLI="$CLI_DIR/citadel"
 REPO_URL="${CITADEL_REPO_URL:-https://github.com/maksymhs/Citadel.git}"
 REPO_BRANCH="${CITADEL_REPO_BRANCH:-main}"
 UPDATE_MODE=false
-# The panel gives a shell and file access on this Mac, so it stays local-only
-# unless you ask for a public address (--tunnel, or `citadel tunnel` later).
-TUNNEL=false
-TUNNEL_OFF_EXPLICIT=false
+# Same as the Linux installer: a public Cloudflare Quick Tunnel by default, so
+# the install ends with a public address and a QR. Creating the administrator
+# needs the setup code printed next to that QR, so nobody else can claim it.
+TUNNEL=true
 # Menu bar icon: on unless --no-menubar or CITADEL_NO_MENUBAR=1.
 MENUBAR=true
 [ -z "${CITADEL_NO_MENUBAR:-}" ] || MENUBAR=false
@@ -35,12 +35,13 @@ MENUBAR=true
 for arg in "$@"; do
   case "$arg" in
     --update|--upgrade) UPDATE_MODE=true ;;
-    --no-tunnel|--local) TUNNEL=false; TUNNEL_OFF_EXPLICIT=true ;;
+    --no-tunnel|--local) TUNNEL=false ;;
     --tunnel) TUNNEL=true ;;
     --no-menubar) MENUBAR=false ;;
     --help|-h)
-      echo "Usage: bash scripts/install-macos.sh [--update] [--tunnel] [--no-menubar]"
-      echo "  --tunnel      also open a public Cloudflare Quick Tunnel (off by default on macOS)"
+      echo "Usage: bash scripts/install-macos.sh [--update] [--no-tunnel] [--no-menubar]"
+      echo "  --no-tunnel   keep the panel on this Mac only (no public Cloudflare Quick Tunnel)"
+      echo "  --no-menubar  skip the menu bar icon (it is added when the Mac allows it)"
       exit 0
       ;;
     *)
@@ -107,11 +108,6 @@ fi
 if ! command -v git >/dev/null 2>&1; then
   echo "ERROR: Git is required. Install Xcode Command Line Tools with: xcode-select --install" >&2
   exit 1
-fi
-
-# An install made before the tunnel became opt-in keeps its tunnel on update.
-if [ "$UPDATE_MODE" = true ] && [ "$TUNNEL_OFF_EXPLICIT" = false ] && [ -f "$HOME/Library/LaunchAgents/com.citadel.tunnel.plist" ]; then
-  TUNNEL=true
 fi
 
 mkdir -p "$TARGET_DIR" "$DATA_DIR" "$PROJECTS_DIR" "$LOGS_DIR" "$AGENTS_DIR" "$CLI_DIR" "$HOME/Library/LaunchAgents"
@@ -183,19 +179,21 @@ launchctl kickstart -k "$DOMAIN/$LABEL"
 
 # Menu bar icon (shows that Citadel is running; open the dashboard, start/stop).
 # Optional: needs the Xcode Command Line Tools, and never blocks the install.
+# It is a convenience: whatever goes wrong here (no Xcode tools, an SSH session
+# without a graphical login, a build error) leaves a note and the install
+# carries on from the command line.
 MENUBAR_NOTE=""
 if [ "$MENUBAR" = true ] && [ -f "$APP_DIR/scripts/menubar-macos.sh" ]; then
-  if ! command -v swiftc >/dev/null 2>&1; then
-    MENUBAR_NOTE="  Menu bar icon skipped (needs: xcode-select --install, then: citadel menubar on)."
-  else
-    step "Adding the menu bar icon"
-    if quiet_run env CITADEL_TARGET_DIR="$TARGET_DIR" CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" CITADEL_CLI="$CLI" \
-         bash "$APP_DIR/scripts/menubar-macos.sh" install; then
-      MENUBAR_NOTE="  Menu bar icon added: open the dashboard or stop Citadel from there."
-    else
-      MENUBAR_NOTE="  Menu bar icon could not be built (details above). Retry later with: citadel menubar on"
-    fi
-  fi
+  step "Adding the menu bar icon"
+  menubar_rc=0
+  env CITADEL_TARGET_DIR="$TARGET_DIR" CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" CITADEL_CLI="$CLI" \
+    bash "$APP_DIR/scripts/menubar-macos.sh" install >>"$INSTALL_LOG" 2>&1 || menubar_rc=$?
+  case "$menubar_rc" in
+    0) MENUBAR_NOTE="  Menu bar icon added: open the dashboard or stop Citadel from there." ;;
+    3) MENUBAR_NOTE="  Menu bar icon skipped: it needs the Xcode tools (xcode-select --install), then: citadel menubar on" ;;
+    4) MENUBAR_NOTE="  Menu bar icon skipped: no graphical login session (installed over SSH?). Add it later from the Mac with: citadel menubar on" ;;
+    *) MENUBAR_NOTE="  Menu bar icon could not be built (log: $INSTALL_LOG). Everything else is installed; retry with: citadel menubar on" ;;
+  esac
 fi
 
 PORT_NUM=3000
@@ -239,26 +237,36 @@ else
   echo "… Citadel ${VERSION:+v$VERSION }is still starting (check: citadel status, log: $LOGS_DIR/citadel.log)"
 fi
 echo "  $ACCESS_URL"
-[ -z "$MENUBAR_NOTE" ] || echo "$MENUBAR_NOTE"
 
 # One QR, last: opens the panel from a phone camera and pairs from another
 # Citadel's "Pair a machine" screen (single-use invitation for this address).
+# The setup code goes right above it: creating the administrator account asks for
+# it, so a stranger who reaches the panel first cannot claim it.
+if [ "$UPDATE_MODE" = false ]; then
+  # Empty output with a success status means an administrator already exists.
+  SETUP_CODE_RC=0
+  SETUP_CODE="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" node scripts/setup-code.js --quiet 2>/dev/null)" || SETUP_CODE_RC=$?
+  SETUP_CODE="${SETUP_CODE##*$'\n'}"
+  if [ -n "$SETUP_CODE" ]; then
+    echo "  Setup code: $SETUP_CODE  (asked when you create the admin account; show it again with: citadel setup-code)"
+  elif [ "$SETUP_CODE_RC" -ne 0 ]; then
+    echo "  The panel asks for a setup code to create the admin account: run  citadel setup-code"
+  fi
+fi
 if [ -n "$PUBLIC_URL" ] && [ "$UPDATE_MODE" = false ]; then
   PAIR_LINK="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" node scripts/pair-qr.js "$PUBLIC_URL" 2>/dev/null | tail -n1 || true)"
   QR_TEXT="$PUBLIC_URL"
   case "$PAIR_LINK" in "$PUBLIC_URL"*"#pair="*) QR_TEXT="$PAIR_LINK" ;; esac
-  echo "  Create your admin account now: until then the first visitor can claim it."
   echo "  Scan to open on your phone, or to pair from another Citadel."
   (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$PUBLIC_URL") || true
 elif [ -z "$PUBLIC_URL" ] && [ "$UPDATE_MODE" = false ]; then
-  echo "  Open it on this Mac and create your administrator account."
   if [ "$TUNNEL" = true ]; then
     echo "  No public tunnel yet. Try: citadel tunnel"
   else
-    echo "  Only reachable from this Mac. For a public address run: citadel tunnel"
-    echo "  (create the administrator account first; Tailscale is a private alternative)."
+    echo "  Only reachable from this Mac. For a public address run: citadel tunnel   (Tailscale is a private alternative)."
   fi
 fi
+[ -z "$MENUBAR_NOTE" ] || echo "$MENUBAR_NOTE"
 if ! command -v tmux >/dev/null 2>&1; then
   echo "  Note: install tmux (brew install tmux) for persistent terminal sessions."
 fi

@@ -8,8 +8,9 @@
 #   menubar-macos.sh remove    stop and unregister it
 #   menubar-macos.sh status    installed / running
 #
-# Needs the Xcode Command Line Tools (swiftc). Without them `install` exits 3
-# and changes nothing, so the installer can treat it as optional.
+# Needs the Xcode Command Line Tools (swiftc) and a graphical login session.
+# Without the tools `install` exits 3 and without the session 4, changing
+# nothing either way, so the installer can treat the icon as optional.
 set -euo pipefail
 
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -81,9 +82,15 @@ PLISTEOF
 
 case "${1:-status}" in
   install)
-    if ! command -v swiftc >/dev/null 2>&1; then
+    # `swiftc` can exist as a shim even when the tools are not installed.
+    if ! command -v swiftc >/dev/null 2>&1 || ! xcode-select -p >/dev/null 2>&1; then
       echo "The menu bar icon needs the Xcode Command Line Tools: xcode-select --install" >&2
       exit 3
+    fi
+    # An icon needs a graphical login; an SSH session has none.
+    if ! launchctl print "$DOMAIN" >/dev/null 2>&1; then
+      echo "No graphical login session: add the icon later from the Mac itself (citadel menubar on)." >&2
+      exit 4
     fi
     if [ ! -f "$SRC" ]; then
       echo "ERROR: $SRC not found (set CITADEL_APP_DIR)." >&2
