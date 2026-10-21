@@ -1636,3 +1636,55 @@ README/.env.example/architecture. No commits/pushes/deploys.
   for the service to answer again before reloading after an update (no more
   Cloudflare 502 page).
 - Version bumped to `0.40.0`; asset cache-buster token moved to `v0400`.
+
+## 99. macOS QR drawn in the terminal only (v0.40.x)
+- The browser QR page (`scripts/qr-page.js`, `citadel qr --open`, the macOS
+  installer opening it) is removed. It existed because the half-block QR did not
+  scan on macOS Terminal (the font draws `▀` slightly short, leaving seams).
+- On Terminal.app (`TERM_PROGRAM=Apple_Terminal`) `print-qr.js` now draws
+  glyph-free cells: two background-coloured spaces per module, which fill the
+  whole cell and cannot leave seams. It needs about 47 rows for the pairing
+  link, so when the window is too small it asks Terminal.app to grow
+  (`CSI 8;rows;cols t`, opt out with `CITADEL_QR_NO_RESIZE=1`), then falls back to
+  the short panel-URL code, then to a clear "QR needs WxH" error. It never falls
+  back to the glyph mode there (`CITADEL_QR_MODE=unicode` still forces it).
+- Other terminals (iTerm2, Linux, ...) keep the compact half-block output.
+- Tests decode the cell grid with jsQR and check the no-glyph fallbacks. The
+  resize path was exercised on Linux with a pseudo-terminal that honours the
+  request; not run on a real Mac.
+
+## 100. macOS menu bar icon, `citadel start|stop` (v0.40.x)
+- New `scripts/macos/CitadelMenu.swift`: a status-bar app (no Dock icon) that
+  polls `/api/auth/status` every 5 s and offers Open Dashboard, Start/Stop,
+  Restart, Open Log and Quit Menu Icon; actions call the `citadel` CLI.
+- `scripts/menubar-macos.sh install|remove|status` compiles it with `swiftc`
+  into `<target>/CitadelMenu.app` (rebuilt only when the source hash changes),
+  ad-hoc signs it and registers the `com.citadel.menubar` LaunchAgent (RunAtLoad,
+  restart only on crash, Aqua sessions). Without `swiftc` it exits 3 and changes
+  nothing; the installer treats the icon as optional (`--no-menubar`,
+  `CITADEL_NO_MENUBAR=1`, later `citadel menubar on|off`). The uninstaller removes it.
+- `citadel stop` unloads the launchd agent so KeepAlive does not revive it;
+  `citadel start` / `restart` reload it if needed (`start`/`stop` also map to
+  systemctl on Linux).
+- Tests run the scripts on Linux against fake `uname`/`swiftc`/`launchctl`.
+  The Swift source was not compiled or run here (no macOS toolchain); the first
+  install on a Mac is its first real build.
+
+## 101. macOS: disk cleanup categories and opt-in public tunnel (v0.40.x)
+- Disk cleanup is platform-aware. On macOS it offers `~/Library/Caches`
+  (excluding `com.apple.*` and Homebrew's own folder), `~/Library/Logs`, Xcode
+  DerivedData / Archives / iOS DeviceSupport, CoreSimulator caches and
+  `brew cleanup -s --prune=all` (size from a dry run, binary units), in a new
+  "Developer" group, with temp files read from `/private/tmp` and the per-user
+  temp dir. The apt/journal/snap/`/var/log`/Trash/Downloads categories are
+  Linux-only: on macOS the Trash and `~/Downloads` are permission-gated, so a
+  scan must not touch them. macOS `find` has no `-printf`, so large files come
+  from `find ... -exec stat -f '%b<TAB>%N' {} +`. `CITADEL_FSAGENT_PLATFORM`
+  lets tests exercise the macOS branch on Linux (fake `brew` and `find`); not run
+  on a real Mac.
+- `install-macos.sh` no longer opens a public Cloudflare tunnel by default
+  (`--tunnel` opts in; `--no-tunnel` is still accepted). The panel gives a shell
+  and file access, so it stays local-only unless asked. Updating an install that
+  already has the tunnel agent keeps the tunnel unless `--no-tunnel` is passed.
+  Linux is unchanged.
+

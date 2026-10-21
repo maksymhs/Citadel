@@ -62,7 +62,7 @@ That command installs the service **local-only and unprivileged by default**. Ev
 | Flag | Effect |
 | --- | --- |
 | `--lan` (or `--host=ADDR`) | Reachable on your local network (QR from your phone) |
-| `--no-tunnel` | Skip the public Cloudflare Quick Tunnel (on by default) |
+| `--no-tunnel` | Skip the public Cloudflare Quick Tunnel (on by default on Linux; **off by default on macOS**, where `--tunnel` turns it on) |
 | `--admin-terminal[=user]` | Root-capable System Terminal (privileged) |
 | `--no-updater` | Skip the root-owned in-panel updater (on by default) |
 | `--24-7` (or `--keep-awake`) | Default: ignore lid close and block suspend/hibernate |
@@ -76,7 +76,11 @@ Preview what it will do without changing the system:
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash -s -- --check-only
 ```
 
-On macOS, install prerequisites first (`brew install node git tmux`) and run the same command **without** `sudo`. It creates a per-user `launchd` service that starts Citadel after login and restarts it if it exits. Use `~/.local/bin/citadel status`, `logs` and `restart`; add `~/.local/bin` to your `PATH` if necessary. Pair the Mac with the VPS through Tailscale or another reachable private address. A closed MacBook normally sleeps, so keep it powered and awake when it must remain an online paired host.
+On macOS, install prerequisites first (`brew install node git tmux`) and run the same command **without** `sudo`. It creates a per-user `launchd` service that starts Citadel after login and restarts it if it exits. Use `~/.local/bin/citadel status`, `logs`, `start`, `stop` and `restart`; add `~/.local/bin` to your `PATH` if necessary. Pair the Mac with the VPS through Tailscale or another reachable private address. A closed MacBook normally sleeps, so keep it powered and awake when it must remain an online paired host.
+
+On macOS the panel is **local-only by default**: no public tunnel is opened unless you pass `--tunnel` (or run `citadel tunnel` later), because the panel gives a shell and file access on your Mac. An existing install that already had a tunnel keeps it on update.
+
+The installer also adds a **menu bar icon** (next to the clock) that shows whether Citadel is running and lets you open the dashboard in the browser, start, stop or restart the service and open the log. It is a tiny Swift app built on your Mac, so it needs the Xcode Command Line Tools (`xcode-select --install`); without them the install continues and the icon is skipped. Skip it with `--no-menubar` (or `CITADEL_NO_MENUBAR=1`), and add or remove it later with `citadel menubar on|off`. **Disk → Quick clean** on macOS looks at `~/Library/Caches` (not `com.apple.*`), `~/Library/Logs`, Xcode (`DerivedData`, archives, device support), simulator caches and Homebrew, plus the cross-platform project and cache categories; it never reads `~/Downloads` or the Trash, which would trigger a macOS permission prompt. On Terminal.app the QR is drawn with coloured cells (no glyphs, so no seams) and the window is enlarged if the code does not fit.
 
 ### One-line uninstall (Linux and macOS)
 
@@ -128,7 +132,10 @@ citadel status     # service, version, panel URL and health
 citadel url        # print the panel URL
 citadel qr         # one-time QR code to pair another Citadel (valid 10 minutes)
 citadel logs       # follow the service logs
+citadel start      # start the service (after `citadel stop`)
+citadel stop       # stop the service
 citadel restart    # restart the service
+citadel menubar on # macOS: menu bar icon (on|off|status)
 citadel reset-password [--list | USER]  # forgot the panel password: set a new one (needs shell access)
 citadel update     # update to the latest version
 citadel tunnel     # global URL via a Cloudflare Quick Tunnel

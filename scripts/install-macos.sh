@@ -24,15 +24,23 @@ CLI="$CLI_DIR/citadel"
 REPO_URL="${CITADEL_REPO_URL:-https://github.com/maksymhs/Citadel.git}"
 REPO_BRANCH="${CITADEL_REPO_BRANCH:-main}"
 UPDATE_MODE=false
-TUNNEL=true
+# The panel gives a shell and file access on this Mac, so it stays local-only
+# unless you ask for a public address (--tunnel, or `citadel tunnel` later).
+TUNNEL=false
+TUNNEL_OFF_EXPLICIT=false
+# Menu bar icon: on unless --no-menubar or CITADEL_NO_MENUBAR=1.
+MENUBAR=true
+[ -z "${CITADEL_NO_MENUBAR:-}" ] || MENUBAR=false
 
 for arg in "$@"; do
   case "$arg" in
     --update|--upgrade) UPDATE_MODE=true ;;
-    --no-tunnel|--local) TUNNEL=false ;;
+    --no-tunnel|--local) TUNNEL=false; TUNNEL_OFF_EXPLICIT=true ;;
     --tunnel) TUNNEL=true ;;
+    --no-menubar) MENUBAR=false ;;
     --help|-h)
-      echo "Usage: bash scripts/install-macos.sh [--update] [--no-tunnel]"
+      echo "Usage: bash scripts/install-macos.sh [--update] [--tunnel] [--no-menubar]"
+      echo "  --tunnel      also open a public Cloudflare Quick Tunnel (off by default on macOS)"
       exit 0
       ;;
     *)
@@ -99,6 +107,11 @@ fi
 if ! command -v git >/dev/null 2>&1; then
   echo "ERROR: Git is required. Install Xcode Command Line Tools with: xcode-select --install" >&2
   exit 1
+fi
+
+# An install made before the tunnel became opt-in keeps its tunnel on update.
+if [ "$UPDATE_MODE" = true ] && [ "$TUNNEL_OFF_EXPLICIT" = false ] && [ -f "$HOME/Library/LaunchAgents/com.citadel.tunnel.plist" ]; then
+  TUNNEL=true
 fi
 
 mkdir -p "$TARGET_DIR" "$DATA_DIR" "$PROJECTS_DIR" "$LOGS_DIR" "$AGENTS_DIR" "$CLI_DIR" "$HOME/Library/LaunchAgents"
@@ -168,6 +181,23 @@ launchctl bootstrap "$DOMAIN" "$PLIST"
 launchctl enable "$DOMAIN/$LABEL"
 launchctl kickstart -k "$DOMAIN/$LABEL"
 
+# Menu bar icon (shows that Citadel is running; open the dashboard, start/stop).
+# Optional: needs the Xcode Command Line Tools, and never blocks the install.
+MENUBAR_NOTE=""
+if [ "$MENUBAR" = true ] && [ -f "$APP_DIR/scripts/menubar-macos.sh" ]; then
+  if ! command -v swiftc >/dev/null 2>&1; then
+    MENUBAR_NOTE="  Menu bar icon skipped (needs: xcode-select --install, then: citadel menubar on)."
+  else
+    step "Adding the menu bar icon"
+    if quiet_run env CITADEL_TARGET_DIR="$TARGET_DIR" CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" CITADEL_CLI="$CLI" \
+         bash "$APP_DIR/scripts/menubar-macos.sh" install; then
+      MENUBAR_NOTE="  Menu bar icon added: open the dashboard or stop Citadel from there."
+    else
+      MENUBAR_NOTE="  Menu bar icon could not be built (details above). Retry later with: citadel menubar on"
+    fi
+  fi
+fi
+
 PORT_NUM=3000
 HEALTH_OK=false
 for _ in $(seq 1 30); do
@@ -209,6 +239,7 @@ else
   echo "… Citadel ${VERSION:+v$VERSION }is still starting (check: citadel status, log: $LOGS_DIR/citadel.log)"
 fi
 echo "  $ACCESS_URL"
+[ -z "$MENUBAR_NOTE" ] || echo "$MENUBAR_NOTE"
 
 # One QR, last: opens the panel from a phone camera and pairs from another
 # Citadel's "Pair a machine" screen (single-use invitation for this address).
@@ -217,17 +248,16 @@ if [ -n "$PUBLIC_URL" ] && [ "$UPDATE_MODE" = false ]; then
   QR_TEXT="$PUBLIC_URL"
   case "$PAIR_LINK" in "$PUBLIC_URL"*"#pair="*) QR_TEXT="$PAIR_LINK" ;; esac
   echo "  Create your admin account now: until then the first visitor can claim it."
-  # A large QR in the browser is far easier for a phone camera than the one
-  # drawn in the terminal (which depends on font and line spacing).
-  if [ -z "${CITADEL_NO_OPEN:-}" ] && [ -t 1 ] && command -v open >/dev/null 2>&1 \
-     && (cd "$APP_DIR" && node scripts/qr-page.js "$QR_TEXT" "$DATA_DIR/qr.html" "$PUBLIC_URL") 2>/dev/null; then
-    open "$DATA_DIR/qr.html" >/dev/null 2>&1 || true
-    echo "  A large QR opened in your browser (citadel qr --open shows it again)."
-  fi
   echo "  Scan to open on your phone, or to pair from another Citadel."
   (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$PUBLIC_URL") || true
-elif [ -z "$PUBLIC_URL" ] && [ "$TUNNEL" = true ] && [ "$UPDATE_MODE" = false ]; then
-  echo "  No public tunnel yet. Try: citadel tunnel"
+elif [ -z "$PUBLIC_URL" ] && [ "$UPDATE_MODE" = false ]; then
+  echo "  Open it on this Mac and create your administrator account."
+  if [ "$TUNNEL" = true ]; then
+    echo "  No public tunnel yet. Try: citadel tunnel"
+  else
+    echo "  Only reachable from this Mac. For a public address run: citadel tunnel"
+    echo "  (create the administrator account first; Tailscale is a private alternative)."
+  fi
 fi
 if ! command -v tmux >/dev/null 2>&1; then
   echo "  Note: install tmux (brew install tmux) for persistent terminal sessions."

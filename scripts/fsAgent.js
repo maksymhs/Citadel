@@ -152,11 +152,14 @@ async function statPath(p) {
 
 const SCAN_BUDGET_MS = 40000;
 const LARGEST_FILES = 25;
+// Tests can pretend to be another OS to exercise that branch; harmless otherwise.
+const PLATFORM = process.env.CITADEL_FSAGENT_PLATFORM || process.platform;
+const IS_MAC = PLATFORM === 'darwin';
 const WALK_CONCURRENCY = 16;
 const BIG_FILE_FLOOR = '1M';
 const TMP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // Never offered for cleanup: live sockets/state of running services.
-const TMP_PROTECTED = /^(tmux-|systemd-private-|snap-private-tmp|\.X11-unix|\.ICE-unix|ssh-|dbus-|citadel)/;
+const TMP_PROTECTED = /^(tmux-|systemd-private-|snap-private-tmp|\.X11-unix|\.ICE-unix|ssh-|dbus-|citadel|com\.apple\.|launchd)/;
 
 function diskBytes(st) {
   // Allocated blocks reflect real disk use (sparse files, small-file slack).
@@ -281,9 +284,16 @@ async function findLargest(root, deadline) {
     top.push({ path: rec.slice(tab + 1), size: Number(rec.slice(0, tab)) * 512, mtime: null });
     if (top.length > LARGEST_FILES * 8) trimTop(top, LARGEST_FILES);
   };
-  const res = await streamCommand('find', [root, '-xdev', '-type', 'f', '-size', `+${BIG_FILE_FLOOR}`, '-printf', '%b\\t%p\\0'], deadline, (c) => {
+  // GNU find prints records itself (NUL separated). BSD/macOS find has no
+  // -printf, so only the big files are handed to stat(1); the format carries a
+  // literal tab and records end with a newline.
+  const args = IS_MAC
+    ? [root, '-xdev', '-type', 'f', '-size', `+${BIG_FILE_FLOOR}`, '-exec', 'stat', '-f', '%b\t%N', '{}', '+']
+    : [root, '-xdev', '-type', 'f', '-size', `+${BIG_FILE_FLOOR}`, '-printf', '%b\\t%p\\0'];
+  const separator = IS_MAC ? '\n' : '\0';
+  const res = await streamCommand('find', args, deadline, (c) => {
     rest += c;
-    const recs = rest.split('\0');
+    const recs = rest.split(separator);
     rest = recs.pop();
     recs.forEach(take);
   });
@@ -402,6 +412,14 @@ const PY_CACHE_NAMES = new Set(['__pycache__', '.pytest_cache', '.mypy_cache', '
 const BUILD_CACHE_NAMES = new Set(['.next', '.nuxt', '.turbo', '.parcel-cache', '.svelte-kit', '.angular', '.dart_tool', '.gradle']);
 const SYSTEM_GROUP = 'System';
 
+// Homebrew reports sizes in binary units ("1.2GB" = 1.2 GiB).
+function binaryBytes(text) {
+  const m = /([\d.]+)\s*([kMGT]?B)/i.exec(String(text || ''));
+  if (!m) return 0;
+  const mult = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 }[m[2].toUpperCase()] || 1;
+  return Math.round(parseFloat(m[1]) * mult);
+}
+
 function formatDecimalBytes(text) {
   const m = /([\d.]+)\s*([kMGT]?B)/i.exec(String(text || ''));
   if (!m) return 0;
@@ -490,12 +508,44 @@ async function cleanupCandidates(projectsDir, privileged) {
     await addFs({ ...def, root: dir }, await childrenOf(dir, filter));
   };
 
+
+  // -- macOS -----------------------------------------------------------------
+  // Only folders macOS does not gate behind a permission prompt (~/Library/Caches,
+  // Logs and Developer are ordinary folders). com.apple.* caches belong to the OS.
+  async function addMacCategories() {
+    const lib = path.join(home, 'Library');
+    const hasBrew = onPath('brew');
+    const GD = 'Developer';
+    await addDirChildren({ id: 'mac-caches', group: G1, label: 'App caches (~/Library/Caches)', risk: 'safe', description: 'Caches of your apps and tools, rebuilt on demand. Quit the apps first for best results; macOS system caches (com.apple.*) are left alone.' },
+      path.join(lib, 'Caches'), (n) => !n.startsWith('com.apple.') && !(hasBrew && n === 'Homebrew'));
+    await addDirChildren({ id: 'mac-logs', group: G1, label: 'App logs (~/Library/Logs)', risk: 'safe', description: 'Log files and crash reports written by your apps.' }, path.join(lib, 'Logs'));
+    const xcode = path.join(lib, 'Developer', 'Xcode');
+    await addDirChildren({ id: 'xcode-derived', group: GD, label: 'Xcode build data (DerivedData)', risk: 'safe', description: 'Intermediate builds and indexes. Rebuilt by the next build.' }, path.join(xcode, 'DerivedData'));
+    await addDirChildren({ id: 'xcode-archives', group: GD, label: 'Xcode archives', risk: 'review', description: 'App archives you built. Keep the ones you may need to re-export or symbolicate.' }, path.join(xcode, 'Archives'));
+    await addDirChildren({ id: 'xcode-device-support', group: GD, label: 'Xcode device support files', risk: 'review', description: 'Debug symbols copied from connected iPhones/iPads/Watches. Downloaded again when you connect one.' }, path.join(xcode, 'iOS DeviceSupport'));
+    await addDirChildren({ id: 'simulator-caches', group: GD, label: 'Simulator caches', risk: 'safe', description: 'CoreSimulator caches. Recreated when needed.' }, path.join(lib, 'Developer', 'CoreSimulator', 'Caches'));
+    if (hasBrew) {
+      const dry = await runCommand('brew', ['cleanup', '-n', '-s', '--prune=all'], { timeoutMs: 30000 });
+      const m = /free approximately\s+([\d.]+\s*[kMGT]?B)/i.exec(dry.out);
+      const bytes = dry.code === 0 && m ? binaryBytes(m[1]) : 0;
+      if (bytes > 0) {
+        list.push({ kind: 'cmd', id: 'brew-cleanup', group: GD, label: 'Homebrew: old versions & downloads', risk: 'safe', root: 'homebrew', entries: [], estimate: bytes, access: 'direct',
+          description: 'brew cleanup -s --prune=all: removes old formula versions and cached downloads. Installed versions are kept.', cmd: ['brew', 'cleanup', '-s', '--prune=all'] });
+      }
+    }
+  }
+
   // -- User caches -----------------------------------------------------------
   const G1 = 'Caches';
   await addDirChildren({ id: 'user-cache', group: G1, label: 'User cache', risk: 'safe', description: `Application caches in ${home}/.cache (pip, Go builds, browsers, thumbnails). Rebuilt on demand.` }, path.join(home, '.cache'));
   await addDirChildren({ id: 'npm-cache', group: G1, label: 'npm download cache', risk: 'safe', description: `${home}/.npm/_cacache. Packages are downloaded again when needed.` }, path.join(home, '.npm', '_cacache'));
   await addDirChildren({ id: 'pm-stores', group: G1, label: 'pnpm / yarn stores', risk: 'safe', description: 'Package manager stores. Re-fetched on the next install.' }, path.join(home, '.local', 'share', 'pnpm'));
-  await addDirChildren({ id: 'trash', group: G1, label: 'Trash', risk: 'safe', description: `Files already deleted from a desktop session (${home}/.local/share/Trash).` }, path.join(home, '.local', 'share', 'Trash'));
+  if (!IS_MAC) {
+    await addDirChildren({ id: 'trash', group: G1, label: 'Trash', risk: 'safe', description: `Files already deleted from a desktop session (${home}/.local/share/Trash).` }, path.join(home, '.local', 'share', 'Trash'));
+  }
+  // The macOS Trash and ~/Downloads are privacy-protected folders: reading them
+  // makes macOS ask the user for permission, so a scan must not touch them.
+  if (IS_MAC) await addMacCategories();
   const langCaches = await existingDirs([
     path.join(home, '.cargo', 'registry', 'cache'), path.join(home, '.cargo', 'registry', 'src'),
     path.join(home, 'go', 'pkg', 'mod', 'cache'), path.join(home, '.gradle', 'caches'),
@@ -519,8 +569,10 @@ async function cleanupCandidates(projectsDir, privileged) {
   await addFs({ id: 'rust-targets', group: G2, label: 'Rust build output (target/)', risk: 'review', description: 'Compiled artifacts next to a Cargo.toml. cargo build recreates them, which can take minutes.', root: base }, proj.rustTargets);
   await addFs({ id: 'venvs', group: G2, label: 'Python virtualenvs', risk: 'review', description: '.venv / venv folders. Recreate with python -m venv and pip install.', root: base }, proj.venvs);
   await addFs({ id: 'archives', group: G2, label: 'Large installers & archives', risk: 'review', description: `Archives and installers of 20 MB or more (.tar.xz, .zip, .iso, .deb, ...) under your projects. Often leftovers from a download that was already extracted.`, root: base }, proj.archives);
-  const downloads = path.join(home, 'Downloads');
-  await addDirChildren({ id: 'downloads', group: G2, label: 'Downloads folder', risk: 'review', description: `Everything in ${downloads}. Check it before deleting.` }, downloads);
+  if (!IS_MAC) {
+    const downloads = path.join(home, 'Downloads');
+    await addDirChildren({ id: 'downloads', group: G2, label: 'Downloads folder', risk: 'review', description: `Everything in ${downloads}. Check it before deleting.` }, downloads);
+  }
 
   // -- Temporary files -------------------------------------------------------
   const tmpBudget = Date.now() + 15000;
@@ -545,42 +597,48 @@ async function cleanupCandidates(projectsDir, privileged) {
     }
     return found;
   };
-  await addFs({ id: 'tmp-old', group: G1, label: 'Old temporary files', risk: 'review', description: 'Your files in /tmp and /var/tmp untouched for 7+ days. Check nothing running still needs them.', root: '/tmp' },
-    [...await staleTmp('/tmp'), ...await staleTmp('/var/tmp')]);
+  // On macOS /tmp is a symlink; the real folders are /private/tmp and the
+  // per-user temp dir.
+  const tmpRoots = IS_MAC ? ['/private/tmp', os.tmpdir()] : ['/tmp', '/var/tmp'];
+  const staleFiles = [];
+  for (const dir of tmpRoots) staleFiles.push(...await staleTmp(dir));
+  await addFs({ id: 'tmp-old', group: G1, label: 'Old temporary files', risk: 'review', description: `Your files in ${tmpRoots.join(' and ')} untouched for 7+ days. Check nothing running still needs them.`, root: tmpRoots[0] }, staleFiles);
 
   // -- System (root) ---------------------------------------------------------
-  const oldLogs = async (d) => {
-    const found = [];
-    const rotated = /(\.gz|\.xz|\.bz2|\.old|\.\d+|-\d{8})$/;
-    for (const full of await childrenOf(d)) {
-      let st;
-      try { st = await fsp.lstat(full); } catch { continue; }
-      if (st.isFile() && rotated.test(full)) found.push(full);
-      else if (st.isDirectory() && full !== '/var/log/journal') {
-        for (const inner of await childrenOf(full, (n) => rotated.test(n))) found.push(inner);
+  if (PLATFORM === 'linux') {
+    const oldLogs = async (d) => {
+      const found = [];
+      const rotated = /(\.gz|\.xz|\.bz2|\.old|\.\d+|-\d{8})$/;
+      for (const full of await childrenOf(d)) {
+        let st;
+        try { st = await fsp.lstat(full); } catch { continue; }
+        if (st.isFile() && rotated.test(full)) found.push(full);
+        else if (st.isDirectory() && full !== '/var/log/journal') {
+          for (const inner of await childrenOf(full, (n) => rotated.test(n))) found.push(inner);
+        }
       }
-    }
-    return found;
-  };
-  await addFs({ id: 'apt-cache', group: SYSTEM_GROUP, label: 'Downloaded package files (apt)', risk: 'safe', description: 'Installer packages in /var/cache/apt/archives that are already installed.', root: '/var/cache/apt/archives' },
-    await childrenOf('/var/cache/apt/archives', (n) => n.endsWith('.deb')));
-  await addFs({ id: 'apt-lists', group: SYSTEM_GROUP, label: 'Package index (apt lists)', risk: 'review', description: 'Package lists in /var/lib/apt/lists. Recreated by apt update; installs fail until you run it.', root: '/var/lib/apt/lists' },
-    await childrenOf('/var/lib/apt/lists', (n) => n !== 'partial' && n !== 'lock'));
-  await addFs({ id: 'old-logs', group: SYSTEM_GROUP, label: 'Rotated system logs', risk: 'safe', description: 'Compressed or numbered old logs in /var/log. Current logs are kept.', root: '/var/log' }, await oldLogs('/var/log'));
-  await addFs({ id: 'crash-dumps', group: SYSTEM_GROUP, label: 'Crash reports & core dumps', risk: 'safe', description: '/var/crash and systemd coredumps.', root: '/var/crash' },
-    [...await childrenOf('/var/crash'), ...await childrenOf('/var/lib/systemd/coredump')]);
-  await addFs({ id: 'snap-cache', group: SYSTEM_GROUP, label: 'Snap download cache', risk: 'safe', description: '/var/lib/snapd/cache. Old snap downloads.', root: '/var/lib/snapd/cache' },
-    await childrenOf('/var/lib/snapd/cache'));
+      return found;
+    };
+    await addFs({ id: 'apt-cache', group: SYSTEM_GROUP, label: 'Downloaded package files (apt)', risk: 'safe', description: 'Installer packages in /var/cache/apt/archives that are already installed.', root: '/var/cache/apt/archives' },
+      await childrenOf('/var/cache/apt/archives', (n) => n.endsWith('.deb')));
+    await addFs({ id: 'apt-lists', group: SYSTEM_GROUP, label: 'Package index (apt lists)', risk: 'review', description: 'Package lists in /var/lib/apt/lists. Recreated by apt update; installs fail until you run it.', root: '/var/lib/apt/lists' },
+      await childrenOf('/var/lib/apt/lists', (n) => n !== 'partial' && n !== 'lock'));
+    await addFs({ id: 'old-logs', group: SYSTEM_GROUP, label: 'Rotated system logs', risk: 'safe', description: 'Compressed or numbered old logs in /var/log. Current logs are kept.', root: '/var/log' }, await oldLogs('/var/log'));
+    await addFs({ id: 'crash-dumps', group: SYSTEM_GROUP, label: 'Crash reports & core dumps', risk: 'safe', description: '/var/crash and systemd coredumps.', root: '/var/crash' },
+      [...await childrenOf('/var/crash'), ...await childrenOf('/var/lib/systemd/coredump')]);
+    await addFs({ id: 'snap-cache', group: SYSTEM_GROUP, label: 'Snap download cache', risk: 'safe', description: '/var/lib/snapd/cache. Old snap downloads.', root: '/var/lib/snapd/cache' },
+      await childrenOf('/var/lib/snapd/cache'));
 
-  // journald: vacuum with the vendor command, keep the last 100 MB.
-  const journalDir = '/var/log/journal';
-  if (await safeDirRoot(journalDir)) {
-    const sized = await duSizes([journalDir], Date.now() + 10000).catch(() => null);
-    const total = sized ? sized.get(journalDir) || 0 : 0;
-    if (total > 150 * 1024 * 1024) {
-      list.push({ kind: 'cmd', id: 'journal', group: SYSTEM_GROUP, label: 'System journal', risk: 'safe', root: journalDir, entries: [], estimate: total - 100 * 1024 * 1024,
-        description: 'journalctl --vacuum-size=100M: keeps the newest 100 MB of the system journal.', access: sudoOk || uid === 0 ? 'sudo' : 'none',
-        cmd: ['journalctl', '--vacuum-size=100M'], sizePath: journalDir });
+    // journald: vacuum with the vendor command, keep the last 100 MB.
+    const journalDir = '/var/log/journal';
+    if (await safeDirRoot(journalDir)) {
+      const sized = await duSizes([journalDir], Date.now() + 10000).catch(() => null);
+      const total = sized ? sized.get(journalDir) || 0 : 0;
+      if (total > 150 * 1024 * 1024) {
+        list.push({ kind: 'cmd', id: 'journal', group: SYSTEM_GROUP, label: 'System journal', risk: 'safe', root: journalDir, entries: [], estimate: total - 100 * 1024 * 1024,
+          description: 'journalctl --vacuum-size=100M: keeps the newest 100 MB of the system journal.', access: sudoOk || uid === 0 ? 'sudo' : 'none',
+          cmd: ['journalctl', '--vacuum-size=100M'], sizePath: journalDir });
+      }
     }
   }
 

@@ -3,6 +3,7 @@
 # Citadel — friendly management CLI
 #   citadel status | url | qr | logs | restart | update | help
 #   citadel doctor | network | wifi list | wifi connect | repair
+#   citadel start | stop | menubar [on|off]   (menubar: macOS only)
 #   citadel reset-password [--list | username]
 #   citadel power [status|on|off]
 # Installed as /usr/local/bin/citadel (a thin launcher for this file).
@@ -31,6 +32,16 @@ launchd_domain() {
   printf 'gui/%s/%s' "$(id -u)" "$MACOS_LABEL"
 }
 
+# (Re)load the launchd agent if a previous `citadel stop` unloaded it.
+macos_start() {
+  local plist="$HOME/Library/LaunchAgents/$MACOS_LABEL.plist"
+  if ! launchctl print "$(launchd_domain)" >/dev/null 2>&1; then
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+  fi
+  launchctl enable "$(launchd_domain)" >/dev/null 2>&1 || true
+  launchctl kickstart "$(launchd_domain)" >/dev/null 2>&1 || true
+}
+
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -56,12 +67,16 @@ Citadel CLI
   citadel power on       Ignore lid close and block sleep for 24/7 operation
   citadel power off      Restore the system sleep defaults
   citadel url            Print the panel URL
-  citadel qr [--url|--open]  Print a pairing QR code (--url: short, address only;
-                         --open: large QR page in the browser)
+  citadel qr [--url]     Print a pairing QR code in the terminal (--url: short,
+                         address only, for small terminals)
   citadel logs           Follow the service logs
   citadel reset-password [--list | USER]
                          Set a new panel password offline (revokes its sessions)
+  citadel start          Start the service
+  citadel stop           Stop the service (until `citadel start` or the next login on macOS)
   citadel restart        Restart the service
+  citadel menubar [on|off|status]
+                         macOS menu bar icon: status, open dashboard, start/stop
   citadel update         Update to the latest version
   citadel tunnel         Expose the panel globally via a Cloudflare tunnel
                          (--domain=HOST --token=TOKEN for your own domain)
@@ -129,24 +144,9 @@ case "$cmd" in
       exit 0
     fi
     pair_link="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" PORT="$PORT" node scripts/pair-qr.js "$p_url" 2>/dev/null || true)"
-    if [ "${1:-}" = "--open" ]; then
-      # A large QR in the browser: scans reliably when a terminal font or line
-      # spacing distorts the one drawn in the console.
-      qr_page="$DATA_DIR/qr.html"
-      (cd "$APP_DIR" && node scripts/qr-page.js "${pair_link:-$p_url}" "$qr_page" "$p_url")
-      if command -v open >/dev/null 2>&1; then
-        open "$qr_page"
-      elif command -v xdg-open >/dev/null 2>&1; then
-        xdg-open "$qr_page" >/dev/null 2>&1 || true
-      else
-        echo "Open this file in a browser: $qr_page"
-      fi
-      echo "Large QR page: $qr_page (the code works once and expires in 10 minutes)"
-      exit 0
-    fi
     echo "Pairing QR (valid for 10 minutes):"
     (cd "$APP_DIR" && node scripts/print-qr.js "${pair_link:-$p_url}" "$p_url") || {
-      echo "Tip: the pairing code does not fit this terminal. Try: citadel qr --url (short code) or run it over SSH." >&2
+      echo "Tip: the pairing code does not fit this terminal. Enlarge the window, or try: citadel qr --url (short code)." >&2
       exit 1
     }
     echo "Panel URL: $p_url"
@@ -207,8 +207,45 @@ case "$cmd" in
     as_root journalctl -u "$SERVICE" -f
     ;;
 
+  start)
+    if [ "$OS" = "Darwin" ]; then
+      macos_start
+      echo "Started $MACOS_LABEL."
+      exit 0
+    fi
+    as_root systemctl start "$SERVICE"
+    echo "Started $SERVICE."
+    ;;
+
+  stop)
+    if [ "$OS" = "Darwin" ]; then
+      # Unload the agent so KeepAlive does not bring it straight back.
+      launchctl bootout "$(launchd_domain)" >/dev/null 2>&1 || true
+      echo "Stopped $MACOS_LABEL (run: citadel start)."
+      exit 0
+    fi
+    as_root systemctl stop "$SERVICE"
+    echo "Stopped $SERVICE."
+    ;;
+
+  menubar)
+    if [ "$OS" != "Darwin" ]; then
+      echo "The menu bar icon is only available on macOS." >&2
+      exit 1
+    fi
+    case "${1:-status}" in
+      on|install) action=install ;;
+      off|remove) action=remove ;;
+      status) action=status ;;
+      *) echo "Usage: citadel menubar [on|off|status]" >&2; exit 2 ;;
+    esac
+    exec env CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" PORT="$PORT" CITADEL_TARGET_DIR="$(dirname "$APP_DIR")" \
+      bash "$APP_DIR/scripts/menubar-macos.sh" "$action"
+    ;;
+
   restart)
     if [ "$OS" = "Darwin" ]; then
+      macos_start
       launchctl kickstart -k "$(launchd_domain)"
       echo "Restarted $MACOS_LABEL."
       exit 0

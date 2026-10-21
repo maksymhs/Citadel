@@ -271,3 +271,113 @@ describe('Disk usage and cleanup', () => {
     assert.ok(fs.existsSync(victim));
   });
 });
+
+describe('Disk cleanup on macOS', () => {
+  let app;
+  let authCookie;
+  const saved = {};
+  const testDb = path.resolve(__dirname, '../data/test-files-mac.db');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-machome-'));
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-macbin-'));
+  const brewLog = path.join(bin, 'brew.log');
+  const lib = path.join(home, 'Library');
+  const mk = (rel, bytes = 16 * 1024) => {
+    fs.mkdirSync(path.dirname(path.join(home, rel)), { recursive: true });
+    fs.writeFileSync(path.join(home, rel), Buffer.alloc(bytes, 7));
+  };
+
+  before(async () => {
+    for (const key of ['HOME', 'PATH', 'CITADEL_FSAGENT_PLATFORM']) saved[key] = process.env[key];
+    // Fake Homebrew: dry run reports a size, the real run is logged.
+    fs.writeFileSync(path.join(bin, 'brew'), `#!/usr/bin/env bash
+echo "$@" >> "${brewLog}"
+case "$*" in *" -n "*) echo "==> This operation would free approximately 12.3MB of disk space." ;; esac
+exit 0
+`, { mode: 0o755 });
+    // Fake BSD-style find: no -printf, prints "<512-byte blocks>\t<path>" lines.
+    fs.writeFileSync(path.join(bin, 'find'), `#!/usr/bin/env bash
+printf '8192\\t%s\\n' "$BIG_FILE"
+`, { mode: 0o755 });
+    process.env.HOME = home;
+    process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
+    process.env.CITADEL_FSAGENT_PLATFORM = 'darwin';
+
+    mk('Library/Caches/com.example.app/data.bin');
+    mk('Library/Caches/com.apple.Safari/data.bin');
+    mk('Library/Caches/Homebrew/downloads/x.tar.gz');
+    mk('Library/Logs/app.log');
+    mk('Library/Developer/Xcode/DerivedData/Proj-abc/Build/out.o');
+    mk('Library/Developer/Xcode/Archives/2026-01-01/App.xcarchive');
+    mk('Downloads/keep-me.zip');
+
+    for (const suffix of ['', '-wal', '-shm']) {
+      const f = testDb + suffix;
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
+    app = await buildServer({ customDbPath: testDb, logger: false });
+    const setupRes = await app.inject({ method: 'POST', url: '/api/auth/setup', payload: { username: 'macadmin', password: 'SuperPassword123!' } });
+    authCookie = setupRes.cookies.find((c) => c.name === 'session_id').value;
+    await app.inject({ method: 'POST', url: '/api/modules/files/state', cookies: { session_id: authCookie }, payload: { enabled: true } });
+  });
+
+  after(async () => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    await app.close();
+    closeDatabase();
+    for (const suffix of ['', '-wal', '-shm']) {
+      const f = testDb + suffix;
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
+  });
+
+  const scan = async () => JSON.parse((await app.inject({ method: 'GET', url: '/api/files/cleanup', cookies: { session_id: authCookie } })).payload);
+
+  test('offers the macOS categories and none of the Linux-only ones', async () => {
+    const { candidates } = await scan();
+    const ids = candidates.map((c) => c.id);
+    for (const id of ['mac-caches', 'mac-logs', 'xcode-derived', 'xcode-archives', 'brew-cleanup']) assert.ok(ids.includes(id), id);
+    for (const id of ['apt-cache', 'apt-lists', 'old-logs', 'journal', 'crash-dumps', 'snap-cache', 'trash']) assert.ok(!ids.includes(id), `${id} is Linux-only`);
+    assert.ok(!ids.includes('downloads'), 'reading ~/Downloads would trigger a macOS permission prompt');
+    const group = (id) => candidates.find((c) => c.id === id).group;
+    assert.equal(group('xcode-derived'), 'Developer');
+    assert.equal(group('mac-caches'), 'Caches');
+  });
+
+  test('app caches skip com.apple.* and Homebrew (which has its own category)', async () => {
+    const cand = (await scan()).candidates.find((c) => c.id === 'mac-caches');
+    const names = cand.items.map((i) => path.basename(i.path));
+    assert.deepEqual(names, ['com.example.app']);
+    const brew = (await scan()).candidates.find((c) => c.id === 'brew-cleanup');
+    assert.equal(brew.size, Math.round(12.3 * 1024 * 1024), 'Homebrew sizes are binary');
+  });
+
+  test('cleaning removes only the chosen cache and runs brew cleanup', async () => {
+    let res = await app.inject({ method: 'POST', url: '/api/files/cleanup', cookies: { session_id: authCookie }, payload: { ids: ['mac-caches', 'xcode-derived'] } });
+    assert.equal(res.statusCode, 200);
+    assert.ok(!fs.existsSync(path.join(lib, 'Caches', 'com.example.app')));
+    assert.ok(fs.existsSync(path.join(lib, 'Caches', 'com.apple.Safari')), 'system caches are untouched');
+    assert.deepEqual(fs.readdirSync(path.join(lib, 'Developer', 'Xcode', 'DerivedData')), []);
+    assert.ok(fs.existsSync(path.join(home, 'Downloads', 'keep-me.zip')));
+    assert.ok(fs.existsSync(path.join(lib, 'Developer', 'Xcode', 'Archives')), 'review categories need an explicit choice');
+
+    res = await app.inject({ method: 'POST', url: '/api/files/cleanup', cookies: { session_id: authCookie }, payload: { ids: ['brew-cleanup'] } });
+    assert.equal(res.statusCode, 200);
+    assert.match(fs.readFileSync(brewLog, 'utf8'), /cleanup -s --prune=all/);
+  });
+
+  test('usage understands the BSD find that macOS ships', async () => {
+    const big = path.join(home, 'big.bin');
+    fs.writeFileSync(big, Buffer.alloc(2 * 1024 * 1024, 1));
+    process.env.BIG_FILE = big;
+    const res = await app.inject({ method: 'GET', url: `/api/files/usage?path=${encodeURIComponent(home)}`, cookies: { session_id: authCookie } });
+    delete process.env.BIG_FILE;
+    assert.equal(res.statusCode, 200);
+    const { usage } = JSON.parse(res.payload);
+    assert.equal(usage.largest[0].path, big);
+    assert.equal(usage.largest[0].size, 8192 * 512);
+  });
+});

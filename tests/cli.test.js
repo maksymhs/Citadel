@@ -136,16 +136,56 @@ test('print-qr unicode output decodes back to the original text', () => {
   assert.equal(decoded.data, text);
 });
 
-test('qr-page writes a self-contained page with the QR and the escaped address', () => {
-  const fs = require('node:fs');
-  const os = require('node:os');
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-qr-')), 'qr.html');
-  execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'qr-page.js'), 'https://example.com/#pair=v1.a.b', out, 'https://example.com/<x>']);
-  const html = fs.readFileSync(out, 'utf8');
-  assert.match(html, /<svg[^>]*shape-rendering="crispEdges"/);
-  assert.ok(html.includes('https://example.com/&lt;x&gt;'), 'the address is HTML-escaped');
-  assert.ok(!html.includes('<x>'));
-  assert.equal(fs.statSync(out).mode & 0o077, 0, 'the page holds a one-time secret and is private');
+const PAIR_LINK = 'https://evolution-gifts-significant-cas.trycloudflare.com/#pair=v1.lgGchkRcTQ62aLZcGZhzGA.8c2p57Hz_w-6BSNO3GfZAR-Ui2N8Gtqy';
+const APPLE_ENV = { ...process.env, TERM: 'xterm-256color', TERM_PROGRAM: 'Apple_Terminal', LANG: 'en_US.UTF-8', LC_ALL: '', LC_CTYPE: '' };
+
+test('print-qr draws glyph-free coloured cells on macOS Terminal and they decode', () => {
+  const jsQR = require('jsqr');
+  const out = execFileSync(process.execPath, [PRINT_QR, PAIR_LINK], {
+    encoding: 'utf8',
+    env: { ...APPLE_ENV, COLUMNS: '100', LINES: '60' },
+  });
+  assert.doesNotMatch(out, /[█▀▄]/, 'Terminal.app draws block glyphs with seams');
+  // Rebuild the grid: every module is two coloured spaces (40 = black, 47 = white).
+  const rows = [];
+  for (const line of out.split('\n').filter(Boolean)) {
+    const row = [];
+    const re = /\x1b\[(40|47)m( +)/g;
+    let m;
+    while ((m = re.exec(line))) for (let i = 0; i < m[2].length / 2; i += 1) row.push(m[1] === '40');
+    if (row.length) rows.push(row);
+  }
+  const scale = 4;
+  const width = rows[0].length * scale;
+  const height = rows.length * scale;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const o = (y * width + x) * 4;
+      data[o] = data[o + 1] = data[o + 2] = rows[Math.floor(y / scale)][Math.floor(x / scale)] ? 0 : 255;
+      data[o + 3] = 255;
+    }
+  }
+  const decoded = jsQR(data, width, height);
+  assert.ok(decoded, 'the cell grid is a valid QR code');
+  assert.equal(decoded.data, PAIR_LINK);
+});
+
+test('print-qr never falls back to block glyphs on macOS Terminal', () => {
+  // Too small for the pairing link: the short address is drawn as cells instead.
+  const short = execFileSync(process.execPath, [PRINT_QR, PAIR_LINK, 'https://evolution-gifts-significant-cas.trycloudflare.com'], {
+    encoding: 'utf8',
+    env: { ...APPLE_ENV, COLUMNS: '100', LINES: '40' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.doesNotMatch(short, /[█▀▄]/);
+  assert.match(short, /\x1b\[40m {2}/);
+  // Too small for anything: a clear error, not an unscannable glyph code.
+  assert.throws(() => execFileSync(process.execPath, [PRINT_QR, PAIR_LINK], {
+    encoding: 'utf8',
+    env: { ...APPLE_ENV, COLUMNS: '80', LINES: '24' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }), (err) => !/[█▀▄]/.test(String(err.stdout)) && /QR needs/.test(String(err.stderr)));
 });
 
 test('reset-password replaces the password, revokes sessions and is audited', () => {

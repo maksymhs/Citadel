@@ -198,7 +198,7 @@
       renderClean(scan);
     }
 
-    const GROUP_ORDER = ['Caches', 'Projects', 'Docker', 'System'];
+    const GROUP_ORDER = ['Caches', 'Projects', 'Developer', 'Docker', 'System'];
     const ACCESS_LABEL = { none: 'Needs root', sudo: 'Uses sudo' };
 
     function itemRowHtml(c, item) {

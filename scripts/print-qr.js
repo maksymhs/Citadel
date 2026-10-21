@@ -18,17 +18,28 @@ if (!text) {
 // ships fonts without the half-block glyphs and shows them as diamonds, and a
 // non-UTF-8 locale garbles them anywhere. In those cases draw each module with
 // two coloured spaces instead: plain ASCII, so every terminal can render it.
+//
+// macOS Terminal.app is the same story for a different reason: its font draws
+// block elements slightly short, which leaves thin seams through the code that
+// make it unscannable. Coloured spaces fill the whole cell background, so they
+// have no glyph to get wrong. That mode needs more rows, so on Terminal.app the
+// window is enlarged when needed (see growWindow) and the glyph mode is never
+// used as a fallback.
+const APPLE_TERMINAL = process.env.TERM_PROGRAM === 'Apple_Terminal';
+
 function detectMode(env) {
   const forced = String(env.CITADEL_QR_MODE || '').toLowerCase();
   if (forced === 'ascii' || forced === 'unicode') return forced;
-  if (env.TERM === 'linux') return 'ascii';
+  if (env.TERM === 'linux' || env.TERM_PROGRAM === 'Apple_Terminal') return 'ascii';
   const locale = env.LC_ALL || env.LC_CTYPE || env.LANG || '';
   return /utf-?8/i.test(locale) ? 'unicode' : 'ascii';
 }
 
-const columns = Number(process.stdout.columns || process.env.COLUMNS);
-const rows = Number(process.stdout.rows || process.env.LINES);
-const isForcedMode = Boolean(process.env.CITADEL_QR_MODE);
+let columns = Number(process.stdout.columns || process.env.COLUMNS);
+let rows = Number(process.stdout.rows || process.env.LINES);
+// A forced mode, or Terminal.app (glyphs are known bad there), never falls back
+// to the half-block glyphs when the cells do not fit.
+const isForcedMode = Boolean(process.env.CITADEL_QR_MODE) || APPLE_TERMINAL;
 const preferredMode = detectMode(process.env);
 
 function build(data, targetMode, quiet = 2) {
@@ -113,6 +124,32 @@ function renderAscii(code) {
   return out;
 }
 
+// Terminal.app honours the xterm "resize window" request (CSI 8;rows;cols t).
+// Ask for just enough room for the tightest layout plus a few lines for the
+// text printed around the code, then re-read the size. Best effort: if the
+// request is ignored the normal fallbacks still apply.
+const MAX_ROWS = 80;
+const MAX_COLUMNS = 200;
+const CAN_RESIZE = APPLE_TERMINAL && process.stdout.isTTY && !process.env.CITADEL_QR_NO_RESIZE;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Node refreshes process.stdout.columns/rows from SIGWINCH, which is only
+// handled while the event loop runs, so wait asynchronously for the new size.
+async function growWindow(data) {
+  if (!CAN_RESIZE) return;
+  const tight = build(data, preferredMode, 1);
+  const wantRows = Math.min(MAX_ROWS, Math.max(rows || 0, tight.height + 4));
+  const wantColumns = Math.min(MAX_COLUMNS, Math.max(columns || 0, tight.width + 2));
+  process.stdout.write(`\x1b[8;${wantRows};${wantColumns}t`);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await sleep(100);
+    if (process.stdout.rows >= wantRows && process.stdout.columns >= wantColumns) break;
+  }
+  columns = Number(process.stdout.columns);
+  rows = Number(process.stdout.rows);
+}
+
 function findBestFit(data) {
   for (const { quiet, reserved } of LAYOUTS) {
     const candidate = build(data, preferredMode, quiet);
@@ -129,20 +166,30 @@ function findBestFit(data) {
   return null;
 }
 
-let code = findBestFit(text);
-if (!code && fallback && fallback !== text) {
-  const alt = findBestFit(fallback);
-  if (alt) {
-    console.error('The full code does not fit this terminal; showing the panel URL instead.');
-    code = alt;
+(async () => {
+  let code = findBestFit(text);
+  if (!code && CAN_RESIZE) {
+    await growWindow(text);
+    code = findBestFit(text);
   }
-}
+  if (!code && fallback && fallback !== text) {
+    let alt = findBestFit(fallback);
+    if (!alt && CAN_RESIZE) {
+      await growWindow(fallback);
+      alt = findBestFit(fallback);
+    }
+    if (alt) {
+      console.error('The full code does not fit this terminal; showing the panel URL instead.');
+      code = alt;
+    }
+  }
 
-if (!code) {
-  // Build default representation for error reporting
-  code = build(text, preferredMode, 2);
-  console.error(`QR needs ${code.width + 1}x${code.height + 1} cells, but this terminal is ${columns || '?'}x${rows || '?'}. Resize it (or connect over SSH) and try again.`);
-  process.exit(2);
-}
+  if (!code) {
+    // Build default representation for error reporting
+    code = build(text, preferredMode, 2);
+    console.error(`QR needs ${code.width + 1}x${code.height + 1} cells, but this terminal is ${columns || '?'}x${rows || '?'}. Resize it (or connect over SSH) and try again.`);
+    process.exit(2);
+  }
 
-process.stdout.write(code.mode === 'ascii' ? renderAscii(code) : renderUnicode(code));
+  process.stdout.write(code.mode === 'ascii' ? renderAscii(code) : renderUnicode(code));
+})();
