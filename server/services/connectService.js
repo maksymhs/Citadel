@@ -1,3 +1,9 @@
+/**
+ * Work out how to reach this panel: the configured public URL, the Cloudflare
+ * or Tailscale address, the LAN and public IPs, and the QR codes (terminal and
+ * SVG) that carry them. Shared by the panel, `citadel url|qr` and the installers.
+ */
+
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');

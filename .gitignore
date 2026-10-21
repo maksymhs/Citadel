@@ -14,3 +14,6 @@ dist/
 
 # Regenerated from node_modules by `npm install` (scripts/copy-vendor.js)
 public/vendor/
+
+# Code knowledge graph built on demand by `npm run graph` (Graphify)
+graphify-out/

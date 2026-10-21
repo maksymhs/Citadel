@@ -11,7 +11,8 @@
     "sentinel": "node scripts/sentinel.js",
     "mcp": "node scripts/citadel-mcp.js",
     "postinstall": "node scripts/copy-vendor.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "graph": "node scripts/graph.js"
   },
   "keywords": [
     "citadel",

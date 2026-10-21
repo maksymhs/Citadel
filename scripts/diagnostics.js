@@ -1,3 +1,8 @@
+/**
+ * Capability-driven, read-only host and network collectors behind
+ * `citadel doctor|network|wifi`. Missing tools are reported as SKIP, never as a crash.
+ */
+
 const { spawnSync } = require('node:child_process');
 const realFs = require('node:fs');
 const realOs = require('node:os');

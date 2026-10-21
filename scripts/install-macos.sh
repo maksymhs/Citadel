@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# macOS installer: per-user launchd service, optional Cloudflare tunnel, menu bar icon and the final address/setup code/QR. Delegated to by install.sh on Darwin.
 set -euo pipefail
 
 if [ "$(uname -s)" != "Darwin" ]; then

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# macOS uninstaller: removes the launchd service, helper scripts, menu bar icon and (unless --keep-data) data. Delegated to by install.sh --uninstall on Darwin.
 set -euo pipefail
 
 if [ "$(uname -s)" != "Darwin" ]; then
