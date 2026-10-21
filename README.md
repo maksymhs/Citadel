@@ -193,6 +193,7 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 | [Security & limitations](docs/security.md) | Security layers and what Citadel does **not** protect against |
 | [Remote access](docs/remote-access.md) | QR pairing, Cloudflare tunnels, own domain |
 | [Task mesh](docs/task-mesh.md) | Parallel work across paired nodes |
+| [Feature map](docs/features.md) | Which files make up each feature, with their tests and guide |
 | [Code map](docs/code-map.md) | Every source file with its purpose, and where each screen lives |
 | [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) | How it is built and why |
 

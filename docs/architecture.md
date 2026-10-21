@@ -1,169 +1,98 @@
 # Citadel — System Architecture
 
-## 1. Overview and Design Principles
+How Citadel is put together and why. For where each file lives see [code-map.md](code-map.md); for which files make up each feature see [features.md](features.md); for the decisions behind it see [decisions.md](decisions.md).
 
-Citadel is a self-hosted, ultralight, modular and secure web platform designed for developers and AI agents working on a VPS. It provides:
+## 1. What it is
 
-- Unified management of projects and Git repositories.
-- Interactive, persistent web terminals (`xterm.js` + `node-pty` + `tmux`).
-- A launcher for AI CLI tools and agents (Claude Code, Codex, OpenCode, and custom executables) running under the authorized local Linux identity.
-- Monitoring of sessions, processes, resources and auditing.
-- Optional publishing through a reverse proxy (Caddy) and optional container support (Docker).
-- Reproducible, idempotent deployment through a one-line installer (`install.sh`).
+A self-hosted web panel that runs on one machine (a VPS, a Mac, a laptop) and gives you, from a browser or phone:
 
-### Core Principles
-1. **Development environment first**: Citadel is a workstation for developers and AI agents. Publishing and deployment are accessory capabilities.
-2. **Zero heavy dependencies**: It requires no Kubernetes, microservices, Redis, external queues or remote databases. It runs on cheap VPS instances with 512 MB - 1 GB of RAM.
-3. **Resilience to missing dependencies**: If `tmux`, `caddy`, `docker` or a CLI agent is not installed, the core degrades gracefully and keeps working.
-4. **Secure by design**:
-   - Listens on `127.0.0.1` by default.
-   - `HttpOnly` and `SameSite=Strict` session cookies.
-   - Origin validation on WebSockets.
-   - Strict Path Traversal prevention via canonical resolution.
-   - Structured process execution (`spawn` with argument arrays), avoiding shell interpolation.
-   - Mandatory initial administrator account registration with no default passwords.
+- projects and Git repositories, and persistent terminals (`xterm.js` + `node-pty` + `tmux`);
+- a launcher for AI CLI agents running as the service's OS user;
+- a view of **every paired Citadel machine** (health, alerts, remote terminals, files, updates) behind one URL;
+- optional publishing (Caddy), container inspection (Docker), a task queue for agents (task mesh) and plugins.
 
----
+Every installation is a complete, independent Citadel. "Fleet" features are peers talking to peers; there is no central server.
 
-## 2. Layered Architecture Diagram
+### Principles
+
+1. **Development environment first.** Publishing and deployment are accessory.
+2. **Few dependencies.** Node.js, Fastify, SQLite. No Redis, queues, containers or remote databases; runs on 512 MB.
+3. **Degrade, don't fail.** Missing `tmux`, `caddy`, `docker`, an agent, Wi-Fi hardware or `systemd` is reported, never fatal.
+4. **Local and unprivileged by default.** `127.0.0.1`, no root, no public tunnel unless asked. Every widening of exposure or privilege is an explicit opt-in.
+5. **Structured execution.** Processes are spawned with argument arrays, paths are validated against the managed tree, secrets are encrypted at rest and never logged.
+
+## 2. Layers
 
 ```
-+-----------------------------------------------------------------+
-|                       Web Frontend (SPA)                       |
-|   Dashboard | Projects | Terminal (xterm.js) | Agents | System  |
-+-----------------------------------------------------------------+
-                                | HTTP REST & WebSockets
-                                v
-+-----------------------------------------------------------------+
-|                    Fastify Core & Middleware                   |
-|   Rate Limiter | Helmet | Session Auth | CSRF/Origin Guard      |
-+-----------------------------------------------------------------+
-        |                        |                       |
-        v                        v                       v
-+---------------+        +---------------+       +---------------+
-|  HTTP Routes  |        |  WS Terminal  |       | Plugin Loader |
-| /api/auth     |        | /ws/terminal  |       | plugin.json   |
-| /api/projects |        +---------------+       +---------------+
-| /api/agents   |                |
-| /api/git      |                v
-| /api/proxy    |        +-------------------------------+
-| /api/system   |        | Session & Terminal Manager   |
-+---------------+        | (node-pty + tmux attach/spawn)|
-        |                +-------------------------------+
-        v
-+-----------------------------------------------------------------+
-|                       Service Layer                             |
-| ProjectService | AgentRegistry | GitService | ProxyProvider     |
-| DockerService  | AuditLogger   | NodeService (Local / Remote)   |
-+-----------------------------------------------------------------+
-        |                                        |
-        v                                        v
-+-----------------------+              +--------------------------+
-| SQLite (better-sqlite3)|              | Host Linux OS            |
-| data/citadel.db       |              | - Projects (/srv/...)    |
-| WAL mode              |              | - tmux sessions          |
-+-----------------------+              | - CLI agents / binaries  |
-                                       +--------------------------+
+Browser (SPA in public/)  ──HTTP + WebSocket──►  Fastify (server/index.js)
+                                                   │  helmet, rate limit, cookies, static, websocket
+                                                   │  auth guard on every /api route (except setup status)
+        ┌──────────────────────────────────────────┤
+        ▼                                          ▼
+  routes/*Routes.js  ──►  services/*Service.js  ──►  SQLite (data/citadel.db, WAL)
+  (validate, authorize)    (business logic)          the host OS: tmux, git, cloudflared, systemd/launchd
+        │
+        └─ /api/remote/:hostId/*  and  /ws/remote/:hostId/...  ──►  another paired Citadel
 ```
 
----
+- **Routes** are thin: validate input, check the session (`requireAuth`; admin checks for mutations), call a service, audit sensitive actions.
+- **Services** hold the logic and talk to the OS and the database. They are the unit tests target.
+- **Frontend** is framework-free: `public/js/app.js` is the shell (state, API helper, navigation, most screens); `monitor.js`, `disk-cleanup.js`, `settings-*.js` are feature scripts that get a context object from the shell.
+- **Modules** (`server/modules/registry.js`) describe built-in capabilities and whether they are available and enabled. **Plugins** (`plugins/*/plugin.json`) are third-party style extensions loaded in isolation by `pluginLoader.js`.
 
-## 3. Data Model (SQLite)
+## 3. Request flow and machine switching
 
-1. **`users`**: ID, username, password_hash, salt, role, created_at, updated_at.
-2. **`sessions`**: ID (256-bit token), user_id, expires_at, created_at, last_active.
-3. **`projects`**: ID, name, slug, description, path, git_remote, git_branch, created_at, updated_at.
-4. **`term_sessions`**: ID, project_id, name, tmux_session, agent_id, status, created_at, last_active.
-5. **`audit_logs`**: ID, user_id, action, target_type, target_id, details, ip, created_at.
-6. **`deployments`**: ID, project_id, domain, target_port, status, ssl_active, created_at.
-7. **`plugins`**: ID, name, version, enabled, config, created_at.
-8. **`git_credentials`**: provider (github/gitlab), username, token_encrypted, created_at, updated_at.
+The browser only ever talks to **its own** server. When you select another machine in the selector, the shell keeps the same URL and sends API calls to `/api/remote/<hostId>/…` and terminal sockets to `/ws/remote/<hostId>/terminal/<sessionId>`. `remoteProxyRoutes.js` forwards them using the stored outbound token for that peer, so a peer token never reaches the browser, and only registered hosts can be reached (no arbitrary URL, so no SSRF).
 
-> Note: the session identifier is stored directly in the `sessions` table; no additional hashing is applied because it is already a random 256-bit value that the client only knows through an `HttpOnly` cookie.
+Some APIs always stay local (`LOCAL_ONLY_API` in `app.js`: auth, pairing, host list, fleet, monitor) because they are about *this* panel's view of the world.
 
----
+## 4. Pairing, mesh and machine identity
 
-## 3.1 Git Provider Credentials
+- Every installation has a stable random **instance id** (`app_config`). A peer is a **list of candidate addresses** (LAN IP, own domain, Cloudflare Quick Tunnel, Tailscale), because tunnel URLs change on restart. Peers re-announce their addresses at boot and every five minutes, and every peer response carries the sender's current addresses, so stored rows heal themselves (`hostService.js`).
+- **Pairing** (`pairingService.js`) is a bidirectional handshake started by a QR/link: machine B redeems A's single-use invitation, each side stores the other with an **independent token per direction** (inbound stored as a SHA-256 hash, outbound encrypted at rest). Either side can unpair, which removes both rows.
+- **Mesh** (`meshService.js`): machines already paired introduce each other, so everyone ends up paired with everyone, with no credential-vault merge.
+- **Vault sync** (`secretSyncService.js`): the encrypted credential vault is merged between paired machines over HTTPS only; the newest `updated_at` wins and deletions travel as tombstones.
+- The legacy **Fleet** module (`fleetService.js`) manages manually added URL + token hosts for bulk status/update/agent actions.
 
-- Providers (GitHub, GitLab) are connected from the **Repositories** view using a personal access token.
-- Tokens are encrypted at rest with AES-256-GCM before being stored in `git_credentials`. The 256-bit key is read from `CITADEL_SECRET_KEY` or generated once into `DATA_DIR/secret.key` (mode `0600`).
-- The token is never returned to the browser. Repository discovery uses the provider REST API; cloning and pulling inject the token as a host-scoped `http.<host>.extraheader` **only** for the provider's own host, and `GIT_TERMINAL_PROMPT=0` makes missing credentials fail fast instead of hanging.
+## 5. Monitoring and alerts
 
----
+`monitorService.js` runs in each panel: every 60 s it probes this machine and every paired one (latency, load, memory, disk, uptime, version, temperature), stores samples in `host_checks` (30 days) and computes 24 h / 7 d availability. A machine is **offline after two failed checks in a row**. Alerts (offline, disk, memory, CPU) show in the panel and can be pushed once at start and once at recovery to a webhook, ntfy or Telegram. `securityAlertService.js` reuses the same channels for security events (new sign-in address, failed-login bursts, a machine pairing in, setup code replaced, password reset). Monitoring is per panel: a machine cannot alert about its own outage.
 
-## 4. Terminal Persistence with `tmux`
+## 6. Updates
 
-- Each project can open multiple terminals.
-- Each terminal is bound to a deterministically and safely identified `tmux` session: `citadel_<project_slug>_<session_id>`.
-- `node-pty` runs `tmux new-session -A -s citadel_<project_slug>_<session_id>` with the project's working directory.
-- If the browser disconnects and reconnects, it reattaches to the same PTY or resumes the tmux session without losing state or killing running processes.
-- If `tmux` is not installed on the OS, the manager uses `node-pty` in direct mode and notifies the user to install `tmux` for persistence across restarts.
+`updateService.js` reports the running version and checks GitHub. The **stable** channel follows the newest `vX.Y.Z` tag, **main** follows the latest commit (`scripts/update.sh`). The actual update runs through a root-owned helper (Linux, installed by default) or `install-macos.sh --update`; it snapshots the SQLite database first and rolls back code and database if the new version fails. After a healthy update, `updateRolloutService.js` updates paired machines one at a time, waiting for each to come back on the new version and stopping at the first that does not.
 
----
+## 7. Terminals and agents
 
-## 5. AI CLI Agent Launcher
+Each terminal is a `tmux` session `citadel_<project_slug>_<id>`; `node-pty` runs `tmux new-session -A` in the project directory, so closing the browser or restarting the panel does not kill processes and reconnecting reattaches (`terminalManager.js`, `wsTerminal.js`). Without `tmux` it falls back to a direct PTY and says so. `agentRegistry.js` detects AI CLI tools on safe paths and `PATH`; each argument is individually quoted before it is written to the PTY, so browser-supplied arguments cannot inject commands. `agentInstallService.js` installs missing agents once, for every user, into `CITADEL_AGENTS_DIR`.
 
-The agent registry defines standardized specifications for tools such as:
-- **Claude Code** (`claude`)
-- **Codex CLI** (`codex`)
-- **OpenCode** (`opencode`)
-- **Custom Agent** (configured by the administrator)
+## 8. Reachability
 
-Each agent is detected by inspecting safe paths and `PATH`. It runs in a dedicated terminal inside the selected project's directory, leveraging the server's Linux user configuration and credentials without exposing secrets to the browser.
+`connectService.js` works out the panel's address (configured URL, Cloudflare or Tailscale, LAN, public IP) and its QR codes, for the panel, `citadel url|qr` and the installers. Public access is opt-in: a Cloudflare Quick Tunnel (`tunnelService.js` plus `citadel-tunnel.service` or the launchd job), a named tunnel on your own domain (`cloudflareTunnelService.js`) or a private tailnet HTTPS address (`tailscaleService.js`, `tailscale serve`, never funnel). Details in [remote-access.md](remote-access.md).
 
-The binary and each argument are individually quoted (`shellQuote`) before being written to the PTY, so extra arguments supplied by the browser cannot inject additional commands.
+## 9. Data
 
----
+SQLite in WAL mode at `DATA_DIR/citadel.db`; fresh databases get the `CREATE TABLE IF NOT EXISTS` schema, existing ones are upgraded by ordered, idempotent migrations recorded in `schema_migrations` (both in `server/database/db.js`).
 
-## 6. Real Isolation and Limitations
+| Group | Tables |
+| --- | --- |
+| Identity and access | `users`, `sessions`, `login_ips`, `audit_logs` |
+| Projects and terminals | `projects`, `project_repos`, `term_sessions`, `deployments` |
+| Credentials | `git_credentials`, `secrets`, `secret_tombstones` |
+| Machines | `fleet_hosts` (paired and fleet hosts), `peer_tokens`, `pairing_invites`, `host_checks` |
+| Task mesh | `tasks`, `nodes` |
+| Observability | `events`, `metric_samples` |
+| Platform | `app_config` (key/value), `plugins`, `schema_migrations` |
 
-Citadel provides **logical separation** between projects: each project has its own directory, its own terminal sessions and its own deployment record. However, its real isolation scope is worth understanding:
+Beside the database, `DATA_DIR` holds `secret.key` (AES-256-GCM key, mode 0600, or `CITADEL_SECRET_KEY`), `tunnel-url`, `connect-qr`, `update-status.json`, `update-channel`, `permissions.json` (macOS) and backups under `backups/`. Services read settings through `server/config.js`; `.env.example` documents every variable.
 
-- **A single Linux user**: all projects, terminals and agents run under the same system user (the `citadel.service` user, or whichever user runs the server). **There is no OS-level isolation** (no containers, `chroot`, namespaces or distinct UIDs) between projects. A project can, in principle, read or modify the files of another project that this user can access.
-- **A terminal is equivalent to a shell for the service user**: obtaining a terminal in the panel is equivalent to obtaining an interactive shell with the privileges of the account running Citadel. By default that account **is not root** and the service grants no elevated privileges; running the server as `root` would result in a `root` terminal.
-- **Privileged System Terminal** (opt-in: `--admin-terminal[=user]`, skipped by default and with `--no-admin-terminal`): the non-project *System Terminal* is launched as a chosen OS user via a scoped `sudoers` rule, and the systemd sandbox is relaxed (`NoNewPrivileges=false`, `ProtectSystem=false`, `ProtectHome=false`). This intentionally makes the panel **root-equivalent**; the installer validates that the user exists and refuses invalid names.
-- **In-panel updater** (opt-in: `--enable-updater`, disabled by default and with `--no-updater`): installs a root-owned helper at `/usr/local/sbin/citadel-update` and a sudoers rule allowing the service user to run *only* that helper as root. Before executing it the server verifies the helper is a regular, root-owned file that is not group/other-writable. The privilege granted is narrow (no arbitrary commands), and the helper only pulls the configured branch.
-- **Network exposure**: the server binds `127.0.0.1` and trusts forwarded headers only from the local loopback proxy (`CITADEL_TRUST_PROXY`, default `loopback`). LAN binding (`--lan`/`--host`) and the Cloudflare tunnel (`--tunnel`) are explicit opt-ins, so a fresh install is never published before the administrator account exists.
-- **Worker credentials**: task-mesh sentinels authenticate with scoped credentials (claim/result/heartbeat) instead of a full panel session. `CITADEL_NODE_TOKENS` binds each token to one node id, so a credential cannot act as a different node; the legacy shared `CITADEL_NODE_TOKEN` is accepted only when every node is inside the same trust perimeter and is ignored as soon as per-node tokens are configured — including a configuration whose entries all failed to parse (fail closed: worker node-token auth is disabled, the shared token is never used as a silent fallback). `/api/tasks/claim` mints a per-claim token, and a result is accepted only while the attempt still holds a valid, non-expired lease and presents that token (both checked atomically), so stale attempts can neither overwrite a newer attempt nor finish after expiry; a running row with a missing/null lease has no authority and is rejected (`task_result_rejected_no_lease`) and recovered by the same reclaim path. The heartbeat witness list renews only the attempts a node reports as running, so a dead process loses its lease at expiry instead of being renewed forever; entries without a claim token are accepted for legacy clients with the documented weaker guarantee (id/node/status only) and warned once (`node_heartbeat_unbound`).
-- **Tracked executions and reconciliation (protocol 2)**: a sentinel that claims with `protocol: 2` records every spawn in a durable local journal (execId, pid, pgid, start token, claim token) before and after `spawn()`, runs the child detached so its descendants share a process group, and reports that identity in the heartbeat. The server persists `worker_protocol`, `exec_id`, `exec_pid`, `exec_pgid`, timestamps and `reconcile_state`. An expired lease with execution evidence is never requeued on the assumption that the process died: the task becomes `uncertain` and only the owning node can resolve it through `POST /api/tasks/:id/reconcile` with the attempt's claim token and execId. `alive` re-authorizes and renews the same execution, `terminated` finalizes or requeues it (only when the process is provably gone), and `unknown` keeps it blocked. Cancellation escalates SIGTERM → bounded grace → SIGKILL → bounded confirmation, reaches the group, is idempotent, and is only reported as `cancelled` after confirmation. On startup the sentinel reconciles its journal before polling: it re-adopts live executions, reports provably dead ones, and declares unverifiable ones `unknown` rather than spawning a duplicate. One sentinel per node/state directory is enforced with a lock; the journal and lock live in a `0700` directory with `0600` files because the journal contains claim tokens.
-- **Process-attribution limits**: Linux gives the strongest evidence (`/proc` start time and the inherited `CITADEL_EXEC_ID` environment marker, which finds descendants after a leader exits). macOS verifies PID/start token and the process group but cannot scan environment markers, so surviving descendants that outlive their leader stay `unknown`; Windows is not a supported sentinel platform (no negative-PID signalling). The legacy shared token does not provide per-node cryptographic identity, and protocol-1 clients keep the old expiry/requeue semantics. A node that never returns leaves its tracked attempt `uncertain` for an operator.
-- **Git credential helper**: the installer registers a system git credential helper (`/usr/local/bin/citadel-git-credential`) that resolves the host to a provider and decrypts the stored token on demand, so project terminals can `git push` without storing tokens in clear text. Only the service user that owns `DATA_DIR` (and thus `secret.key`) can decrypt them.
-- **Schema migrations**: the SQLite layer keeps `CREATE TABLE IF NOT EXISTS` for fresh installs and applies ordered, idempotent migrations recorded in `schema_migrations` so existing databases gain new columns/tables on upgrade.
-- **Path validation**: an ad-hoc terminal directory sent by the client and the recursive deletion of project files are validated against the managed tree (`PROJECTS_DIR`). The *import* project operation deliberately allows registering any host directory chosen by the administrator (it is an intentional feature, not a vulnerability, and it requires authentication).
-- **WebSocket origin validation**: connections without an `Origin` header (non-browser clients, scripts) are accepted, but in all cases a valid authenticated session via cookie or token is required.
-- **Optional integrations**: Caddy and Docker are only queried when available locally. The Caddy admin API must keep listening on `127.0.0.1:2019` and never be exposed publicly; Docker is accessed only through the local, read-only Unix socket for inspection.
-- **No absolute security guarantee**: Citadel reduces the exposure surface through `HttpOnly`/`SameSite=Strict` cookies, origin validation, rate limiting, security headers and structured process execution, but it does not replace a security review specific to each deployment.
+## 10. Where the details are
 
----
-
-## 7. Local Diagnostics and Recovery CLI
-
-The operator CLI (`scripts/citadel` → `scripts/doctor.js`) is a separate, local
-entry point into the same installation. It does not need the panel, an API
-session, GitHub or Internet access.
-
-- `scripts/diagnostics.js` contains capability-driven, read-only collectors.
-  Every external command is invoked as an argument array (never through a shell)
-  with a bounded timeout. Missing tools, systemd, NetworkManager or Wi-Fi
-  hardware produce `skip`/`warn` findings instead of failures, so the same code
-  runs on a VPS, a desktop and a minimal container.
-- `doctor`/`network` report host, load, memory, disk and inode usage, failed
-  systemd units, interfaces, default routes, DNS configuration/resolution,
-  gateway/HTTPS probes, Wi-Fi state and Citadel prerequisites. Probes are
-  observations: an unreachable external target is reported as "could not
-  confirm", never as proof of the root cause.
-- Recovery is deliberately narrow. `repair` can restart failed units (validated
-  against the observed failed-unit list and `citadel.service`), unblock Wi-Fi
-  with `rfkill`, or activate a saved NetworkManager profile. Each action states
-  its impact, requires confirmation, runs only through the allow-listed
-  command, and is verified afterwards. No action edits Netplan/NetworkManager
-  configuration, invokes an arbitrary shell command or promises rollback.
-- Wi-Fi credentials never enter argv, logs or JSON: new networks use
-  `nmcli --ask` on a TTY, saved profiles use `nmcli connection up id`. In JSON
-  mode prompts are refused and stdout carries exactly one JSON document.
-- Before a disruptive network change while `SSH_CONNECTION` is set, the CLI
-  warns that the session can drop and requires `--confirm-remote` together with
-  `--yes`. The operator keeps console/IPMI access; there is no automatic
-  rollback.
-- The collectors are injectable (`createDeps`), so the test suite uses fake
-  command output and never touches the host network, firewall or SSH session.
+| Topic | Guide |
+| --- | --- |
+| Install, update, flags, pairing, observability endpoints | [installation.md](installation.md) |
+| Tunnels, QR, own domain, Tailscale | [remote-access.md](remote-access.md) |
+| Task queue, sentinel, MCP, reconciliation | [task-mesh.md](task-mesh.md) |
+| Isolation, limitations, privileged modes | [security.md](security.md) |
+| `doctor`, `repair`, maintenance | [operations.md](operations.md) |
+| What changed and how it was verified | [engineering-execution-state.md](engineering-execution-state.md) |

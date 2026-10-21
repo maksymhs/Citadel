@@ -194,7 +194,7 @@ When set, triggering an update also asks every peer to update itself. The peer e
 
 ## Distributed task mesh
 
-Parallel work across paired nodes. See [docs/task-mesh.md](docs/task-mesh.md).
+Parallel work across paired nodes. See [docs/task-mesh.md](task-mesh.md).
 
 ## Observability (logs & metrics)
 
@@ -220,7 +220,7 @@ The **Files** view browses the host filesystem: navigate directories, read and e
 
 ## Remote access, pairing and tunnels
 
-Scan a QR from your phone, pair several Citadel machines and expose the panel globally (Cloudflare Quick Tunnel, or a stable URL on your own domain from **Settings → Tunnel**). Quick start: `citadel qr` (or `citadel qr --url` on small terminals), `citadel tunnel`, `citadel tunnel --domain=HOST --token=TOKEN`. Full details: [docs/remote-access.md](docs/remote-access.md).
+Scan a QR from your phone, pair several Citadel machines and expose the panel globally (Cloudflare Quick Tunnel, or a stable URL on your own domain from **Settings → Tunnel**). Quick start: `citadel qr` (or `citadel qr --url` on small terminals), `citadel tunnel`, `citadel tunnel --domain=HOST --token=TOKEN`. Full details: [docs/remote-access.md](remote-access.md).
 
 **Mesh pairing (always on).** Machines that are already paired introduce each other, so every machine ends up paired with every other one (single-use invitations, one token per direction, no credential vault merge), with no setting to turn on. Once paired, the machine selector under the logo opens any machine's terminals, logs and processes. *Unpair* removes a machine from both sides.
 

@@ -6,6 +6,18 @@ Guide for AI coding agents (and humans) working on Citadel. Read this first, the
 
 Citadel is a self-hosted web panel to manage projects, persistent terminals (tmux) and AI CLI agents on a VPS, Mac or laptop. Node.js + Fastify 5 + SQLite (`better-sqlite3`, WAL) on the backend, a framework-free SPA in `public/`, bash installers in `install.sh` and `scripts/`. Users, features and install flags are described in [README.md](README.md).
 
+## How to find things (read in this order, stop when you have enough)
+
+1. This file (already loaded).
+2. [docs/features.md](docs/features.md): task phrased as a feature ("the Machines screen", "pairing") gives you the exact files, tests and guide.
+3. [docs/code-map.md](docs/code-map.md): every source file with a one-line purpose and the screens in `public/js/app.js`.
+4. [docs/architecture.md](docs/architecture.md) only when you need to understand how pieces interact (request flow, pairing, updates, data).
+5. The source files themselves. `public/js/app.js` is about 5.7k lines: `grep -n "function renderXView" public/js/app.js` and read a slice, never the whole file.
+
+**Do not read whole:** `docs/history/ledger-0001-0097.md` (about 25k tokens; `grep` it for a topic) and `docs/engineering-execution-state.md` (recent ledger; `tail -40` is enough). Add a ledger entry with `cat >> docs/engineering-execution-state.md <<'EOF'`, which needs no read.
+
+**Code graph (optional, saves tokens).** If `graphify-out/GRAPH_REPORT.md` exists, read it before searching broadly: it summarises the main modules and how they connect, and `graphify-out/graph.json` can be queried for callers and dependencies. It is a navigation aid built from the code at the time it ran, so confirm against the source before editing and rebuild it if it looks stale. Build or refresh it with `npm run graph` (needs [Graphify](https://github.com/safishamsi/graphify), a Python dev tool: `uv tool install graphifyy`; never needed on a production host). It is code-only and offline, output is git-ignored, and it is not run by `npm install` or the installer. Whether it is worth keeping is being measured: see [docs/graphify-benchmark.md](docs/graphify-benchmark.md).
+
 ## Map of the repo
 
 | Path | What lives there |
@@ -24,12 +36,6 @@ Citadel is a self-hosted web panel to manage projects, persistent terminals (tmu
 | `tests/*.test.js` | `node:test` suites, one per area |
 | `docs/` | Human documentation. See "Where to update docs" |
 | `data/` | Runtime data (SQLite, secret key). **Git-ignored, never commit, never read secrets from it** |
-
-[docs/code-map.md](docs/code-map.md) lists every source file with a one-line purpose and indexes the screens in `public/js/app.js` (5.7k lines: grep for a function instead of reading it whole). It is generated from each file's header comment, so keep those accurate and run `node scripts/code-map.js` after adding or moving files.
-
-**Code graph (optional, saves tokens).** If `graphify-out/GRAPH_REPORT.md` exists, read it before searching broadly: it summarises the main modules and how they connect, and `graphify-out/graph.json` can be queried for callers and dependencies. It is a navigation aid built from the code at the time it ran, so confirm against the source before editing and rebuild it if it looks stale. Build or refresh it with `npm run graph` (needs [Graphify](https://github.com/safishamsi/graphify), a Python dev tool: `uv tool install graphifyy`; never needed on a production host). It is code-only and offline, output is git-ignored, and it is not run by `npm install` or the installer.
-
-Find the code for a feature by name: route in `server/routes/<name>Routes.js`, logic in `server/services/<name>Service.js`, test in `tests/<name>.test.js`, UI in `public/js/`.
 
 ## Commands
 
@@ -86,11 +92,12 @@ Update docs in the same change as the code. Use the table to find the right file
 | Security layers or limitations | `docs/security.md` |
 | Pairing, QR, Cloudflare/Tailscale access | `docs/remote-access.md` |
 | Task queue, sentinel, MCP | `docs/task-mesh.md` |
-| Structure or data flow | `docs/architecture.md` |
+| Structure, data flow, how machines pair/update/monitor | `docs/architecture.md` |
+| A feature gains or loses a file, or a new feature appears | its row in `docs/features.md` (hand-maintained) |
 | New, moved or re-purposed source file | its header comment, then `node scripts/code-map.js` (never edit `docs/code-map.md` by hand) |
 | A decision with trade-offs (new dependency, storage, auth model) | new `ADR-NNN` entry in `docs/decisions.md` |
 | Config values | `.env.example` |
-| Any behaviour change worth a ledger line | new numbered entry at the end of `docs/engineering-execution-state.md` (what changed, how it was verified, known gaps) |
+| Any behaviour change worth a ledger line | append a numbered entry with `cat >>` to `docs/engineering-execution-state.md` (what changed, how it was verified, known gaps); do not read the file whole |
 
 `CHANGELOG.md` is generated: never edit it by hand, run `node scripts/changelog.js`. It reads Conventional Commit subjects, so a clear subject is your changelog entry.
 

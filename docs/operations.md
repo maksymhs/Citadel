@@ -79,3 +79,37 @@ sudo /usr/local/sbin/citadel-update --check   # verify the updater without chang
 ./scripts/uninstall.sh --dry-run
 ```
 
+
+## Design notes: the local CLI
+
+Moved from the architecture guide.
+
+The operator CLI (`scripts/citadel` → `scripts/doctor.js`) is a separate, local
+entry point into the same installation. It does not need the panel, an API
+session, GitHub or Internet access.
+
+- `scripts/diagnostics.js` contains capability-driven, read-only collectors.
+  Every external command is invoked as an argument array (never through a shell)
+  with a bounded timeout. Missing tools, systemd, NetworkManager or Wi-Fi
+  hardware produce `skip`/`warn` findings instead of failures, so the same code
+  runs on a VPS, a desktop and a minimal container.
+- `doctor`/`network` report host, load, memory, disk and inode usage, failed
+  systemd units, interfaces, default routes, DNS configuration/resolution,
+  gateway/HTTPS probes, Wi-Fi state and Citadel prerequisites. Probes are
+  observations: an unreachable external target is reported as "could not
+  confirm", never as proof of the root cause.
+- Recovery is deliberately narrow. `repair` can restart failed units (validated
+  against the observed failed-unit list and `citadel.service`), unblock Wi-Fi
+  with `rfkill`, or activate a saved NetworkManager profile. Each action states
+  its impact, requires confirmation, runs only through the allow-listed
+  command, and is verified afterwards. No action edits Netplan/NetworkManager
+  configuration, invokes an arbitrary shell command or promises rollback.
+- Wi-Fi credentials never enter argv, logs or JSON: new networks use
+  `nmcli --ask` on a TTY, saved profiles use `nmcli connection up id`. In JSON
+  mode prompts are refused and stdout carries exactly one JSON document.
+- Before a disruptive network change while `SSH_CONNECTION` is set, the CLI
+  warns that the session can drop and requires `--confirm-remote` together with
+  `--yes`. The operator keeps console/IPMI access; there is no automatic
+  rollback.
+- The collectors are injectable (`createDeps`), so the test suite uses fake
+  command output and never touches the host network, firewall or SSH session.
