@@ -199,3 +199,27 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   run on a real Mac by the author of this entry; Graphify was never run for real.
 - Version bumped to `0.42.0`; asset cache-buster token moved to `v0420` (the rc builds
   still served `v0410`, so browsers could keep stale scripts).
+
+## 108. app.js split and UI smoke test
+- `public/js/app.js` went from 5.7k to 3.9k lines. Six self-contained screens moved to
+  their own scripts, following the `monitor.js` pattern (`window.CitadelX`, helpers
+  passed once through `init(ctx)`): `files.js`, `pairing.js`, `fleet.js`, `activity.js`,
+  `repos.js`, `deployments.js` (proxy and Docker). `app.js` keeps one-line wrappers for
+  the functions it still calls and wires every module right before the page-load hook.
+  Each module checks at start-up that it received every dependency it uses
+  (`REQUIRED`), so a missing one fails loudly at load instead of on one rarely used branch.
+- Method: ESLint `no-undef` after each cut listed the variables the moved code still
+  needed from `app.js`; none of them were reassignable (`let`) variables.
+- `tests/ui-smoke.test.js` (new, devDependency `jsdom`) starts a real server in a
+  temp directory, signs in and loads the SPA in jsdom: every script registers, the
+  shell renders, Files / Settings / Projects / Dashboard open, and the extracted
+  screens and the pairing modal render through their entry points, with no script errors.
+  Breaking a dependency on purpose makes it fail with the module's message.
+- Known gaps: jsdom has no canvas or real WebSocket, so terminals and QR drawing are
+  not covered; buttons inside the moved screens were not clicked, only rendered; not
+  checked in a real browser or on a phone.
+- Incident: while building the smoke test an experimental server was started with the
+  shell's `DATABASE_PATH` still pointing at the live database. It ran for about eight
+  seconds and left one `server_started` event and one `plugin_initialized` audit row
+  (v0.42.0) in the live `events` and `audit_logs`; no other data changed (no rollout, no
+  session or user changes). AGENTS.md now says to override all four data paths.

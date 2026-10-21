@@ -37,7 +37,7 @@ Browser (SPA in public/)  ──HTTP + WebSocket──►  Fastify (server/index
 
 - **Routes** are thin: validate input, check the session (`requireAuth`; admin checks for mutations), call a service, audit sensitive actions.
 - **Services** hold the logic and talk to the OS and the database. They are the unit tests target.
-- **Frontend** is framework-free: `public/js/app.js` is the shell (state, API helper, navigation, most screens); `monitor.js`, `disk-cleanup.js`, `settings-*.js` are feature scripts that get a context object from the shell.
+- **Frontend** is framework-free. `public/js/app.js` is the shell (state, API helper, navigation, dashboard, projects, terminals, Settings); each other screen is its own script that registers `window.CitadelX` and receives the shell's helpers once through `init(ctx)`: `monitor.js` (Machines), `files.js`, `disk-cleanup.js`, `fleet.js`, `activity.js`, `repos.js`, `deployments.js` (proxy and Docker), `pairing.js`, `settings-tunnel.js`, `settings-tailscale.js`. A new screen should follow that pattern instead of growing `app.js`; `tests/ui-smoke.test.js` loads the whole SPA in jsdom to catch a missing dependency.
 - **Modules** (`server/modules/registry.js`) describe built-in capabilities and whether they are available and enabled. **Plugins** (`plugins/*/plugin.json`) are third-party style extensions loaded in isolation by `pluginLoader.js`.
 
 ## 3. Request flow and machine switching

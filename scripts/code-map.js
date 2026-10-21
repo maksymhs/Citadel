@@ -49,12 +49,15 @@ function summary(file) {
 }
 
 function screens() {
-  const src = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8').split('\n');
+  const dir = path.join(ROOT, 'public/js');
   const rows = [];
-  src.forEach((l, i) => {
-    const m = l.match(/^ {2}(?:async )?function (render\w*View)\(/);
-    if (m) rows.push(`| \`${m[1]}\` | \`public/js/app.js:${i + 1}\` |`);
-  });
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.js')).sort()) {
+    fs.readFileSync(path.join(dir, file), 'utf8').split('\n').forEach((l, i) => {
+      const m = l.match(/^ {2}(?:async )?function (render\w*View|show\w*Modal)\(/);
+      // Skip the one-line wrappers app.js keeps for functions that moved to their own file.
+      if (m && !/return window\./.test(l)) rows.push(`| \`${m[1]}\` | \`public/js/${file}:${i + 1}\` |`);
+    });
+  }
   return rows;
 }
 
@@ -68,7 +71,7 @@ for (const [title, dir, re] of GROUPS) {
   for (const f of files) md += `| \`${dir}/${f}\` | ${summary(path.join(abs, f))} |\n`;
 }
 md += '\n## Tests\n\nOne suite per area in `tests/<area>.test.js` (`node:test`, each with its own throwaway database under `data/`). Match the name of the route, service or script you changed: `monitor.test.js` for `monitorService.js`, `pairing.test.js` for `pairingService.js`, and so on.\n';
-md += '\n## Screens in `public/js/app.js`\n\nThe shell is one large file; jump to a screen by function name (`grep -n "function renderXView" public/js/app.js`). Line numbers are as of the last regeneration.\n\n| Screen function | Location |\n| --- | --- |\n';
+md += '\n## Screens and modals\n\nEach screen is a `render…View` function in `public/js/`; `app.js` is the shell and still holds several, so find one with `grep -n "function renderXView" public/js/*.js` and read a slice, not the file. Line numbers are as of the last regeneration.\n\n| Function | Location |\n| --- | --- |\n';
 md += `${screens().join('\n')}\n`;
 fs.writeFileSync(path.join(ROOT, 'docs/code-map.md'), md);
 console.log('docs/code-map.md updated.');

@@ -46,6 +46,7 @@
     "wunderbaum": "^0.14.1"
   },
   "devDependencies": {
-    "eslint": "^9.39.5"
+    "eslint": "^9.39.5",
+    "jsdom": "^30.1.3"
   }
 }

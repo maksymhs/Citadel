@@ -12,7 +12,7 @@ Citadel is a self-hosted web panel to manage projects, persistent terminals (tmu
 2. [docs/features.md](docs/features.md): task phrased as a feature ("the Machines screen", "pairing") gives you the exact files, tests and guide.
 3. [docs/code-map.md](docs/code-map.md): every source file with a one-line purpose and the screens in `public/js/app.js`.
 4. [docs/architecture.md](docs/architecture.md) only when you need to understand how pieces interact (request flow, pairing, updates, data).
-5. The source files themselves. `public/js/app.js` is about 5.7k lines: `grep -n "function renderXView" public/js/app.js` and read a slice, never the whole file.
+5. The source files themselves. `public/js/app.js` (the shell, about 3.9k lines) still holds the terminals, dashboard, projects and Settings: `grep -n "function renderXView" public/js/app.js` and read a slice, never the whole file.
 
 **Do not read whole:** `docs/history/ledger-0001-0097.md` (about 25k tokens; `grep` it for a topic) and `docs/engineering-execution-state.md` (recent ledger; `tail -40` is enough). Add a ledger entry with `cat >> docs/engineering-execution-state.md <<'EOF'`, which needs no read.
 
@@ -61,7 +61,7 @@ Run the suite for the area you touched, then `npm test` and `npm run lint` befor
 
 **Database change.** Add the table/column to the schema **and** append an idempotent migration in `server/database/db.js` (existing installs upgrade through migrations, fresh ones get the schema). Never edit or reorder an applied migration. Cover it in `tests/db-upgrade.test.js`.
 
-**UI change.** Plain JS and CSS, no framework, no build step, no CDNs (everything is served locally). When you change a file under `public/js` or `public/css`, the `?v=` cache-buster in `public/index.html` must move on release (see below).
+**UI change.** Plain JS and CSS, no framework, no build step, no CDNs (everything is served locally). New screens go in their own `public/js/<name>.js` (copy the pattern in `fleet.js`: `init(ctx)` with a `REQUIRED` list, `window.CitadelX = {...}`, a `<script>` tag before `app.js` in `public/index.html`), not into `app.js`. After touching the frontend run `tests/ui-smoke.test.js` (needs the devDependency `jsdom`: `npm install --include=dev` when `NODE_ENV=production`). When you change a file under `public/js` or `public/css`, the `?v=` cache-buster in `public/index.html` must move on release (see below).
 
 **Built-in module.** Register it in `server/modules/registry.js`. Third-party extensions go through `plugins/` and `plugin.json`, isolated so a plugin can never crash the core.
 
@@ -73,6 +73,7 @@ Run the suite for the area you touched, then `npm test` and `npm run lint` befor
 - Never build shell commands by interpolating user input. Use structured arguments (`execFile`/`spawn` with an array) and validate paths against the managed tree with `realpath` (see ADR-005).
 - Secrets are encrypted at rest and must never reach logs, audit entries, JSON responses or error messages. Redact before storing.
 - Never commit `.env`, `data/`, keys, tokens or databases. Do not print secrets back into the conversation.
+- On a live host your shell may already export `DATA_DIR`, `DATABASE_PATH`, `PROJECTS_DIR` and `LOGS_DIR` pointing at the real install. Anything that starts `server/index.js` (or a script that opens the database) must override **all four** with a temp directory, or it runs against production data. `tests/` and `tests/ui-smoke.test.js` do; ad-hoc experiments must too. Check with `env | grep -E 'DATA|DATABASE|PROJECTS|LOGS'`.
 - Do not run installers, uninstallers, `systemctl`, the updater or anything destructive on the host you are working on without being asked; this machine may be a live Citadel.
 - Honesty over green checkmarks: say what was run and what was not (for example "not tested on a real Mac"). The progress ledger does this and you should too.
 
