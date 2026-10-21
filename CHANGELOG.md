@@ -2,6 +2,10 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.42.2](https://github.com/maksymhs/Citadel/releases/tag/v0.42.2) · 2026-10-21
+
+_Maintenance release._
+
 ## [0.42.1](https://github.com/maksymhs/Citadel/releases/tag/v0.42.1) · 2026-10-21
 
 ### Fixed

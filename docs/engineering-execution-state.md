@@ -276,3 +276,18 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   0.42.0 has not been run on a real Mac.
 - Version bumped to `0.42.1`; asset cache-buster token moved to `v0421` (new scripts
   were added, so browsers must not reuse cached copies of `app.js`).
+
+## 113. Release v0.42.2
+- Documentation-only maintenance release: no code changed since v0.42.1; the version and
+  the asset cache-buster (`v0422`) moved by convention. Merged feature branches were
+  deleted from the repository.
+- Open items carried over, none verified yet: (1) the moved screens (Files, Pairing,
+  Fleet, Activity, Repositories, Proxy/Docker) have only been rendered in jsdom, not
+  clicked through in a real browser; (2) with xterm.js attached, tmux terminal-capability
+  replies can land on the shell prompt as stray text such as `1;2c0;276;0c`, which looks
+  like a product quirk to investigate; (3) Graphify is still unmeasured (protocol in
+  `docs/graphify-benchmark.md`); (4) the macOS Full Disk Access flow has not run on a
+  real Mac; (5) no GitHub Release object exists for any tag because `gh` is not
+  authenticated on this host.
+- Verification: lint clean; the suite last ran as 486 tests, 485 pass, 0 fail, 1 skipped
+  (v0.42.1). Only this file, version fields and the cache-buster changed afterwards.

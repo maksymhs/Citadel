@@ -185,10 +185,10 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 
 | Latest | |
 | --- | --- |
-| **[v0.42.1](https://github.com/maksymhs/Citadel/releases/tag/v0.42.1)** | Maintenance: the web app code split into per-screen scripts with a browser-level smoke test, tests that no longer depend on the host, architecture and feature guides rewritten |
+| **[v0.42.2](https://github.com/maksymhs/Citadel/releases/tag/v0.42.2)** | Documentation maintenance: open items and known gaps recorded |
+| [v0.42.1](https://github.com/maksymhs/Citadel/releases/tag/v0.42.1) | Maintenance: the web app code split into per-screen scripts with a browser-level smoke test, tests that no longer depend on the host, architecture and feature guides rewritten |
 | [v0.42.0](https://github.com/maksymhs/Citadel/releases/tag/v0.42.0) | Redesigned machine overview and selector, real RAM and temperature on macOS, one-time Full Disk Access setup (`citadel permissions`), new README and guides, `AGENTS.md` for contributors and AI agents |
 | [v0.41.0](https://github.com/maksymhs/Citadel/releases/tag/v0.41.0) | Setup code, security alerts, Tailscale wizard, WSL support, macOS menu bar icon, disk usage analysis and quick cleanup, `citadel reset-password`, Kilo Code and Qwen Code agents |
-| [v0.40.0](https://github.com/maksymhs/Citadel/releases/tag/v0.40.0) | Light/dark theme, command palette, mobile terminal keys, redesigned dashboard and Settings, tools detection, custom machine names |
 
 ➡️ **[Full changelog](CHANGELOG.md)** · [All releases on GitHub](https://github.com/maksymhs/Citadel/releases)
 
