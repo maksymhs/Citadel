@@ -223,6 +223,40 @@ describe('Disk usage and cleanup', () => {
     assert.ok(fs.existsSync(path.join(npm, 'entry')), 'unselected categories stay untouched');
   });
 
+  test('cleanup can be narrowed to chosen items and ignores foreign paths', async () => {
+    const cache = path.join(home, '.cache');
+    fs.mkdirSync(path.join(cache, 'drop'), { recursive: true });
+    fs.mkdirSync(path.join(cache, 'keep'), { recursive: true });
+    fs.writeFileSync(path.join(cache, 'drop', 'a'), Buffer.alloc(8 * 1024, 3));
+    fs.writeFileSync(path.join(cache, 'keep', 'b'), Buffer.alloc(8 * 1024, 4));
+    const outside = path.join(tree, 'outside.txt');
+    fs.writeFileSync(outside, 'not part of any category');
+
+    let res = await app.inject({ method: 'GET', url: '/api/files/cleanup', cookies: { session_id: authCookie } });
+    const cand = JSON.parse(res.payload).candidates.find((c) => c.id === 'user-cache');
+    assert.ok(cand.group && cand.access && Array.isArray(cand.items));
+    assert.ok(cand.items.some((i) => i.path === path.join(cache, 'drop')));
+
+    res = await app.inject({
+      method: 'POST',
+      url: '/api/files/cleanup',
+      cookies: { session_id: authCookie },
+      payload: { ids: ['user-cache'], items: { 'user-cache': [path.join(cache, 'drop'), outside] } },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.ok(!fs.existsSync(path.join(cache, 'drop')));
+    assert.ok(fs.existsSync(path.join(cache, 'keep', 'b')), 'unselected items stay');
+    assert.ok(fs.existsSync(outside), 'paths outside the category are ignored');
+
+    res = await app.inject({
+      method: 'POST',
+      url: '/api/files/cleanup',
+      cookies: { session_id: authCookie },
+      payload: { ids: ['user-cache'], items: { trash: ['/x'] } },
+    });
+    assert.equal(res.statusCode, 400, 'items for a category that was not selected are rejected');
+  });
+
   test('cleanup ignores ids that are not known categories', async () => {
     const victim = path.join(tree, 'victim.txt');
     fs.writeFileSync(victim, 'important');

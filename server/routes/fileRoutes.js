@@ -81,16 +81,27 @@ async function fileRoutes(fastify) {
   // which paths they cover, so this can never delete an arbitrary path.
   fastify.post('/api/files/cleanup', async (request, reply) => {
     try {
-      const { ids } = request.body || {};
+      const { ids, items } = request.body || {};
       if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200 || ids.some((id) => typeof id !== 'string')) {
         return reply.status(400).send({ error: 'Select at least one category to clean.' });
       }
-      const result = await exclusiveScan(() => fileService.cleanupRun(ids));
+      // Optional per-category narrowing: { [id]: [path, ...] }. The agent only
+      // honours paths that are already entries of that category.
+      const narrowed = {};
+      if (items && typeof items === 'object' && !Array.isArray(items)) {
+        for (const [id, paths] of Object.entries(items)) {
+          if (!ids.includes(id) || !Array.isArray(paths) || paths.length > 1000 || paths.some((p) => typeof p !== 'string')) {
+            return reply.status(400).send({ error: 'Invalid item selection.' });
+          }
+          narrowed[id] = paths;
+        }
+      }
+      const result = await exclusiveScan(() => fileService.cleanupRun(ids, narrowed));
       auditService.logAction({
         userId: request.user.id,
         action: 'disk_cleanup',
         targetType: 'disk',
-        details: { ids, freed: result.freed },
+        details: { ids, narrowed: Object.keys(narrowed), freed: result.freed },
         ip: request.ip,
       });
       return result;

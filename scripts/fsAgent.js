@@ -389,48 +389,144 @@ async function childrenOf(dir, filter) {
 
 /**
  * Cleanup candidates. Everything is derived here from fixed locations (plus the
- * trusted projects dir), so the client only ever sends ids, never paths.
+ * trusted projects dir), so the client only ever sends category ids and, to
+ * narrow a category, paths that must already be among its entries.
+ *
+ * kind 'fs'  : `entries` are removed with rm -rf (or `sudo -n rm` when the user
+ *              cannot write them and the panel runs in privileged mode).
+ * kind 'cmd' : a vendor command does the cleaning (journalctl, docker).
  */
-async function cleanupCandidates(projectsDir) {
+const ARCHIVE_RE = /\.(tar\.(gz|xz|bz2|zst)|tgz|txz|zip|7z|rar|iso|img|deb|rpm|appimage|run|pkg|dmg|msi|exe)$/i;
+const ARCHIVE_MIN_BYTES = 20 * 1024 * 1024;
+const PY_CACHE_NAMES = new Set(['__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox', '.nox']);
+const BUILD_CACHE_NAMES = new Set(['.next', '.nuxt', '.turbo', '.parcel-cache', '.svelte-kit', '.angular', '.dart_tool', '.gradle']);
+const SYSTEM_GROUP = 'System';
+
+function formatDecimalBytes(text) {
+  const m = /([\d.]+)\s*([kMGT]?B)/i.exec(String(text || ''));
+  if (!m) return 0;
+  const mult = { B: 1, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 }[m[2].toUpperCase()] || 1;
+  return Math.round(parseFloat(m[1]) * mult);
+}
+
+function runCommand(bin, args, { timeoutMs = 120000 } = {}) {
+  return new Promise((resolve) => {
+    let out = '';
+    let child;
+    try { child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] }); } catch { resolve({ code: -1, out: '' }); return; }
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('error', () => { clearTimeout(timer); resolve({ code: -1, out }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out }); });
+  });
+}
+
+let sudoChecked = null;
+async function sudoAvailable(privileged) {
+  if (!privileged) return false;
+  if (sudoChecked === null) sudoChecked = (await runCommand('sudo', ['-n', 'true'], { timeoutMs: 5000 })).code === 0;
+  return sudoChecked;
+}
+
+// Walk the projects dir once and bucket the regenerable directories and the
+// big installers/archives. Matched directories are never descended into.
+async function scanProjects(projectsDir, deadline) {
+  const found = { nodeModules: [], pyCaches: [], buildCaches: [], rustTargets: [], venvs: [], archives: [] };
+  if (!projectsDir) return found;
+  const walk = async (dir, depth) => {
+    if (depth > 4 || Date.now() > deadline) return;
+    let ents;
+    try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    const names = new Set(ents.map((e) => e.name));
+    for (const ent of ents) {
+      const full = path.join(dir, ent.name);
+      if (ent.isFile()) {
+        if (ARCHIVE_RE.test(ent.name) && found.archives.length < 60) {
+          try {
+            const st = await fsp.lstat(full);
+            if (st.size >= ARCHIVE_MIN_BYTES) found.archives.push(full);
+          } catch { /* removed meanwhile */ }
+        }
+        continue;
+      }
+      if (!ent.isDirectory()) continue; // symlinks are never followed
+      if (ent.name === '.git') continue;
+      if (ent.name === 'node_modules') { if (found.nodeModules.length < 100) found.nodeModules.push(full); continue; }
+      if (PY_CACHE_NAMES.has(ent.name)) { found.pyCaches.push(full); continue; }
+      if (BUILD_CACHE_NAMES.has(ent.name)) { found.buildCaches.push(full); continue; }
+      if (ent.name === 'target' && names.has('Cargo.toml')) { found.rustTargets.push(full); continue; }
+      if ((ent.name === '.venv' || ent.name === 'venv') && fs.existsSync(path.join(full, 'pyvenv.cfg'))) { found.venvs.push(full); continue; }
+      await walk(full, depth + 1);
+    }
+  };
+  await walk(path.resolve(projectsDir), 0);
+  return found;
+}
+
+async function existingDirs(list) {
+  const out = [];
+  for (const dir of list) { if (await safeDirRoot(dir)) out.push(dir); }
+  return out;
+}
+
+async function cleanupCandidates(projectsDir, privileged) {
   const home = os.homedir();
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const sudoOk = await sudoAvailable(privileged);
   const list = [];
 
-  const add = async (def, dir, entriesFn) => {
-    const st = await safeDirRoot(dir);
-    if (!st) return;
-    const entries = await entriesFn(dir);
+  const accessFor = async (entries) => {
+    const parents = Array.from(new Set(entries.map((e) => path.dirname(e)))).slice(0, 25);
+    for (const dir of parents) { if (!await canWrite(dir)) return sudoOk ? 'sudo' : 'none'; }
+    return 'direct';
+  };
+  const addFs = async (def, entries) => {
     if (!entries.length) return;
-    list.push({ ...def, root: dir, entries, writable: await canWrite(dir), dev: st.dev });
+    list.push({ kind: 'fs', ...def, entries, access: await accessFor(entries) });
+  };
+  const addDirChildren = async (def, dir, filter) => {
+    if (!await safeDirRoot(dir)) return;
+    await addFs({ ...def, root: dir }, await childrenOf(dir, filter));
   };
 
-  await add({ id: 'user-cache', label: 'User cache', risk: 'safe', description: `Application caches in ${home}/.cache (pip, build tools, thumbnails). Rebuilt on demand.` },
-    path.join(home, '.cache'), (d) => childrenOf(d));
-  await add({ id: 'npm-cache', label: 'npm download cache', risk: 'safe', description: `${home}/.npm/_cacache. Packages are downloaded again when needed.` },
-    path.join(home, '.npm', '_cacache'), (d) => childrenOf(d));
-  await add({ id: 'trash', label: 'Trash', risk: 'safe', description: `Files already deleted from a desktop session (${home}/.local/share/Trash).` },
-    path.join(home, '.local', 'share', 'Trash'), (d) => childrenOf(d));
-  await add({ id: 'apt-cache', label: 'Downloaded package files (apt)', risk: 'safe', description: 'Installer packages in /var/cache/apt/archives that are already installed.' },
-    '/var/cache/apt/archives', (d) => childrenOf(d, (n) => n.endsWith('.deb')));
+  // -- User caches -----------------------------------------------------------
+  const G1 = 'Caches';
+  await addDirChildren({ id: 'user-cache', group: G1, label: 'User cache', risk: 'safe', description: `Application caches in ${home}/.cache (pip, Go builds, browsers, thumbnails). Rebuilt on demand.` }, path.join(home, '.cache'));
+  await addDirChildren({ id: 'npm-cache', group: G1, label: 'npm download cache', risk: 'safe', description: `${home}/.npm/_cacache. Packages are downloaded again when needed.` }, path.join(home, '.npm', '_cacache'));
+  await addDirChildren({ id: 'pm-stores', group: G1, label: 'pnpm / yarn stores', risk: 'safe', description: 'Package manager stores. Re-fetched on the next install.' }, path.join(home, '.local', 'share', 'pnpm'));
+  await addDirChildren({ id: 'trash', group: G1, label: 'Trash', risk: 'safe', description: `Files already deleted from a desktop session (${home}/.local/share/Trash).` }, path.join(home, '.local', 'share', 'Trash'));
+  const langCaches = await existingDirs([
+    path.join(home, '.cargo', 'registry', 'cache'), path.join(home, '.cargo', 'registry', 'src'),
+    path.join(home, 'go', 'pkg', 'mod', 'cache'), path.join(home, '.gradle', 'caches'),
+    path.join(home, '.m2', 'repository'), path.join(home, '.pub-cache'),
+    path.join(home, '.nuget', 'packages'), path.join(home, '.composer', 'cache'),
+    path.join(home, '.bundle', 'cache'), path.join(home, '.cache', 'pip'),
+  ].filter((d) => !d.startsWith(path.join(home, '.cache') + path.sep)));
+  await addFs({ id: 'lang-caches', group: G1, label: 'Language package caches', risk: 'review', description: 'Cargo, Go, Gradle, Maven, Dart/Flutter, NuGet, Composer. Everything is downloaded again by the next build, so offline builds stop working until then.', root: home }, langCaches);
 
-  const oldLogs = async (d) => {
-    const found = [];
-    for (const full of await childrenOf(d)) {
-      let st;
-      try { st = await fsp.lstat(full); } catch { continue; }
-      if (st.isFile() && /(\.gz|\.xz|\.bz2|\.old|\.\d+|-\d{8})$/.test(full)) found.push(full);
-      else if (st.isDirectory()) {
-        for (const inner of await childrenOf(full, (n) => /(\.gz|\.xz|\.bz2|\.old|\.\d+|-\d{8})$/.test(n))) found.push(inner);
-      }
-    }
-    return found;
-  };
-  await add({ id: 'old-logs', label: 'Rotated system logs', risk: 'safe', description: 'Compressed or numbered old logs in /var/log. Current logs are kept.' },
-    '/var/log', oldLogs);
+  // -- Projects --------------------------------------------------------------
+  const G2 = 'Projects';
+  const proj = await scanProjects(projectsDir, Date.now() + 10000);
+  const base = projectsDir ? path.resolve(projectsDir) : '';
+  const appDir = path.resolve(__dirname, '..');
+  const rel = (full) => path.relative(base, path.dirname(full)) || path.basename(base);
+  for (const full of proj.nodeModules.filter((f) => f !== path.join(appDir, 'node_modules'))) {
+    await addFs({ id: `nm:${full}`, group: G2, label: `node_modules — ${rel(full)}`, risk: 'review', description: 'Installed dependencies. Restore with npm install; stop any running app that uses it first.', root: full }, [full]);
+  }
+  await addFs({ id: 'py-caches', group: G2, label: 'Python bytecode & test caches', risk: 'safe', description: '__pycache__, .pytest_cache, .mypy_cache, .ruff_cache, .tox in your projects. Recreated automatically.', root: base }, proj.pyCaches);
+  await addFs({ id: 'build-caches', group: G2, label: 'Framework build caches', risk: 'review', description: '.next, .nuxt, .turbo, .svelte-kit, .parcel-cache, .angular, .dart_tool, .gradle. Rebuilt by the next build or dev run.', root: base }, proj.buildCaches);
+  await addFs({ id: 'rust-targets', group: G2, label: 'Rust build output (target/)', risk: 'review', description: 'Compiled artifacts next to a Cargo.toml. cargo build recreates them, which can take minutes.', root: base }, proj.rustTargets);
+  await addFs({ id: 'venvs', group: G2, label: 'Python virtualenvs', risk: 'review', description: '.venv / venv folders. Recreate with python -m venv and pip install.', root: base }, proj.venvs);
+  await addFs({ id: 'archives', group: G2, label: 'Large installers & archives', risk: 'review', description: `Archives and installers of 20 MB or more (.tar.xz, .zip, .iso, .deb, ...) under your projects. Often leftovers from a download that was already extracted.`, root: base }, proj.archives);
+  const downloads = path.join(home, 'Downloads');
+  await addDirChildren({ id: 'downloads', group: G2, label: 'Downloads folder', risk: 'review', description: `Everything in ${downloads}. Check it before deleting.` }, downloads);
 
+  // -- Temporary files -------------------------------------------------------
   const tmpBudget = Date.now() + 15000;
-  const staleTmp = (dir) => async () => {
+  const staleTmp = async (dir) => {
     const found = [];
+    if (!await safeDirRoot(dir)) return found;
     for (const full of await childrenOf(dir, (n) => !TMP_PROTECTED.test(n))) {
       let st;
       try { st = await fsp.lstat(full); } catch { continue; }
@@ -449,38 +545,58 @@ async function cleanupCandidates(projectsDir) {
     }
     return found;
   };
-  await add({ id: 'tmp-old', label: 'Old temporary files', risk: 'review', description: 'Your files in /tmp and /var/tmp untouched for 7+ days. Check nothing running still needs them.' },
-    '/tmp', staleTmp('/tmp'));
-  const varTmp = list.find((c) => c.id === 'tmp-old');
-  const extra = await safeDirRoot('/var/tmp') ? await staleTmp('/var/tmp')() : [];
-  if (extra.length) {
-    if (varTmp) varTmp.entries.push(...extra);
-    else list.push({ id: 'tmp-old', label: 'Old temporary files', risk: 'review', description: 'Your files in /tmp and /var/tmp untouched for 7+ days. Check nothing running still needs them.', root: '/var/tmp', entries: extra, writable: await canWrite('/var/tmp'), dev: null });
+  await addFs({ id: 'tmp-old', group: G1, label: 'Old temporary files', risk: 'review', description: 'Your files in /tmp and /var/tmp untouched for 7+ days. Check nothing running still needs them.', root: '/tmp' },
+    [...await staleTmp('/tmp'), ...await staleTmp('/var/tmp')]);
+
+  // -- System (root) ---------------------------------------------------------
+  const oldLogs = async (d) => {
+    const found = [];
+    const rotated = /(\.gz|\.xz|\.bz2|\.old|\.\d+|-\d{8})$/;
+    for (const full of await childrenOf(d)) {
+      let st;
+      try { st = await fsp.lstat(full); } catch { continue; }
+      if (st.isFile() && rotated.test(full)) found.push(full);
+      else if (st.isDirectory() && full !== '/var/log/journal') {
+        for (const inner of await childrenOf(full, (n) => rotated.test(n))) found.push(inner);
+      }
+    }
+    return found;
+  };
+  await addFs({ id: 'apt-cache', group: SYSTEM_GROUP, label: 'Downloaded package files (apt)', risk: 'safe', description: 'Installer packages in /var/cache/apt/archives that are already installed.', root: '/var/cache/apt/archives' },
+    await childrenOf('/var/cache/apt/archives', (n) => n.endsWith('.deb')));
+  await addFs({ id: 'apt-lists', group: SYSTEM_GROUP, label: 'Package index (apt lists)', risk: 'review', description: 'Package lists in /var/lib/apt/lists. Recreated by apt update; installs fail until you run it.', root: '/var/lib/apt/lists' },
+    await childrenOf('/var/lib/apt/lists', (n) => n !== 'partial' && n !== 'lock'));
+  await addFs({ id: 'old-logs', group: SYSTEM_GROUP, label: 'Rotated system logs', risk: 'safe', description: 'Compressed or numbered old logs in /var/log. Current logs are kept.', root: '/var/log' }, await oldLogs('/var/log'));
+  await addFs({ id: 'crash-dumps', group: SYSTEM_GROUP, label: 'Crash reports & core dumps', risk: 'safe', description: '/var/crash and systemd coredumps.', root: '/var/crash' },
+    [...await childrenOf('/var/crash'), ...await childrenOf('/var/lib/systemd/coredump')]);
+  await addFs({ id: 'snap-cache', group: SYSTEM_GROUP, label: 'Snap download cache', risk: 'safe', description: '/var/lib/snapd/cache. Old snap downloads.', root: '/var/lib/snapd/cache' },
+    await childrenOf('/var/lib/snapd/cache'));
+
+  // journald: vacuum with the vendor command, keep the last 100 MB.
+  const journalDir = '/var/log/journal';
+  if (await safeDirRoot(journalDir)) {
+    const sized = await duSizes([journalDir], Date.now() + 10000).catch(() => null);
+    const total = sized ? sized.get(journalDir) || 0 : 0;
+    if (total > 150 * 1024 * 1024) {
+      list.push({ kind: 'cmd', id: 'journal', group: SYSTEM_GROUP, label: 'System journal', risk: 'safe', root: journalDir, entries: [], estimate: total - 100 * 1024 * 1024,
+        description: 'journalctl --vacuum-size=100M: keeps the newest 100 MB of the system journal.', access: sudoOk || uid === 0 ? 'sudo' : 'none',
+        cmd: ['journalctl', '--vacuum-size=100M'], sizePath: journalDir });
+    }
   }
 
-  if (projectsDir) {
-    const base = path.resolve(projectsDir);
-    const found = [];
-    const walk = async (dir, depth) => {
-      if (depth > 4 || found.length >= 100) return;
-      let ents;
-      try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
-      for (const ent of ents) {
-        if (!ent.isDirectory()) continue; // symlinks are not directories here, so never followed
-        const full = path.join(dir, ent.name);
-        if (ent.name === 'node_modules') found.push(full);
-        else if (ent.name !== '.git') await walk(full, depth + 1);
-      }
-    };
-    await walk(base, 0);
-    // The running panel's own dependencies must never be offered.
-    const appDir = path.resolve(__dirname, '..');
-    for (const full of found.filter((f) => f !== path.join(appDir, 'node_modules'))) {
-      list.push({
-        id: `nm:${full}`, label: `node_modules — ${path.relative(base, path.dirname(full)) || path.basename(base)}`, risk: 'review',
-        description: 'Installed dependencies. Restore with npm install; stop any running app that uses it first.',
-        root: full, entries: [full], writable: await canWrite(path.dirname(full)), dev: null, keepRoot: true,
-      });
+  // Docker: only when the daemon answers; volumes are never touched.
+  if (onPath('docker')) {
+    const df = await runCommand('docker', ['system', 'df', '--format', '{{.Type}}\t{{.Reclaimable}}'], { timeoutMs: 15000 });
+    if (df.code === 0) {
+      const rec = {};
+      for (const line of df.out.split('\n')) { const [t, r] = line.split('\t'); if (t) rec[t.trim()] = formatDecimalBytes(r); }
+      const dock = (id, label, risk, description, key, args) => {
+        if (!rec[key]) return;
+        list.push({ kind: 'cmd', id, group: 'Docker', label, risk, description, root: 'docker', entries: [], estimate: rec[key], access: 'direct', cmd: ['docker', ...args] });
+      };
+      dock('docker-containers', 'Docker: stopped containers', 'review', 'docker container prune: removes every stopped container.', 'Containers', ['container', 'prune', '-f']);
+      dock('docker-build-cache', 'Docker: build cache', 'safe', 'docker builder prune: cached build layers. Next builds start colder.', 'Build Cache', ['builder', 'prune', '-a', '-f']);
+      dock('docker-images', 'Docker: unused images', 'review', 'docker image prune -a: images no container uses. They are pulled again when needed. Volumes are never removed.', 'Images', ['image', 'prune', '-a', '-f']);
     }
   }
   return list;
@@ -502,56 +618,101 @@ async function duSizes(entries, deadline) {
   return sizes;
 }
 
-async function cleanupScan(projectsDir) {
+const ITEMS_SHOWN = 40;
+
+async function cleanupScan(projectsDir, privileged) {
   const ctx = { deadline: Date.now() + SCAN_BUDGET_MS, partial: false, unreadable: 0, seen: new Set() };
-  const candidates = await cleanupCandidates(projectsDir);
+  const candidates = await cleanupCandidates(projectsDir, privileged);
   const fastSizes = await duSizes(candidates.flatMap((c) => c.entries), ctx.deadline).catch(() => null);
   const out = [];
   for (const c of candidates) {
+    const items = [];
     let size = 0;
     for (const entry of c.entries) {
-      if (fastSizes && fastSizes.has(entry)) { size += fastSizes.get(entry); continue; }
-      if (Date.now() > ctx.deadline) { ctx.partial = true; break; }
-      let st;
-      try { st = await fsp.lstat(entry); } catch { continue; }
-      ctx.dev = st.dev;
-      size += (await measureTree(entry, ctx, null)).size;
+      let bytes;
+      if (fastSizes && fastSizes.has(entry)) bytes = fastSizes.get(entry);
+      else {
+        if (Date.now() > ctx.deadline) { ctx.partial = true; break; }
+        let st;
+        try { st = await fsp.lstat(entry); } catch { continue; }
+        ctx.dev = st.dev;
+        bytes = (await measureTree(entry, ctx, null)).size;
+      }
+      size += bytes;
+      items.push({ path: entry, size: bytes });
     }
-    out.push({ id: c.id, label: c.label, description: c.description, risk: c.risk, size, count: c.entries.length, writable: c.writable, path: c.root, samples: c.entries.slice(0, 3).map((e) => path.basename(e)) });
+    if (c.kind === 'cmd') size = c.estimate || 0;
+    items.sort((x, y) => y.size - x.size);
+    if (size === 0 && c.kind === 'fs') continue;
+    out.push({
+      id: c.id, group: c.group, label: c.label, description: c.description, risk: c.risk,
+      size, count: c.entries.length, access: c.access, writable: c.access !== 'none', path: c.root,
+      items: items.slice(0, ITEMS_SHOWN), itemsTruncated: items.length > ITEMS_SHOWN,
+    });
   }
-  out.sort((a, b) => b.size - a.size);
-  return { candidates: out, partial: ctx.partial, disk: await diskInfo('/') };
+  out.sort((x, y) => y.size - x.size);
+  return { candidates: out, partial: ctx.partial, privileged: Boolean(privileged), disk: await diskInfo('/') };
 }
 
-async function cleanupRun(ids, projectsDir) {
+async function removeEntries(entries, access) {
+  const errors = [];
+  let removed = 0;
+  if (access === 'sudo') {
+    for (let i = 0; i < entries.length; i += 100) {
+      const chunk = entries.slice(i, i + 100);
+      const res = await runCommand('sudo', ['-n', 'rm', '-rf', '--', ...chunk]);
+      if (res.code === 0) removed += chunk.length;
+      else errors.push(res.out.trim().slice(0, 200) || 'sudo rm failed');
+    }
+    return { removed, errors };
+  }
+  for (const entry of entries) {
+    try {
+      await fsp.rm(entry, { recursive: true, force: true });
+      removed += 1;
+    } catch (err) {
+      errors.push(`${path.basename(entry)}: ${err.message}`);
+    }
+  }
+  return { removed, errors };
+}
+
+async function cleanupRun(ids, only, projectsDir, privileged) {
   if (!Array.isArray(ids) || ids.length === 0) throw new Error('Nothing selected.');
   const wanted = new Set(ids.map(String));
-  const candidates = (await cleanupCandidates(projectsDir)).filter((c) => wanted.has(c.id));
+  const candidates = (await cleanupCandidates(projectsDir, privileged)).filter((c) => wanted.has(c.id));
   const results = [];
   let freed = 0;
   for (const c of candidates) {
-    if (!c.writable) {
-      results.push({ id: c.id, freed: 0, removed: 0, errors: ['Not writable by the Citadel user (needs the admin terminal).'] });
+    if (c.access === 'none') {
+      results.push({ id: c.id, freed: 0, removed: 0, errors: ['Needs root: enable the admin terminal (and passwordless sudo) to clean this.'] });
       continue;
     }
-    const ctx = { deadline: Date.now() + SCAN_BUDGET_MS, partial: false, unreadable: 0, seen: new Set() };
-    const errors = [];
-    let bytes = 0;
-    let removed = 0;
-    for (const entry of c.entries) {
-      try {
-        const st = await fsp.lstat(entry);
-        ctx.dev = st.dev;
-        const size = (await measureTree(entry, ctx, null)).size;
-        await fsp.rm(entry, { recursive: true, force: true });
-        bytes += size;
-        removed += 1;
-      } catch (err) {
-        errors.push(`${path.basename(entry)}: ${err.message}`);
+    if (c.kind === 'cmd') {
+      const before = c.sizePath ? (await duSizes([c.sizePath], Date.now() + 10000).catch(() => null) || new Map()).get(c.sizePath) || 0 : 0;
+      const argv = c.access === 'sudo' ? ['sudo', '-n', ...c.cmd] : c.cmd;
+      const res = await runCommand(argv[0], argv.slice(1), { timeoutMs: 170000 });
+      let bytes = c.estimate || 0;
+      if (c.sizePath) {
+        const after = (await duSizes([c.sizePath], Date.now() + 10000).catch(() => null) || new Map()).get(c.sizePath) || 0;
+        bytes = Math.max(0, before - after);
       }
+      if (res.code !== 0) { results.push({ id: c.id, freed: 0, removed: 0, errors: [res.out.trim().slice(0, 200) || 'Command failed.'] }); continue; }
+      freed += bytes;
+      results.push({ id: c.id, freed: bytes, removed: 1, errors: [] });
+      continue;
     }
+    // Optional narrowing: only paths that are genuinely entries of this category.
+    const picked = Array.isArray(only && only[c.id]) ? new Set(only[c.id].map(String)) : null;
+    const entries = picked ? c.entries.filter((e) => picked.has(e)) : c.entries;
+    const ctx = { deadline: Date.now() + SCAN_BUDGET_MS, partial: false, unreadable: 0, seen: new Set() };
+    const sizes = await duSizes(entries, ctx.deadline).catch(() => null);
+    const res = await removeEntries(entries, c.access);
+    let bytes = 0;
+    if (sizes) for (const e of entries) bytes += sizes.get(e) || 0;
+    if (res.errors.length) bytes = Math.round(bytes * (res.removed / Math.max(1, entries.length)));
     freed += bytes;
-    results.push({ id: c.id, freed: bytes, removed, errors: errors.slice(0, 5) });
+    results.push({ id: c.id, freed: bytes, removed: res.removed, errors: res.errors.slice(0, 5) });
   }
   const unknown = ids.filter((id) => !candidates.some((c) => c.id === String(id)));
   for (const id of unknown) results.push({ id, freed: 0, removed: 0, errors: ['Nothing to clean (already empty or not available).'] });
@@ -568,8 +729,8 @@ async function handle(req) {
     case 'remove': return remove(req.path);
     case 'stat': return statPath(req.path);
     case 'usage': return diskUsage(req.path);
-    case 'cleanup-scan': return cleanupScan(req.projectsDir);
-    case 'cleanup-run': return cleanupRun(req.ids, req.projectsDir);
+    case 'cleanup-scan': return cleanupScan(req.projectsDir, req.privileged);
+    case 'cleanup-run': return cleanupRun(req.ids, req.items, req.projectsDir, req.privileged);
     default: throw new Error(`Unknown operation: ${req.op}`);
   }
 }

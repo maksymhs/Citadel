@@ -95,7 +95,7 @@ module.exports = {
   rename: (from, to) => runAgent({ op: 'rename', from, to }),
   remove: (p) => runAgent({ op: 'remove', path: p }),
   usage: (p) => runAgent({ op: 'usage', path: p }, { timeoutMs: 60000 }),
-  cleanupScan: () => runAgent({ op: 'cleanup-scan', projectsDir: PROJECTS_DIR }, { timeoutMs: 120000 }),
-  cleanupRun: (ids) => runAgent({ op: 'cleanup-run', ids, projectsDir: PROJECTS_DIR }, { timeoutMs: 180000 }),
+  cleanupScan: () => runAgent({ op: 'cleanup-scan', projectsDir: PROJECTS_DIR, privileged: isPrivileged() }, { timeoutMs: 120000 }),
+  cleanupRun: (ids, items) => runAgent({ op: 'cleanup-run', ids, items, projectsDir: PROJECTS_DIR, privileged: isPrivileged() }, { timeoutMs: 180000 }),
   openReadStream,
 };

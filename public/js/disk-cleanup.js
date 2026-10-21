@@ -198,58 +198,144 @@
       renderClean(scan);
     }
 
-    function renderClean(scan) {
-      stopClock();
-      const total = scan.candidates.reduce((s, c) => s + (c.writable ? c.size : 0), 0);
-      const rows = scan.candidates.length ? scan.candidates.map((c) => `<label class="disk-cand${c.writable ? '' : ' is-disabled'}">
-          <input type="checkbox" data-id="${esc(c.id)}" data-size="${c.size}" ${c.risk === 'safe' && c.writable ? 'checked' : ''} ${c.writable ? '' : 'disabled'} />
+    const GROUP_ORDER = ['Caches', 'Projects', 'Docker', 'System'];
+    const ACCESS_LABEL = { none: 'Needs root', sudo: 'Uses sudo' };
+
+    function itemRowHtml(c, item) {
+      return `<label class="disk-item">
+        <input type="checkbox" data-item="${esc(c.id)}" data-path="${esc(item.path)}" data-size="${item.size}" ${c.writable && c.risk === 'safe' ? 'checked' : ''} ${c.writable ? '' : 'disabled'} />
+        <span class="disk-item-name" title="${esc(item.path)}">${esc(item.path)}</span>
+        <span class="disk-size">${ctx.formatBytes(item.size)}</span>
+      </label>`;
+    }
+
+    function candHtml(c) {
+      const hasItems = c.items.length > 1;
+      const more = c.itemsTruncated ? `<div class="mon-muted disk-item-more">Showing the ${c.items.length} largest of ${c.count}. Selecting the whole category cleans all of them.</div>` : '';
+      return `<div class="disk-cand${c.writable ? '' : ' is-disabled'}" data-cat="${esc(c.id)}" data-total="${c.size}">
+        <label class="disk-cand-head">
+          <input type="checkbox" data-id="${esc(c.id)}" ${c.risk === 'safe' && c.writable ? 'checked' : ''} ${c.writable ? '' : 'disabled'} />
           <span class="disk-cand-main">
-            <strong>${esc(c.label)}</strong>
-            <span class="badge ${c.risk === 'safe' ? 'badge-success' : 'badge-warning'}">${esc(RISK_LABEL[c.risk] || c.risk)}</span>
+            <span><strong>${esc(c.label)}</strong>
+              <span class="badge ${c.risk === 'safe' ? 'badge-success' : 'badge-warning'}">${esc(RISK_LABEL[c.risk] || c.risk)}</span>
+              ${ACCESS_LABEL[c.access] ? `<span class="badge badge-muted">${esc(ACCESS_LABEL[c.access])}</span>` : ''}</span>
             <span class="mon-muted">${esc(c.description)}</span>
-            ${c.writable ? '' : '<span class="mon-muted">Needs the admin terminal to delete these.</span>'}
           </span>
           <span class="disk-size">${ctx.formatBytes(c.size)}</span>
-        </label>`).join('') : '<div class="files-empty">Nothing obvious to clean. Use Analyze to find large files.</div>';
+        </label>
+        ${hasItems ? `<button type="button" class="disk-expand" data-expand="${esc(c.id)}" aria-expanded="false">Show ${c.count} items</button>` : ''}
+        ${hasItems ? `<div class="disk-items" hidden>${c.items.map((i) => itemRowHtml(c, i)).join('')}${more}</div>` : ''}
+      </div>`;
+    }
+
+    function renderClean(scan) {
+      stopClock();
+      const usable = scan.candidates.filter((c) => c.writable);
+      const total = usable.reduce((sum, c) => sum + c.size, 0);
+      const locked = scan.candidates.length - usable.length;
+      const groups = GROUP_ORDER.filter((g) => scan.candidates.some((c) => c.group === g))
+        .concat(Array.from(new Set(scan.candidates.map((c) => c.group))).filter((g) => !GROUP_ORDER.includes(g)));
+      const sections = groups.map((g) => `<section class="disk-group">
+          <h4 class="disk-heading">${esc(g)}</h4>
+          <div class="disk-list">${scan.candidates.filter((c) => c.group === g).map(candHtml).join('')}</div>
+        </section>`).join('');
       body.innerHTML = `
         ${diskMeterHtml(ctx, scan.disk)}
-        <p class="mon-muted">Up to <strong>${ctx.formatBytes(total)}</strong> can be reclaimed. Nothing is deleted until you confirm.${scan.partial ? ' (scan time limit reached; sizes may be incomplete)' : ''}</p>
-        <div class="disk-list" id="disk-cands">${rows}</div>
-        <div class="disk-actions">
+        <p class="mon-muted">Up to <strong>${ctx.formatBytes(total)}</strong> can be reclaimed${locked ? `; ${locked} more ${locked === 1 ? 'category needs' : 'categories need'} root (enable the admin terminal with passwordless sudo)` : ''}. Nothing is deleted until you confirm.${scan.partial ? ' Scan time limit reached; sizes may be incomplete.' : ''}</p>
+        ${scan.candidates.length ? `<div class="disk-quick">
+          <button type="button" class="btn btn-secondary btn-sm" data-select="safe">Select safe</button>
+          <button type="button" class="btn btn-secondary btn-sm" data-select="all">Select everything</button>
+          <button type="button" class="btn btn-secondary btn-sm" data-select="none">Select none</button>
+        </div>` : ''}
+        ${sections || '<div class="files-empty">Nothing obvious to clean. Use Analyze to find large files.</div>'}
+        <div class="disk-actions disk-actions-sticky">
           <span id="disk-selected" class="mon-muted"></span>
           <button class="btn btn-primary" id="disk-clean-btn">Clean selected</button>
         </div>`;
+      body.querySelectorAll('.disk-cand').forEach(syncCategory);
       updateSelected();
     }
 
-    function selectedBoxes() {
-      return Array.from(body.querySelectorAll('#disk-cands input[type=checkbox]:checked'));
+    // Selection model: a ticked category with all its items ticked cleans the
+    // whole category; an unticked item narrows it to the items still ticked.
+    function categoryEl(el) { return el.closest('.disk-cand'); }
+    function itemBoxes(cat) { return Array.from(cat.querySelectorAll('input[data-item]')); }
+
+    function syncCategory(cat) {
+      const head = cat.querySelector('input[data-id]');
+      const boxes = itemBoxes(cat);
+      if (!boxes.length || head.disabled) return;
+      const checked = boxes.filter((b) => b.checked).length;
+      head.checked = checked === boxes.length;
+      head.indeterminate = checked > 0 && checked < boxes.length;
+    }
+
+    function selection() {
+      const ids = [];
+      const items = {};
+      let bytes = 0;
+      let count = 0;
+      let review = false;
+      body.querySelectorAll('.disk-cand').forEach((cat) => {
+        const head = cat.querySelector('input[data-id]');
+        const boxes = itemBoxes(cat);
+        const picked = boxes.filter((b) => b.checked);
+        const whole = head.checked && !head.indeterminate;
+        if (!whole && !picked.length) return;
+        const id = head.dataset.id;
+        ids.push(id);
+        if (whole || !boxes.length) {
+          bytes += Number(cat.dataset.total);
+          count += 1;
+        } else {
+          items[id] = picked.map((b) => b.dataset.path);
+          bytes += picked.reduce((sum, b) => sum + Number(b.dataset.size || 0), 0);
+          count += 1;
+        }
+        if (cat.querySelector('.badge-warning')) review = true;
+      });
+      return { ids, items, bytes, count, review };
     }
 
     function updateSelected() {
       const label = document.getElementById('disk-selected');
       const btn = document.getElementById('disk-clean-btn');
       if (!label || !btn) return;
-      const boxes = selectedBoxes();
-      const bytes = boxes.reduce((s, b) => s + Number(b.dataset.size || 0), 0);
-      label.textContent = boxes.length ? `${boxes.length} selected · ${ctx.formatBytes(bytes)}` : 'Nothing selected';
-      btn.disabled = boxes.length === 0;
+      const sel = selection();
+      label.textContent = sel.count ? `${sel.count} selected · ${ctx.formatBytes(sel.bytes)}` : 'Nothing selected';
+      btn.disabled = sel.count === 0;
+    }
+
+    function selectPreset(kind) {
+      body.querySelectorAll('.disk-cand').forEach((cat) => {
+        const head = cat.querySelector('input[data-id]');
+        if (head.disabled) return;
+        const on = kind === 'all' || (kind === 'safe' && !cat.querySelector('.badge-warning'));
+        head.checked = on;
+        head.indeterminate = false;
+        itemBoxes(cat).forEach((b) => { b.checked = on; });
+      });
+      updateSelected();
     }
 
     function confirmClean() {
-      const boxes = selectedBoxes();
-      if (!boxes.length) return;
-      const names = boxes.map((b) => b.closest('.disk-cand').querySelector('strong').textContent);
-      const bytes = boxes.reduce((s, b) => s + Number(b.dataset.size || 0), 0);
+      const sel = selection();
+      if (!sel.count) return;
+      const names = sel.ids.map((id) => {
+        const cat = Array.from(body.querySelectorAll('.disk-cand')).find((el) => el.dataset.cat === id);
+        const name = cat.querySelector('strong').textContent;
+        return sel.items[id] ? `${name} (${sel.items[id].length} of ${cat.querySelectorAll('input[data-item]').length} items)` : name;
+      });
       ctx.openModal({
         title: 'Clean selected',
         confirmText: 'Delete permanently',
-        bodyHtml: `<p>Permanently delete about <strong>${ctx.formatBytes(bytes)}</strong>? This cannot be undone.</p>
+        bodyHtml: `<p>Permanently delete about <strong>${ctx.formatBytes(sel.bytes)}</strong>? This cannot be undone.</p>
+          ${sel.review ? '<p class="mon-muted">Some selected categories are marked <strong>Review first</strong>: they are rebuilt or re-downloaded later, which can take time or need network access.</p>' : ''}
           <ul>${names.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>`,
         onConfirm: async () => {
-          const res = await ctx.api('/api/files/cleanup', { method: 'POST', body: { ids: boxes.map((b) => b.dataset.id) } });
+          const res = await ctx.api('/api/files/cleanup', { method: 'POST', body: { ids: sel.ids, items: sel.items } });
           const errors = res.results.flatMap((r) => r.errors);
-          ctx.showToast(`Freed ${ctx.formatBytes(res.freed)}.${errors.length ? ` ${errors.length} item(s) could not be removed.` : ''}`, errors.length ? 'warning' : 'success');
+          ctx.showToast(`Freed ${ctx.formatBytes(res.freed)}.${errors.length ? ` ${errors[0]}` : ''}`, errors.length ? 'warning' : 'success');
           cache.usage.clear();
           clean();
         },
@@ -327,11 +413,30 @@
       if (crumb) { dir = crumb.dataset.path; if (cache.usage.has(dir)) renderUsage(cache.usage.get(dir)); else if (body.querySelector('.disk-idle')) idle(); else analyze(); }
       else if (open) { dir = open.dataset.open; if (cache.usage.has(dir)) renderUsage(cache.usage.get(dir)); else analyze(); }
       else if (ev.target.id === 'disk-scan-btn') { if (tab === 'analyze') analyze(); else clean(); }
+      else if (ev.target.closest('[data-expand]')) {
+        const btn = ev.target.closest('[data-expand]');
+        const panel = categoryEl(btn).querySelector('.disk-items');
+        const open = panel.hidden;
+        panel.hidden = !open;
+        btn.setAttribute('aria-expanded', String(open));
+        btn.textContent = open ? 'Hide items' : `Show ${panel.querySelectorAll('input[data-item]').length} items`;
+      }
+      else if (ev.target.closest('[data-select]')) selectPreset(ev.target.closest('[data-select]').dataset.select);
       else if (del) confirmDelete(del.dataset.del);
       else if (ev.target.id === 'disk-clean-btn') confirmClean();
     });
     body.addEventListener('change', (ev) => {
-      if (ev.target.matches('#disk-cands input[type=checkbox]')) updateSelected();
+      const box = ev.target;
+      if (!box.matches || !box.matches('input[type=checkbox]')) return;
+      const cat = categoryEl(box);
+      if (!cat) return;
+      if (box.matches('[data-id]')) {
+        box.indeterminate = false;
+        itemBoxes(cat).forEach((b) => { b.checked = box.checked; });
+      } else {
+        syncCategory(cat);
+      }
+      updateSelected();
     });
 
     idle();
