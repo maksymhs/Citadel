@@ -60,6 +60,47 @@
     return 'unknown';
   }
 
+  // A dismissed alert stays hidden until that incident ends: the key includes
+  // `since`, so the same condition firing again later is a new alert and shows.
+  // Per-viewer convenience only, so it lives in localStorage and degrades to
+  // "nothing dismissed" when storage is unavailable.
+  const DISMISS_KEY = 'citadel.monitor.dismissedAlerts';
+
+  function alertKey(a) {
+    return `${a.id}@${a.since}`;
+  }
+
+  function readDismissed() {
+    try {
+      const list = JSON.parse(localStorage.getItem(DISMISS_KEY) || '[]');
+      return new Set(Array.isArray(list) ? list : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  function writeDismissed(keys) {
+    try {
+      localStorage.setItem(DISMISS_KEY, JSON.stringify(Array.from(keys)));
+    } catch {
+      // Storage blocked: the alert simply comes back on the next refresh.
+    }
+  }
+
+  function dismissAlert(key) {
+    const keys = readDismissed();
+    keys.add(key);
+    writeDismissed(keys);
+  }
+
+  // Forget dismissals of alerts that no longer exist so the list cannot grow.
+  function pruneDismissed(alerts) {
+    const live = new Set(alerts.map(alertKey));
+    const keys = readDismissed();
+    const kept = Array.from(keys).filter((k) => live.has(k));
+    if (kept.length !== keys.size) writeDismissed(kept);
+  }
+
   function alertsHtml(alerts, ctx) {
     if (!alerts.length) return '';
     const esc = ctx.escapeHtml;
@@ -68,6 +109,7 @@
         <strong>${esc(a.label)}</strong>
         <span>${esc(a.message)}</span>
         <span class="mon-muted">${esc(fmtAgo(a.since))}</span>
+        <button type="button" class="mon-alert-close" data-alert-key="${esc(alertKey(a))}" aria-label="Dismiss alert" title="Dismiss until it happens again">&times;</button>
       </div>`).join('')}
     </div>`;
   }
@@ -100,10 +142,19 @@
       if (!target) { clearInterval(refreshTimer); return; }
       try {
         const data = await ctx.localApi('/api/monitor/overview');
-        target.innerHTML = data.alerts.length ? alertsHtml(data.alerts.slice(0, 3), ctx) : '';
+        pruneDismissed(data.alerts);
+        const dismissed = readDismissed();
+        const visible = data.alerts.filter((a) => !dismissed.has(alertKey(a)));
+        target.innerHTML = visible.length ? alertsHtml(visible.slice(0, 3), ctx) : '';
       } catch {
         target.innerHTML = '';
       }
+    };
+    body.onclick = (event) => {
+      const btn = event.target.closest('.mon-alert-close');
+      if (!btn) return;
+      dismissAlert(btn.dataset.alertKey);
+      draw();
     };
     await draw();
     refreshTimer = setInterval(draw, 15000);
