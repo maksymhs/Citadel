@@ -133,6 +133,15 @@ async function seedWorkspace(app, cookie) {
     "printf '\\n\\033[32mℹ tests 6\\033[0m\\n\\033[32mℹ pass 6\\033[0m\\nℹ fail 0\\nℹ duration_ms 412\\n'",
   ].join('\n'));
 
+  fs.writeFileSync(path.join(data, 'demo-ps.sh'), [
+    "cat <<'EOF'",
+    'NAME                IMAGE          COMMAND                  SERVICE   CREATED       STATUS         PORTS',
+    'acme-api-api-1      acme-api-api   "node src/index.js"      api       2 hours ago   Up 2 hours     0.0.0.0:8080->8080/tcp',
+    'acme-api-cache-1    redis:7        "docker-entrypoint.s…"   cache     2 hours ago   Up 2 hours     6379/tcp',
+    'acme-api-db-1       postgres:16    "docker-entrypoint.s…"   db        2 hours ago   Up 2 hours     5432/tcp',
+    'EOF',
+  ].join('\n'));
+
   const terminalManager = require('../server/services/terminalManager');
   const session = (name) => terminalManager.createSession({ projectId: api.id, name, cols: 120, rows: 30 });
   const first = session('tests');
@@ -264,21 +273,23 @@ async function takeScenes(demo) {
   await retry('machine-selector-dark', { dsf: 2, clip: { x: 0, y: 0, width: 520, height: 420 }, steps: async (page) => { await page.click('#host-selector-btn'); await sleep(700); } });
   await retry('machine-alert-dark', { steps: async (page) => { await page.click('#host-selector-btn'); await sleep(500); await page.click('[data-ctx-idx="2"]'); await sleep(3500); } });
   await retry('terminal-dark', {
-    height: 540,
+    height: 700,
     steps: async (page) => {
       await page.evaluate(() => document.querySelector('.nav-item[data-view="workspace"]').click());
       await sleep(1200);
       await page.evaluate(() => [...document.querySelectorAll('#sidebar-nav a.nav-item')].find((a) => a.textContent.trim().startsWith('acme-api')).click());
       await sleep(3500);
       const { type } = demo.workspace;
-      type(`\x15export PS1='\\[\\e[1;32m\\]ada@frankfurt-vps\\[\\e[0m\\]:\\[\\e[1;34m\\]~/acme-api\\[\\e[0m\\]$ '; npm() { sh '${data}/demo-run.sh'; }; clear\r`);
+      type(`\x15export PS1='\\[\\e[1;32m\\]ada@frankfurt-vps\\[\\e[0m\\]:\\[\\e[1;34m\\]~/acme-api\\[\\e[0m\\]$ '; npm() { sh '${data}/demo-run.sh'; }; docker() { sh '${data}/demo-ps.sh'; }; clear\r`);
       await sleep(900);
       type('npm test\r');
       await sleep(1500);
+      type('docker compose ps\r');
+      await sleep(900);
     },
   });
   await retry('files-dark', {
-    height: 540,
+    height: 700,
     steps: async (page) => {
       await page.evaluate(() => document.querySelector('.nav-item[data-view="files"]').click());
       await sleep(2000);

@@ -118,25 +118,37 @@ Fastify + SQLite (WAL). Runs on 512 MB of RAM. Plugin system with fault isolatio
 
 ## 🖼️ A look inside
 
+<div align="center">
+
+<img src="docs/img/terminal-dark.png" alt="A persistent web terminal in the acme-api project showing a passing test run" width="880"><br>
+<sub><b>Persistent terminals.</b> Close the browser or restart the panel: your sessions keep running in tmux.</sub>
+
+<br><br>
+
+<img src="docs/img/machine-alert-dark.png" alt="Machine detail with a critical disk gauge, availability bar with an outage and recent incidents" width="880"><br>
+<sub><b>Health and incidents.</b> Gauges, 24 h availability, latency and an incident trail for every machine.</sub>
+
+<br><br>
+
+<img src="docs/img/files-dark.png" alt="File explorer in grid view showing a project folder" width="880"><br>
+<sub><b>Files.</b> Browse, edit, upload and clean up the host, with a disk analyser built in.</sub>
+
+<br><br>
+
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/img/terminal-dark.png" alt="A persistent web terminal in the acme-api project showing a passing test run"><br><sub><b>Persistent terminals.</b> Close the browser or restart the panel: your sessions keep running in tmux.</sub></td>
-<td width="50%" valign="top"><img src="docs/img/files-dark.png" alt="File explorer in grid view showing a project folder"><br><sub><b>Files.</b> Browse, edit, upload and clean up the host, with a disk analyser built in.</sub></td>
+<td align="center" valign="middle"><img src="docs/img/machine-selector-dark.png" alt="Machine selector listing four paired machines with their addresses and status" width="400"></td>
+<td align="center" valign="middle"><img src="docs/img/mobile-dark.png" alt="The dashboard on a phone" width="200"></td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/img/machine-alert-dark.png" alt="Machine detail with a critical disk gauge, availability bar with an outage and recent incidents"><br><sub><b>Health and incidents.</b> Gauges, 24 h availability, latency and an incident trail for every machine.</sub></td>
-<td width="50%" valign="top"><img src="docs/img/machine-selector-dark.png" alt="Machine selector listing four paired machines with their addresses and status"><br><sub><b>One URL, many machines.</b> Pair Citadels with a QR code and switch between them without leaving the page.</sub></td>
+<td align="center" valign="top"><sub><b>One URL, many machines.</b><br>Pair Citadels with a QR code and switch<br>between them without leaving the page.</sub></td>
+<td align="center" valign="top"><sub><b>Built for phones too.</b><br>Responsive layout and<br>on-screen terminal keys.</sub></td>
 </tr>
 </table>
 
-<div align="center">
-<img src="docs/img/mobile-dark.png" alt="The dashboard on a phone" width="260"><br>
-<sub><b>Built for phones too.</b> Responsive layout, on-screen terminal keys and native text selection.</sub>
-</div>
-
-<br>
-
 <sub>Screenshots show a demo instance with simulated machines and projects (regenerate them with <code>scripts/screenshots.js</code>).</sub>
+
+</div>
 
 ## 🔒 Secure by default
 
