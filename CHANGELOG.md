@@ -2,6 +2,20 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## Unreleased
+
+### Added
+
+- **dev**: Agent guide, generated code map and changelog, optional Graphify graph
+- **ui**: Redesign machine selector with live status, icon tile and richer menu
+- **dashboard**: Redesign machine overview with gauge cards, KPI tiles and incident timeline
+- **monitor**: Real RAM usage on macOS and temperature in the machine panel
+
+### Fixed
+
+- **monitor**: Call ioreg by absolute path so the service finds it under launchd
+- **config**: Resolve relative data/projects/logs/plugins paths against the app root
+
 ## [0.41.0](https://github.com/maksymhs/Citadel/releases/tag/v0.41.0) · 2026-10-21
 
 ### Added
