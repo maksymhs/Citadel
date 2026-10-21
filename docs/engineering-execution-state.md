@@ -256,3 +256,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Known gap: with xterm.js attached, tmux's terminal-capability replies can land on the
   shell prompt as stray text (`1;2c0;276;0c`) if input is typed before they settle; the
   script clears the line first. It looks like a product quirk worth a separate look.
+
+## 111. README gallery removed
+- The "A look inside" section was dropped on request: the single dashboard screenshot at
+  the top of the README is enough. The extra images (terminal, files, machine health,
+  selector, phone) and the code that produced them are gone; `scripts/screenshots.js` now
+  only builds the two dashboard images (dark and light) from the isolated demo instance.

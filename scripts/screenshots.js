@@ -41,10 +41,6 @@ Object.assign(process.env, {
   CITADEL_ALLOW_RESTART: '0',
 });
 delete process.env.TERMINAL_ADMIN_USER;
-// The demo's terminals run on their own tmux server, never the real one.
-process.env.TMUX_TMPDIR = data;
-delete process.env.TMUX;
-delete process.env.TMUX_PANE;
 
 const PROFILES = {
   local: { hostname: 'frankfurt-vps', platform: 'linux', arch: 'x64', cores: 4, load: 0.31, mem: 41, disk: 38, diskTotal: 80 * GB, memTotal: 8 * GB, up: 23 * 86400 + 5 * 3600, terminals: 3, temp: null },
@@ -94,67 +90,11 @@ function findChrome() {
   throw new Error('Chrome not found: set CHROME_PATH.');
 }
 
-// Demo projects with believable files and two persistent terminals showing a test run.
-async function seedWorkspace(app, cookie) {
-  const create = async (name, description) => (await app.inject({ method: 'POST', url: '/api/projects', headers: { cookie }, payload: { name, description } })).json().project;
-  const api = await create('acme-api', 'REST API for the Acme storefront');
-  await create('web-dashboard', 'Customer dashboard (React)');
-  await create('infra', 'Terraform and deployment scripts');
-
-  const files = {
-    'package.json': '{\n  "name": "acme-api",\n  "version": "2.4.0",\n  "scripts": { "test": "node --test", "start": "node src/index.js" }\n}\n',
-    'README.md': '# acme-api\n\nREST API for the Acme storefront.\n',
-    'Dockerfile': 'FROM node:22-alpine\nWORKDIR /app\nCOPY . .\nCMD ["node", "src/index.js"]\n',
-    'docker-compose.yml': 'services:\n  api:\n    build: .\n    ports: ["8080:8080"]\n',
-    '.gitignore': 'node_modules\n.env\n',
-    'src/index.js': "console.log('listening on :8080');\n",
-    'src/routes/orders.js': 'module.exports = [];\n',
-    'src/routes/products.js': 'module.exports = [];\n',
-    'src/db.js': 'module.exports = {};\n',
-    'tests/orders.test.js': "require('node:test');\n",
-    'tests/products.test.js': "require('node:test');\n",
-    'docs/openapi.yaml': 'openapi: 3.1.0\n',
-  };
-  for (const [name, content] of Object.entries(files)) {
-    const file = path.join(api.path, name);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, content);
+// Three demo projects so the sidebar shows a project count.
+async function seedProjects(app, cookie) {
+  for (const [name, description] of [['acme-api', 'REST API for the Acme storefront'], ['web-dashboard', 'Customer dashboard (React)'], ['infra', 'Terraform and deployment scripts']]) {
+    await app.inject({ method: 'POST', url: '/api/projects', headers: { cookie }, payload: { name, description } });
   }
-  // The fake test run the terminal replays (colours as a real runner would print them).
-  fs.writeFileSync(path.join(data, 'demo-run.sh'), [
-    "printf '\\033[2m> acme-api@2.4.0 test\\033[0m\\n'",
-    "printf '\\033[2m> node --test\\033[0m\\n\\n'",
-    "printf '  \\033[32m✔\\033[0m orders: creates an order \\033[2m(12ms)\\033[0m\\n'",
-    "printf '  \\033[32m✔\\033[0m orders: rejects an empty cart \\033[2m(4ms)\\033[0m\\n'",
-    "printf '  \\033[32m✔\\033[0m orders: applies a discount code \\033[2m(9ms)\\033[0m\\n'",
-    "printf '  \\033[32m✔\\033[0m products: lists active products \\033[2m(7ms)\\033[0m\\n'",
-    "printf '  \\033[32m✔\\033[0m products: filters by category \\033[2m(5ms)\\033[0m\\n'",
-    "printf '  \\033[32m✔\\033[0m db: reconnects after a dropped connection \\033[2m(31ms)\\033[0m\\n'",
-    "printf '\\n\\033[32mℹ tests 6\\033[0m\\n\\033[32mℹ pass 6\\033[0m\\nℹ fail 0\\nℹ duration_ms 412\\n'",
-  ].join('\n'));
-
-  fs.writeFileSync(path.join(data, 'demo-ps.sh'), [
-    "cat <<'EOF'",
-    'NAME                IMAGE          COMMAND                  SERVICE   CREATED       STATUS         PORTS',
-    'acme-api-api-1      acme-api-api   "node src/index.js"      api       2 hours ago   Up 2 hours     0.0.0.0:8080->8080/tcp',
-    'acme-api-cache-1    redis:7        "docker-entrypoint.s…"   cache     2 hours ago   Up 2 hours     6379/tcp',
-    'acme-api-db-1       postgres:16    "docker-entrypoint.s…"   db        2 hours ago   Up 2 hours     5432/tcp',
-    'EOF',
-  ].join('\n'));
-
-  const terminalManager = require('../server/services/terminalManager');
-  const session = (name) => terminalManager.createSession({ projectId: api.id, name, cols: 120, rows: 30 });
-  const first = session('tests');
-  const second = session('dev server');
-  await sleep(1200);
-  // Typed once the browser is attached, otherwise its terminal replies end up on the prompt.
-  const type = (text) => {
-    for (const id of [first.sessionId, second.sessionId]) {
-      const active = terminalManager.activePtySessions.get(id);
-      if (active && active.ptyProcess) active.ptyProcess.write(text);
-    }
-  };
-  return { projectId: api.id, terminalManager, type };
 }
 
 async function startDemo() {
@@ -181,13 +121,7 @@ async function startDemo() {
   }
   await app.inject({ method: 'PUT', url: '/api/settings/connect', headers: { cookie }, payload: { publicUrl: 'https://vps.example.com' } });
 
-  fs.writeFileSync(path.join(data, '.tmux.conf'), [
-    "set -g status-left ' acme-api '",
-    'set -g status-left-length 30',
-    "set -g status-right ' frankfurt-vps  %H:%M '",
-    '',
-  ].join('\n'));
-  const workspace = await seedWorkspace(app, cookie);
+  await seedProjects(app, cookie);
 
   // 24 h of history, one sample every 5 minutes, with a short outage and a sleeping laptop.
   const db = require('../server/database/db').getDatabase();
@@ -211,16 +145,12 @@ async function startDemo() {
   await app.listen({ port: PORT, host: '127.0.0.1' });
 
   const byAddress = Object.fromEntries(Object.entries(fakes).map(([key, f]) => [f.url.replace('http://', ''), ADDRESSES[key]]));
-  byAddress[path.basename(data)] = 'ada'; // the temp directory shows up in file paths
   const close = async () => {
-    try {
-      for (const id of [...workspace.terminalManager.activePtySessions.keys()]) workspace.terminalManager.killSession(id);
-    } catch { /* best effort: the tmux server lives in the temp directory anyway */ }
     await app.close();
     for (const f of Object.values(fakes)) f.close();
     fs.rmSync(data, { recursive: true, force: true });
   };
-  return { cookie: cookie.split('=')[1], byAddress, close, workspace };
+  return { cookie: cookie.split('=')[1], byAddress, close };
 }
 
 async function takeScenes(demo) {
@@ -252,7 +182,6 @@ async function takeScenes(demo) {
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {
         for (const [from, to] of Object.entries(map)) if (n.nodeValue.includes(from)) n.nodeValue = n.nodeValue.replace(from, to);
       }
-      for (const crumb of document.querySelectorAll('.files-crumbs button, .files-crumbs span')) if (crumb.textContent.trim() === 'tmp') crumb.textContent = 'home';
       const toasts = document.getElementById('toast-root');
       if (toasts) toasts.innerHTML = '';
     }, demo.byAddress);
@@ -270,50 +199,6 @@ async function takeScenes(demo) {
 
   await retry('dashboard-dark');
   await retry('dashboard-light', { theme: 'light' });
-  await retry('machine-selector-dark', { dsf: 2, clip: { x: 0, y: 0, width: 520, height: 420 }, steps: async (page) => { await page.click('#host-selector-btn'); await sleep(700); } });
-  await retry('machine-alert-dark', { steps: async (page) => { await page.click('#host-selector-btn'); await sleep(500); await page.click('[data-ctx-idx="2"]'); await sleep(3500); } });
-  await retry('terminal-dark', {
-    height: 700,
-    steps: async (page) => {
-      await page.evaluate(() => document.querySelector('.nav-item[data-view="workspace"]').click());
-      await sleep(1200);
-      await page.evaluate(() => [...document.querySelectorAll('#sidebar-nav a.nav-item')].find((a) => a.textContent.trim().startsWith('acme-api')).click());
-      await sleep(3500);
-      const { type } = demo.workspace;
-      type(`\x15export PS1='\\[\\e[1;32m\\]ada@frankfurt-vps\\[\\e[0m\\]:\\[\\e[1;34m\\]~/acme-api\\[\\e[0m\\]$ '; npm() { sh '${data}/demo-run.sh'; }; docker() { sh '${data}/demo-ps.sh'; }; clear\r`);
-      await sleep(900);
-      type('npm test\r');
-      await sleep(1500);
-      type('docker compose ps\r');
-      await sleep(900);
-    },
-  });
-  await retry('files-dark', {
-    height: 700,
-    steps: async (page) => {
-      await page.evaluate(() => document.querySelector('.nav-item[data-view="files"]').click());
-      await sleep(2000);
-      // Walk into the demo project without ever showing the real host's folders.
-      for (const folder of [...path.relative('/', data).split(path.sep), 'projects', 'acme-api']) {
-        let box = null;
-        for (let attempt = 0; attempt < 20 && !box; attempt += 1) {
-          box = await page.evaluate((name) => {
-            const tile = [...document.querySelectorAll('.files-tile')].find((t) => t.querySelector('.files-tile-name').textContent === name);
-            if (!tile) return null;
-            tile.scrollIntoView({ block: 'center' });
-            const r = tile.getBoundingClientRect();
-            return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-          }, folder);
-          if (!box) await sleep(500);
-        }
-        if (!box) throw new Error(`folder ${folder} not found in the file explorer`);
-        await page.mouse.click(box.x, box.y); // select the tile, then open it with the keyboard
-        await page.keyboard.press('Enter');
-        await sleep(1500);
-      }
-    },
-  });
-  await retry('mobile-dark', { width: 390, height: 844, dsf: 2 });
   await browser.close();
 }
 
