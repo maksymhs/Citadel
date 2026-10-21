@@ -68,7 +68,8 @@ function darwinTemperature() {
   if (cpu !== null) return { celsius: cpu, source: 'cpu' };
 
   // MacBooks report battery temperature in centi-degrees without privileges.
-  const battery = run('ioreg', ['-rn', 'AppleSmartBattery']);
+  // Absolute path: launchd's PATH for the service has no /usr/sbin.
+  const battery = run('/usr/sbin/ioreg', ['-rn', 'AppleSmartBattery']);
   const raw = parseInt(/"Temperature"\s*=\s*(\d+)/.exec(battery || '')?.[1], 10);
   const celsius = validCelsius(raw / 100);
   return celsius !== null ? { celsius, source: 'battery' } : null;
