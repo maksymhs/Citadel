@@ -2465,6 +2465,7 @@
           <button type="button" class="files-toggle-btn${isList ? ' is-active' : ''}" data-mode="list" title="List view" aria-label="List view" aria-pressed="${isList}">${FILES_ICON_LIST}</button>
           <button type="button" class="files-toggle-btn${isList ? '' : ' is-active'}" data-mode="grid" title="Grid (folder) view" aria-label="Grid view" aria-pressed="${!isList}">${FILES_ICON_GRID}</button>
         </div>
+        <button class="btn btn-secondary btn-sm" id="files-disk" title="Analyze disk usage and free up space">Disk</button>
         <button class="btn btn-secondary btn-sm" id="files-new-file">+ File</button>
         <button class="btn btn-secondary btn-sm" id="files-new-folder">+ Folder</button>
         <button class="btn btn-secondary btn-sm" id="files-refresh" title="Refresh" aria-label="Refresh">${FILES_ICON_REFRESH}</button>
@@ -2495,6 +2496,11 @@
         state.filesMode = mode;
         renderFilesView();
       };
+    });
+    document.getElementById('files-disk').onclick = () => window.CitadelDisk.render({
+      api, escapeHtml, formatBytes, openModal, showToast,
+      getPath: () => state.filesPath,
+      backToFiles: () => renderFilesView(),
     });
     document.getElementById('files-new-file').onclick = () => promptNewEntry('file', state.filesPath);
     document.getElementById('files-new-folder').onclick = () => promptNewEntry('dir', state.filesPath);

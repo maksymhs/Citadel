@@ -14,7 +14,7 @@
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ROOT_DIR, TERMINAL_ADMIN_USER } = require('../config');
+const { ROOT_DIR, TERMINAL_ADMIN_USER, PROJECTS_DIR } = require('../config');
 
 const AGENT_PATH = path.join(ROOT_DIR, 'scripts', 'fsAgent.js');
 const NODE_BIN = process.execPath;
@@ -94,5 +94,8 @@ module.exports = {
   mkdir: (p) => runAgent({ op: 'mkdir', path: p }),
   rename: (from, to) => runAgent({ op: 'rename', from, to }),
   remove: (p) => runAgent({ op: 'remove', path: p }),
+  usage: (p) => runAgent({ op: 'usage', path: p }, { timeoutMs: 60000 }),
+  cleanupScan: () => runAgent({ op: 'cleanup-scan', projectsDir: PROJECTS_DIR }, { timeoutMs: 120000 }),
+  cleanupRun: (ids) => runAgent({ op: 'cleanup-run', ids, projectsDir: PROJECTS_DIR }, { timeoutMs: 180000 }),
   openReadStream,
 };

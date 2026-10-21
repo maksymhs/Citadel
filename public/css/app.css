@@ -2519,3 +2519,41 @@ label.mon-row:hover { border-color: var(--border-hover); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Files → Disk: usage analysis and cleanup (public/js/disk-cleanup.js) */
+.disk-view { display: flex; flex-direction: column; height: 100%; }
+.disk-body { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.disk-meter { display: flex; flex-direction: column; gap: 6px; }
+.disk-bar { height: 10px; border-radius: 5px; background: var(--bg-tertiary, var(--border-color)); overflow: hidden; }
+.disk-bar span, .disk-share span { display: block; height: 100%; border-radius: inherit; }
+.disk-bar.disk-ok span { background: var(--success-color); }
+.disk-bar.disk-warn span { background: var(--warning-color); }
+.disk-bar.disk-crit span { background: var(--danger-color); }
+.disk-summary { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.disk-heading { margin: 12px 0 0; font-size: 13px; color: var(--text-secondary); }
+.disk-list { display: flex; flex-direction: column; }
+.disk-row {
+  display: grid; grid-template-columns: minmax(120px, 2fr) minmax(60px, 3fr) 80px auto;
+  gap: 10px; align-items: center; padding: 6px 4px; border-bottom: 1px solid var(--border-color); font-size: 13px;
+}
+.disk-name {
+  background: none; border: 0; padding: 0; text-align: left; color: var(--text-primary);
+  font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.disk-name.is-dir { cursor: pointer; color: var(--accent-color, var(--text-primary)); }
+.disk-name:disabled { cursor: default; opacity: 1; }
+.disk-share { height: 8px; border-radius: 4px; background: var(--bg-tertiary, var(--border-color)); overflow: hidden; }
+.disk-share span { background: var(--accent-color, var(--success-color)); opacity: 0.75; }
+.disk-size { text-align: right; font-family: var(--font-mono); white-space: nowrap; }
+.disk-cand {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start;
+  padding: 10px 8px; border-bottom: 1px solid var(--border-color); cursor: pointer;
+}
+.disk-cand.is-disabled { opacity: 0.6; cursor: default; }
+.disk-cand-main { display: flex; flex-direction: column; gap: 4px; }
+.disk-actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 8px; }
+@media (max-width: 768px) {
+  .disk-body { padding: 12px; }
+  .disk-row { grid-template-columns: 1fr auto auto; }
+  .disk-row .disk-share { display: none; }
+}

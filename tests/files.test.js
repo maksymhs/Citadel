@@ -137,3 +137,103 @@ describe('Filesystem explorer', () => {
     assert.ok(JSON.parse(res.payload).error);
   });
 });
+
+describe('Disk usage and cleanup', () => {
+  let app;
+  let authCookie;
+  let realHome;
+  const testDb = path.resolve(__dirname, '../data/test-files-usage.db');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-home-'));
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-tree-'));
+
+  before(async () => {
+    realHome = process.env.HOME;
+    process.env.HOME = home; // the agent resolves its cache locations from HOME
+    for (const suffix of ['', '-wal', '-shm']) {
+      const f = testDb + suffix;
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
+    app = await buildServer({ customDbPath: testDb, logger: false });
+    const setupRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/setup',
+      payload: { username: 'diskadmin', password: 'SuperPassword123!' },
+    });
+    authCookie = setupRes.cookies.find((c) => c.name === 'session_id').value;
+    await app.inject({
+      method: 'POST',
+      url: '/api/modules/files/state',
+      cookies: { session_id: authCookie },
+      payload: { enabled: true },
+    });
+  });
+
+  after(async () => {
+    process.env.HOME = realHome;
+    await app.close();
+    closeDatabase();
+    for (const suffix of ['', '-wal', '-shm']) {
+      const f = testDb + suffix;
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tree, { recursive: true, force: true });
+  });
+
+  test('usage ranks children by size and lists the largest files', async () => {
+    fs.mkdirSync(path.join(tree, 'big'));
+    fs.mkdirSync(path.join(tree, 'small'));
+    fs.writeFileSync(path.join(tree, 'big', 'blob.bin'), Buffer.alloc(512 * 1024, 1));
+    fs.writeFileSync(path.join(tree, 'small', 'note.txt'), 'x');
+    const res = await app.inject({ method: 'GET', url: `/api/files/usage?path=${encodeURIComponent(tree)}`, cookies: { session_id: authCookie } });
+    assert.equal(res.statusCode, 200);
+    const { usage } = JSON.parse(res.payload);
+    assert.deepEqual(usage.children.map((c) => c.name), ['big', 'small']);
+    assert.ok(usage.children[0].size >= 512 * 1024);
+    assert.equal(usage.largest[0].path, path.join(tree, 'big', 'blob.bin'));
+    assert.ok(usage.disk.total > 0);
+  });
+
+  test('cleanup requires authentication and a selection', async () => {
+    let res = await app.inject({ method: 'GET', url: '/api/files/cleanup' });
+    assert.equal(res.statusCode, 401);
+    res = await app.inject({ method: 'POST', url: '/api/files/cleanup', cookies: { session_id: authCookie }, payload: { ids: [] } });
+    assert.equal(res.statusCode, 400);
+  });
+
+  test('cleanup scans and removes only the selected category', async () => {
+    const cache = path.join(home, '.cache');
+    const npm = path.join(home, '.npm', '_cacache');
+    fs.mkdirSync(path.join(cache, 'pip'), { recursive: true });
+    fs.mkdirSync(npm, { recursive: true });
+    fs.writeFileSync(path.join(cache, 'pip', 'wheel.whl'), Buffer.alloc(64 * 1024, 2));
+    fs.writeFileSync(path.join(npm, 'entry'), 'keep me');
+
+    let res = await app.inject({ method: 'GET', url: '/api/files/cleanup', cookies: { session_id: authCookie } });
+    assert.equal(res.statusCode, 200);
+    const scan = JSON.parse(res.payload);
+    const userCache = scan.candidates.find((c) => c.id === 'user-cache');
+    assert.ok(userCache && userCache.size >= 64 * 1024);
+
+    res = await app.inject({ method: 'POST', url: '/api/files/cleanup', cookies: { session_id: authCookie }, payload: { ids: ['user-cache'] } });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.ok(body.freed >= 64 * 1024);
+    assert.deepEqual(fs.readdirSync(cache), []);
+    assert.ok(fs.existsSync(path.join(npm, 'entry')), 'unselected categories stay untouched');
+  });
+
+  test('cleanup ignores ids that are not known categories', async () => {
+    const victim = path.join(tree, 'victim.txt');
+    fs.writeFileSync(victim, 'important');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/files/cleanup',
+      cookies: { session_id: authCookie },
+      payload: { ids: [`nm:${tree}`, victim, '../../etc'] },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.payload).freed, 0);
+    assert.ok(fs.existsSync(victim));
+  });
+});

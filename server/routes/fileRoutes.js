@@ -21,6 +21,23 @@ function requirePath(value) {
   return value;
 }
 
+// Scans walk whole trees; allow one at a time so a stuck browser tab cannot
+// stack up processes on a small VPS.
+let scanBusy = false;
+async function exclusiveScan(fn) {
+  if (scanBusy) {
+    const err = new Error('A disk scan is already running. Try again in a moment.');
+    err.statusCode = 409;
+    throw err;
+  }
+  scanBusy = true;
+  try {
+    return await fn();
+  } finally {
+    scanBusy = false;
+  }
+}
+
 async function fileRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
   fastify.addHook('preHandler', requireModule('files'));
@@ -36,6 +53,47 @@ async function fileRoutes(fastify) {
     try {
       const target = request.query?.path || '/';
       return { listing: await fileService.list(target) };
+    } catch (err) {
+      return reply.status(err.statusCode || 400).send({ error: err.message });
+    }
+  });
+
+  // Disk usage of a folder: size of each child, the largest files, filesystem totals.
+  fastify.get('/api/files/usage', async (request, reply) => {
+    try {
+      const target = request.query?.path || '/';
+      return { usage: await exclusiveScan(() => fileService.usage(target)) };
+    } catch (err) {
+      return reply.status(err.statusCode || 400).send({ error: err.message });
+    }
+  });
+
+  // Reclaimable space: known caches, old logs, stale temp files, node_modules.
+  fastify.get('/api/files/cleanup', async (request, reply) => {
+    try {
+      return await exclusiveScan(() => fileService.cleanupScan());
+    } catch (err) {
+      return reply.status(err.statusCode || 400).send({ error: err.message });
+    }
+  });
+
+  // Clean the selected categories. The client sends ids only; the agent decides
+  // which paths they cover, so this can never delete an arbitrary path.
+  fastify.post('/api/files/cleanup', async (request, reply) => {
+    try {
+      const { ids } = request.body || {};
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200 || ids.some((id) => typeof id !== 'string')) {
+        return reply.status(400).send({ error: 'Select at least one category to clean.' });
+      }
+      const result = await exclusiveScan(() => fileService.cleanupRun(ids));
+      auditService.logAction({
+        userId: request.user.id,
+        action: 'disk_cleanup',
+        targetType: 'disk',
+        details: { ids, freed: result.freed },
+        ip: request.ip,
+      });
+      return result;
     } catch (err) {
       return reply.status(err.statusCode || 400).send({ error: err.message });
     }
