@@ -1637,7 +1637,7 @@ README/.env.example/architecture. No commits/pushes/deploys.
   Cloudflare 502 page).
 - Version bumped to `0.40.0`; asset cache-buster token moved to `v0400`.
 
-## 99. macOS QR drawn in the terminal only (v0.40.x)
+## 99. macOS QR drawn in the terminal only (v0.41.0)
 - The browser QR page (`scripts/qr-page.js`, `citadel qr --open`, the macOS
   installer opening it) is removed. It existed because the half-block QR did not
   scan on macOS Terminal (the font draws `▀` slightly short, leaving seams).
@@ -1653,7 +1653,7 @@ README/.env.example/architecture. No commits/pushes/deploys.
   resize path was exercised on Linux with a pseudo-terminal that honours the
   request; not run on a real Mac.
 
-## 100. macOS menu bar icon, `citadel start|stop` (v0.40.x)
+## 100. macOS menu bar icon, `citadel start|stop` (v0.41.0)
 - New `scripts/macos/CitadelMenu.swift`: a status-bar app (no Dock icon) that
   polls `/api/auth/status` every 5 s and offers Open Dashboard, Start/Stop,
   Restart, Open Log and Quit Menu Icon; actions call the `citadel` CLI.
@@ -1670,7 +1670,7 @@ README/.env.example/architecture. No commits/pushes/deploys.
   The Swift source was not compiled or run here (no macOS toolchain); the first
   install on a Mac is its first real build.
 
-## 101. macOS: disk cleanup categories and opt-in public tunnel (v0.40.x)
+## 101. macOS: disk cleanup categories and opt-in public tunnel (v0.41.0)
 - Disk cleanup is platform-aware. On macOS it offers `~/Library/Caches`
   (excluding `com.apple.*` and Homebrew's own folder), `~/Library/Logs`, Xcode
   DerivedData / Archives / iOS DeviceSupport, CoreSimulator caches and
@@ -1688,7 +1688,7 @@ README/.env.example/architecture. No commits/pushes/deploys.
   already has the tunnel agent keeps the tunnel unless `--no-tunnel` is passed.
   Linux is unchanged.
 
-## 102. Tailscale wizard and Windows (WSL2) installer (v0.40.x)
+## 102. Tailscale wizard and Windows (WSL2) installer (v0.41.0)
 - **Tailscale.** `server/services/tailscaleService.js` reads `tailscale status
   --json` / `serve status` and manages `tailscale serve` for the panel's own
   port (new `--bg --https=443` spelling first, then the pre-1.52 `serve https /`).
@@ -1714,7 +1714,7 @@ README/.env.example/architecture. No commits/pushes/deploys.
   and npm so it can never install anything. Not run on a real Windows PC; whether
   an idle WSL distro keeps Citadel running is unverified.
 
-## 103. First-run setup code and security alerts (v0.40.x)
+## 103. First-run setup code and security alerts (v0.41.0)
 - **Setup code.** The first-run screen could be claimed by whoever reached the
   panel first. `server/security/setupCode.js` keeps a one-time `XXXX-XXXX` code in
   `DATA_DIR/setup-code` (0600, no ambiguous characters, ~40 bits) that
@@ -1743,7 +1743,7 @@ README/.env.example/architecture. No commits/pushes/deploys.
   receiver). Not covered: sign-ins behind a proxy that hides client addresses all
   look like one address.
 
-## 104. macOS and Linux installers aligned (v0.40.x)
+## 104. macOS and Linux installers aligned (v0.41.0)
 - Reverses the macOS-only part of entry 101: the macOS installer opens the public
   Cloudflare Quick Tunnel by default again (`--no-tunnel` opts out), because
   creating the first administrator now needs the setup code (entry 103), which
@@ -1764,4 +1764,17 @@ README/.env.example/architecture. No commits/pushes/deploys.
   `tests/menubar.test.js` (exit codes, defaults, output order). The Linux
   installer was only exercised with `--check-only` and by reading it; not run on
   a real Mac.
+
+## 105. Release v0.41.0
+- Highlights since v0.40.0: disk usage analysis and quick cleanup in Files
+  (platform-aware, per-item selection), `citadel reset-password`, the first-run
+  setup code and security alerts, the Tailscale wizard, WSL2 support for Windows,
+  the macOS menu bar icon with `citadel start|stop`, terminal-only QR with a
+  Terminal.app-safe renderer, and Linux/macOS installers that end the same way
+  (public address, setup code, QR). Details in entries 99-104 and the disk
+  cleanup work in the commit history.
+- Known gaps: nothing here has been run on a real Mac, Windows PC or tailnet;
+  7 pre-existing tests (doctor CLI output, fleet monitor alerts, tmux copy mode)
+  still fail on this host as they did on v0.40.0.
+- Version bumped to `0.41.0`; asset cache-buster token moved to `v0410`.
 
