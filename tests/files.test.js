@@ -183,13 +183,13 @@ describe('Disk usage and cleanup', () => {
   test('usage ranks children by size and lists the largest files', async () => {
     fs.mkdirSync(path.join(tree, 'big'));
     fs.mkdirSync(path.join(tree, 'small'));
-    fs.writeFileSync(path.join(tree, 'big', 'blob.bin'), Buffer.alloc(512 * 1024, 1));
+    fs.writeFileSync(path.join(tree, 'big', 'blob.bin'), Buffer.alloc(2 * 1024 * 1024, 1));
     fs.writeFileSync(path.join(tree, 'small', 'note.txt'), 'x');
     const res = await app.inject({ method: 'GET', url: `/api/files/usage?path=${encodeURIComponent(tree)}`, cookies: { session_id: authCookie } });
     assert.equal(res.statusCode, 200);
     const { usage } = JSON.parse(res.payload);
     assert.deepEqual(usage.children.map((c) => c.name), ['big', 'small']);
-    assert.ok(usage.children[0].size >= 512 * 1024);
+    assert.ok(usage.children[0].size >= 2 * 1024 * 1024);
     assert.equal(usage.largest[0].path, path.join(tree, 'big', 'blob.bin'));
     assert.ok(usage.disk.total > 0);
   });

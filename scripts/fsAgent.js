@@ -15,8 +15,13 @@
  */
 'use strict';
 
+// Directory walks issue many parallel stat calls; the default pool of 4 threads
+// is the bottleneck. Must be set before the first filesystem call.
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
+
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
+const { spawn } = require('node:child_process');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -147,6 +152,8 @@ async function statPath(p) {
 
 const SCAN_BUDGET_MS = 40000;
 const LARGEST_FILES = 25;
+const WALK_CONCURRENCY = 16;
+const BIG_FILE_FLOOR = '1M';
 const TMP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // Never offered for cleanup: live sockets/state of running services.
 const TMP_PROTECTED = /^(tmux-|systemd-private-|snap-private-tmp|\.X11-unix|\.ICE-unix|ssh-|dbus-|citadel)/;
@@ -164,31 +171,48 @@ function diskBytes(st) {
 async function measureTree(root, ctx, topFiles) {
   const out = { size: 0, files: 0, maxMtime: 0, special: false };
   const stack = [root];
-  while (stack.length) {
-    if (Date.now() > ctx.deadline) { ctx.partial = true; break; }
-    const cur = stack.pop();
+  let active = 0;
+
+  // One worker per slot pulls paths until the stack is empty and nobody is
+  // still producing more; keeps the thread pool busy instead of walking serially.
+  const visit = async (cur) => {
     let st;
-    try { st = await fsp.lstat(cur); } catch { continue; }
-    if (st.dev !== ctx.dev) continue;
+    try { st = await fsp.lstat(cur); } catch { return; }
+    if (st.dev !== ctx.dev) return;
     if (st.mtimeMs > out.maxMtime) out.maxMtime = st.mtimeMs;
     if (st.isDirectory()) {
       out.size += diskBytes(st);
       let names;
-      try { names = await fsp.readdir(cur); } catch { ctx.unreadable += 1; continue; }
+      try { names = await fsp.readdir(cur); } catch { ctx.unreadable += 1; return; }
       for (const name of names) stack.push(path.join(cur, name));
-      continue;
+      return;
     }
     if (!st.isFile() && !st.isSymbolicLink()) out.special = true;
     if (st.nlink > 1) {
       const id = `${st.dev}:${st.ino}`;
-      if (ctx.seen.has(id)) continue;
+      if (ctx.seen.has(id)) return;
       ctx.seen.add(id);
     }
     const bytes = diskBytes(st);
     out.size += bytes;
     out.files += 1;
     if (topFiles && st.isFile()) topFiles.push({ path: cur, size: bytes, mtime: st.mtimeMs });
-  }
+  };
+
+  const worker = async () => {
+    for (;;) {
+      if (Date.now() > ctx.deadline) { ctx.partial = true; return; }
+      const next = stack.pop();
+      if (next === undefined) {
+        if (active === 0) return;
+        await new Promise((resolve) => setImmediate(resolve));
+        continue;
+      }
+      active += 1;
+      try { await visit(next); } finally { active -= 1; }
+    }
+  };
+  await Promise.all(Array.from({ length: WALK_CONCURRENCY }, worker));
   return out;
 }
 
@@ -197,17 +221,116 @@ function trimTop(list, limit) {
   list.length = Math.min(list.length, limit);
 }
 
+// --- Fast path: system du/find ---------------------------------------------
+// They walk the tree in C in one pass, which is several times faster than
+// stat-ing every entry from Node. Both run at idle CPU/IO priority so a scan of
+// "/" does not starve the panel on a small VPS. Anything unexpected falls back
+// to the portable walker above.
+
+function onPath(bin) {
+  for (const dir of (process.env.PATH || '/usr/bin:/bin').split(path.delimiter)) {
+    try { fs.accessSync(path.join(dir, bin), fs.constants.X_OK); return true; } catch { /* next */ }
+  }
+  return false;
+}
+
+function lowPriority(bin, args) {
+  let cmd = [bin, ...args];
+  if (onPath('ionice')) cmd = ['ionice', '-c3', ...cmd];
+  if (onPath('nice')) cmd = ['nice', '-n', '19', ...cmd];
+  return cmd;
+}
+
+// Streams a command's stdout as chunks to `onChunk`; resolves when it exits or
+// the deadline passes (then `timedOut` is set and the child is killed).
+function streamCommand(bin, args, deadline, onChunk) {
+  return new Promise((resolve) => {
+    const [cmd, ...rest] = lowPriority(bin, args);
+    const child = spawn(cmd, rest, { stdio: ['ignore', 'pipe', 'ignore'] });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, Math.max(1000, deadline - Date.now()));
+    child.stdout.on('data', onChunk);
+    child.on('error', () => { clearTimeout(timer); resolve({ ok: false, timedOut }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ ok: code !== null, code, timedOut }); });
+  });
+}
+
+async function duChildren(root, deadline) {
+  let buf = '';
+  const sizes = new Map();
+  const eat = (final) => {
+    const lines = buf.split('\n');
+    buf = final ? '' : lines.pop();
+    for (const line of lines) {
+      const tab = line.indexOf('\t');
+      if (tab > 0) sizes.set(line.slice(tab + 1), Number(line.slice(0, tab)) * 1024);
+    }
+  };
+  const res = await streamCommand('du', ['-x', '-a', '-k', '-d', '1', '--', root], deadline, (c) => { buf += c; eat(false); });
+  eat(true);
+  if (!res.ok || sizes.size === 0) return null;
+  return { sizes, partial: res.timedOut };
+}
+
+async function findLargest(root, deadline) {
+  const top = [];
+  let rest = '';
+  const take = (rec) => {
+    const tab = rec.indexOf('\t');
+    if (tab < 0) return;
+    top.push({ path: rec.slice(tab + 1), size: Number(rec.slice(0, tab)) * 512, mtime: null });
+    if (top.length > LARGEST_FILES * 8) trimTop(top, LARGEST_FILES);
+  };
+  const res = await streamCommand('find', [root, '-xdev', '-type', 'f', '-size', `+${BIG_FILE_FLOOR}`, '-printf', '%b\\t%p\\0'], deadline, (c) => {
+    rest += c;
+    const recs = rest.split('\0');
+    rest = recs.pop();
+    recs.forEach(take);
+  });
+  if (!res.ok || (res.code !== 0 && top.length === 0 && !res.timedOut)) return null; // e.g. find without -printf
+  trimTop(top, LARGEST_FILES);
+  return { largest: top, partial: res.timedOut };
+}
+
+async function fastUsage(root, rootStat) {
+  const deadline = Date.now() + SCAN_BUDGET_MS;
+  const [du, found] = await Promise.all([duChildren(root, deadline), findLargest(root, deadline)]);
+  if (!du || !found) return null;
+  const children = [];
+  let total = 0;
+  for (const [full, size] of du.sizes) {
+    if (full === root || full === root.replace(/\/+$/, '')) { total = size; continue; }
+    let lst;
+    try { lst = await fsp.lstat(full); } catch { continue; }
+    if (lst.dev !== rootStat.dev) {
+      children.push({ name: path.basename(full), path: full, type: 'mount', size: 0, files: 0, mtime: lst.mtimeMs, skipped: true });
+      continue;
+    }
+    const type = lst.isSymbolicLink() ? 'symlink' : lst.isDirectory() ? 'dir' : 'file';
+    children.push({ name: path.basename(full), path: full, type, size, files: null, mtime: lst.mtimeMs });
+  }
+  if (!total) total = children.reduce((sum, c) => sum + c.size, 0);
+  children.sort((a, b) => b.size - a.size);
+  const largest = [];
+  for (const f of found.largest) {
+    try { largest.push({ ...f, mtime: (await fsp.lstat(f.path)).mtimeMs }); } catch { /* removed meanwhile */ }
+  }
+  return { path: root, total, partial: du.partial || found.partial, unreadable: 0, children, largest, disk: await diskInfo(root) };
+}
+
 async function diskUsage(p) {
   const root = resolvePath(p);
   const rootStat = await fsp.lstat(root);
+  if (!rootStat.isDirectory()) {
+    return { path: root, total: diskBytes(rootStat), partial: false, children: [], largest: [], disk: await diskInfo(root) };
+  }
+  const fast = await fastUsage(root, rootStat).catch(() => null);
+  if (fast) return fast;
+
   const ctx = { dev: rootStat.dev, deadline: Date.now() + SCAN_BUDGET_MS, partial: false, unreadable: 0, seen: new Set() };
   const children = [];
   const largest = [];
   let total = diskBytes(rootStat);
-
-  if (!rootStat.isDirectory()) {
-    return { path: root, total: diskBytes(rootStat), partial: false, children: [], largest: [], disk: await diskInfo(root) };
-  }
   const names = await fsp.readdir(root).catch(() => []);
   for (const name of names) {
     const full = path.join(root, name);
@@ -305,6 +428,7 @@ async function cleanupCandidates(projectsDir) {
   await add({ id: 'old-logs', label: 'Rotated system logs', risk: 'safe', description: 'Compressed or numbered old logs in /var/log. Current logs are kept.' },
     '/var/log', oldLogs);
 
+  const tmpBudget = Date.now() + 15000;
   const staleTmp = (dir) => async () => {
     const found = [];
     for (const full of await childrenOf(dir, (n) => !TMP_PROTECTED.test(n))) {
@@ -313,7 +437,9 @@ async function cleanupCandidates(projectsDir) {
       if (uid !== null && st.uid !== uid) continue;
       if (st.mtimeMs > Date.now() - TMP_MAX_AGE_MS) continue;
       if (st.isDirectory()) {
-        const ctx = { dev: st.dev, deadline: Date.now() + 5000, partial: false, unreadable: 0, seen: new Set() };
+        // Out of time: leave the rest alone rather than guess they are stale.
+        if (Date.now() > tmpBudget) continue;
+        const ctx = { dev: st.dev, deadline: Math.min(Date.now() + 5000, tmpBudget), partial: false, unreadable: 0, seen: new Set() };
         const m = await measureTree(full, ctx, null);
         if (ctx.partial || m.special || m.maxMtime > Date.now() - TMP_MAX_AGE_MS) continue;
       } else if (!st.isFile()) {
@@ -360,13 +486,31 @@ async function cleanupCandidates(projectsDir) {
   return list;
 }
 
+// Sizes of many paths in a few du calls (-s per argument; hard links shared
+// between arguments are counted once, which is what "space freed" means).
+async function duSizes(entries, deadline) {
+  const sizes = new Map();
+  for (let i = 0; i < entries.length; i += 200) {
+    let buf = '';
+    const res = await streamCommand('du', ['-x', '-s', '-k', '--', ...entries.slice(i, i + 200)], deadline, (c) => { buf += c; });
+    if (!res.ok && !buf) return null;
+    for (const line of buf.split('\n')) {
+      const tab = line.indexOf('\t');
+      if (tab > 0) sizes.set(line.slice(tab + 1), Number(line.slice(0, tab)) * 1024);
+    }
+  }
+  return sizes;
+}
+
 async function cleanupScan(projectsDir) {
   const ctx = { deadline: Date.now() + SCAN_BUDGET_MS, partial: false, unreadable: 0, seen: new Set() };
   const candidates = await cleanupCandidates(projectsDir);
+  const fastSizes = await duSizes(candidates.flatMap((c) => c.entries), ctx.deadline).catch(() => null);
   const out = [];
   for (const c of candidates) {
     let size = 0;
     for (const entry of c.entries) {
+      if (fastSizes && fastSizes.has(entry)) { size += fastSizes.get(entry); continue; }
       if (Date.now() > ctx.deadline) { ctx.partial = true; break; }
       let st;
       try { st = await fsp.lstat(entry); } catch { continue; }
