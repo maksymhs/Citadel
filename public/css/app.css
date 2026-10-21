@@ -279,6 +279,40 @@ html.is-mobile-ui #app-container {
   background-color: var(--danger-color, #f85149);
 }
 
+
+/* Machine selector: icon tile with status dot, live/offline state, richer menu */
+.host-current { padding: 8px 10px; transition: border-color .15s ease, background-color .15s ease; }
+.host-current-on { border-color: color-mix(in srgb, var(--success-color) 35%, var(--border-color)); }
+.host-current-off { border-color: color-mix(in srgb, var(--danger-color) 40%, var(--border-color)); }
+.host-icon {
+  position: relative; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 9px; background: var(--bg-primary); color: var(--text-secondary);
+}
+.host-current-on .host-icon { color: var(--success-color); background: var(--success-bg); }
+.host-current-off .host-icon { color: var(--danger-color); background: var(--danger-bg); }
+.host-icon .host-dot { position: absolute; right: -3px; bottom: -3px; width: 10px; height: 10px; border: 2px solid var(--bg-tertiary); box-sizing: border-box; }
+.host-dot-on { animation: host-pulse 2.4s ease-out infinite; }
+.host-dot-unknown { background-color: var(--text-muted); }
+@keyframes host-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success-color) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .host-dot-on { animation: none; } }
+.host-status-text { font-weight: 600; color: var(--text-secondary); }
+.host-current-on .host-status-text { color: var(--success-color); }
+.host-current-off .host-status-text { color: var(--danger-color); }
+
+.ctx-header { padding: 6px 10px 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
+.ctx-item.ctx-host { display: flex; align-items: center; gap: 10px; min-width: 260px; }
+.ctx-host-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ctx-host-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.ctx-host .ctx-detail { margin-top: 0; max-width: 200px; }
+.ctx-host-state { flex-shrink: 0; font-size: 11px; color: var(--text-muted); }
+.ctx-item.ctx-host-active { background-color: var(--accent-bg); }
+.ctx-host-active .ctx-host-state { color: var(--accent-color); font-size: 14px; font-weight: 700; }
+.ctx-host-off .ctx-host-name { color: var(--text-secondary); }
+.ctx-host-off .ctx-host-state { color: var(--danger-color); }
+
 .nav-item {
   display: flex;
   align-items: center;

@@ -367,13 +367,30 @@
   function onContextMenuKey(e) {
     if (e.key === 'Escape') closeContextMenu();
   }
+  // Machine row of the selector menu: status dot, name, address and the
+  // current machine marked with a check. Offline machines are dimmed.
+  function hostMenuItemHtml(it, i) {
+    const label = { on: 'Online', off: 'Offline', unknown: 'Checking' }[it.status] || '';
+    return `<button type="button" class="ctx-item ctx-host${it.active ? ' ctx-host-active' : ''}${it.status === 'off' ? ' ctx-host-off' : ''}" data-ctx-idx="${i}">
+      <span class="host-dot host-dot-${it.status}"></span>
+      <span class="ctx-host-text">
+        <span class="ctx-host-name">${escapeHtml(it.label)}</span>
+        ${it.detail ? `<span class="ctx-detail" title="${escapeHtml(it.detail)}">${escapeHtml(it.detail)}</span>` : ''}
+      </span>
+      <span class="ctx-host-state">${it.active ? '✓' : escapeHtml(label)}</span>
+    </button>`;
+  }
+
   function openContextMenu(anchorEl, items) {
     closeContextMenu();
     const menu = document.createElement('div');
     menu.className = 'ctx-menu';
-    menu.innerHTML = items.map((it, i) => (it.sep
-      ? '<div class="ctx-sep"></div>'
-      : `<button type="button" class="ctx-item${it.danger ? ' ctx-danger' : ''}" data-ctx-idx="${i}">${escapeHtml(it.label)}${it.detail ? `<span class="ctx-detail" title="${escapeHtml(it.detail)}">${escapeHtml(it.detail)}</span>` : ''}</button>`)).join('');
+    menu.innerHTML = items.map((it, i) => {
+      if (it.sep) return '<div class="ctx-sep"></div>';
+      if (it.header) return `<div class="ctx-header">${escapeHtml(it.header)}</div>`;
+      if (it.status) return hostMenuItemHtml(it, i);
+      return `<button type="button" class="ctx-item${it.danger ? ' ctx-danger' : ''}" data-ctx-idx="${i}">${escapeHtml(it.label)}${it.detail ? `<span class="ctx-detail" title="${escapeHtml(it.detail)}">${escapeHtml(it.detail)}</span>` : ''}</button>`;
+    }).join('');
     document.body.appendChild(menu);
     contextMenuEl = menu;
 
@@ -741,11 +758,11 @@
   // Machine selector pinned at the top of the sidebar. The current machine is
   // always visible with a status dot; the menu lists paired hosts and the
   // pairing entry point.
-  function hostStatusClass(hostId) {
+  function hostStatusKey(hostId) {
     const online = state.hostStatus[hostId];
-    if (online === true) return ' host-dot-on';
-    if (online === false) return ' host-dot-off';
-    return '';
+    if (online === true) return 'on';
+    if (online === false) return 'off';
+    return 'unknown';
   }
 
   function activeHostName() {
@@ -775,13 +792,18 @@
 
   function hostSelectorHtml() {
     const address = activeHostAddress();
+    const status = hostStatusKey(state.activeHostId);
+    const statusText = { on: 'Online', off: 'Offline', unknown: 'Checking…' }[status];
     return `
       <div class="host-selector">
-        <button class="host-current" id="host-selector-btn" title="Switch machine${address ? ` — ${escapeHtml(address)}` : ''}">
-          <span class="host-dot${hostStatusClass(state.activeHostId)}"></span>
+        <button class="host-current host-current-${status}" id="host-selector-btn" title="Switch machine${address ? ` — ${escapeHtml(address)}` : ''}">
+          <span class="host-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+            <span class="host-dot host-dot-${status}"></span>
+          </span>
           <span class="host-current-text">
             <span class="host-current-name">${escapeHtml(activeHostName())}</span>
-            ${address ? `<span class="host-current-url">${escapeHtml(address)}</span>` : ''}
+            <span class="host-current-url"><b class="host-status-text">${statusText}</b>${address ? ` · ${escapeHtml(address)}` : ''}</span>
           </span>
           <span class="host-chevron">▾</span>
         </button>
@@ -789,17 +811,22 @@
   }
 
   function openHostMenu(anchorEl) {
-    const items = [{
-      label: `${state.activeHostId === 'local' ? '● ' : '○ '}${(state.hostIdentity && state.hostIdentity.name) || 'This machine'} (local)`,
-      detail: localHostAddress(),
-      onSelect: () => switchHost('local'),
-    }];
+    const items = [
+      { header: 'Machines' },
+      {
+        label: `${(state.hostIdentity && state.hostIdentity.name) || 'This machine'} (this machine)`,
+        detail: localHostAddress(),
+        status: hostStatusKey('local'),
+        active: state.activeHostId === 'local',
+        onSelect: () => switchHost('local'),
+      },
+    ];
     for (const host of state.hosts) {
-      const online = state.hostStatus[host.id];
-      const dot = online === true ? '● ' : online === false ? '○ ' : '◌ ';
       items.push({
-        label: `${dot}${host.name}`,
+        label: host.name,
         detail: hostAddress(host.baseUrl),
+        status: hostStatusKey(host.id),
+        active: state.activeHostId === host.id,
         onSelect: () => switchHost(host.id),
       });
     }
