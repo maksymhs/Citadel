@@ -2139,6 +2139,19 @@
     return { term, fitAddon };
   }
 
+  // Hover-only mouse motion (SGR button code 32|3, no button held) is what
+  // floods a shell with literal "[<35;12;5M" text when tmux or an agent leaves
+  // any-event tracking on. Nothing useful depends on it; clicks, drags and the
+  // wheel (tmux scroll/selection) are kept.
+  const MOUSE_HOVER_RE = /\x1b\[<(\d+);\d+;\d+[Mm]/g;
+  function stripMouseHover(data) {
+    if (data.indexOf('\x1b[<') === -1) return data;
+    return data.replace(MOUSE_HOVER_RE, (seq, code) => {
+      const c = Number(code);
+      return (c & 64) === 0 && (c & 32) !== 0 && (c & 3) === 3 ? '' : seq;
+    });
+  }
+
   function createTerminalItem({ sessionId, name, projectId = null, kind = 'project', viewport = null }) {
     const containerEl = document.createElement('div');
     containerEl.className = 'terminal-element';
@@ -2155,6 +2168,8 @@
     };
 
     term.onData((data) => {
+      data = stripMouseHover(data);
+      if (!data) return;
       // Sticky Ctrl from the on-screen keys turns the next letter into a control key.
       if (item.ctrl && data.length === 1) {
         const code = data.toUpperCase().charCodeAt(0);
