@@ -291,3 +291,14 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   authenticated on this host.
 - Verification: lint clean; the suite last ran as 486 tests, 485 pass, 0 fail, 1 skipped
   (v0.42.1). Only this file, version fields and the cache-buster changed afterwards.
+
+## 114. Automatic GitHub Releases for version tags
+- `.github/workflows/release.yml` runs on every pushed tag `vX.Y.Z` (release-candidate
+  tags do not match) and creates the GitHub Release, marked Latest, with that version's
+  section of `CHANGELOG.md` as its notes (`scripts/release-notes.js`, tested in
+  `tests/release-notes.test.js`). An existing Release is left alone. Before this, Releases
+  had to be created by hand (the repository only had `v0.2.0`; v0.42.0 to v0.42.2 were
+  created once through the API).
+- Known gaps: the workflow itself has never run (it can only run on GitHub); the first tag
+  pushed after this is its real test. The changelog must be committed before the tag is
+  pushed, otherwise the Release gets a generic note.

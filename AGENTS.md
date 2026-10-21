@@ -111,6 +111,8 @@ A release is a `chore(release): vX.Y.Z` commit that:
 1. bumps `version` in `package.json` and `package-lock.json`;
 2. moves the `?v=` token on assets in `public/index.html` (`v0410` for 0.41.0);
 3. adds a "Release vX.Y.Z" entry to `docs/engineering-execution-state.md`;
-4. is followed by the `vX.Y.Z` tag, then `node scripts/changelog.js` and a commit of `CHANGELOG.md` (and the "Latest" table in the README **Releases** section).
+4. updates the "Latest" table in the README **Releases** section;
+5. includes `CHANGELOG.md`: create the tag locally first, run `node scripts/changelog.js` (it needs the tag to list the version), `git commit --amend` the result into the release commit and move the tag (`git tag -f vX.Y.Z`). Do this before pushing anything;
+6. is pushed to `main`, then the tag. The tag triggers `.github/workflows/release.yml`, which creates the GitHub Release (marked Latest) with that version's changelog section as its notes (`node scripts/release-notes.js vX.Y.Z` previews them). If the Release does not appear, check the repository's Actions tab; if it already exists the workflow leaves it alone.
 
 The updater's **stable** channel follows the newest `vX.Y.Z` tag, so a tag is what ships to users.
