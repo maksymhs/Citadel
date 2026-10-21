@@ -93,7 +93,6 @@
   // Default dashboard widget order. Widgets whose module is disabled/unavailable
   // are dropped at render time so the layout always stays valid.
   const DEFAULT_DASHBOARD_WIDGETS = ['machines', 'fleet'];
-  const WIDGET_REQUIRES = { fleet: 'fleet', metrics: 'metrics' };
 
   function loadUiState() {
     try {
@@ -125,10 +124,6 @@
       : state.modulesById;
     const m = source[id];
     return m ? Boolean(m.enabled) : false;
-  }
-
-  function moduleState(id) {
-    return state.modulesById[id] || null;
   }
 
   async function loadModules() {
@@ -435,7 +430,6 @@
       </div>
     `;
 
-    const overlay = document.getElementById('active-modal-overlay');
     const close = () => {
       document.removeEventListener('keydown', onKeydown);
       root.innerHTML = '';
@@ -2302,24 +2296,6 @@
     renderSidebarNav();
   }
 
-  async function closeSysTerminal(sessionId) {
-    const item = state.sysTerminals.get(sessionId);
-    if (item) {
-      disposeTerminalItem(item);
-      state.sysTerminals.delete(sessionId);
-    }
-    await api(`/api/terminals/${sessionId}`, { method: 'DELETE' }).catch(() => {});
-    await loadSessions();
-
-    if (state.sysTerminals.size > 0) {
-      const nextId = Array.from(state.sysTerminals.keys())[0];
-      const nextItem = state.sysTerminals.get(nextId);
-      activateSysTerminal(nextId, nextItem.name);
-    } else {
-      renderSysTerminalTabs();
-    }
-  }
-
   // 3. Workspace (system shell or a project's persistent terminals)
   function resolveWorkspaceContext() {
     if (state.workspaceContext === 'system') return 'system';
@@ -2609,28 +2585,6 @@
   // handled there. Kept as a function so existing call sites stay valid.
   function renderTerminalTabs() {
     renderSidebarNav();
-  }
-
-  async function closeTerminalSession(sessionId) {
-    const item = state.terminals.get(sessionId);
-    if (item) {
-      disposeTerminalItem(item);
-      state.terminals.delete(sessionId);
-    }
-
-    // Tell backend to kill PTY / tmux (even if this client never attached it).
-    await api(`/api/terminals/${sessionId}`, { method: 'DELETE' }).catch(() => {});
-    await loadSessions();
-
-    const remaining = Array.from(state.terminals.entries())
-      .filter(([, it]) => it.projectId === state.activeProjectId);
-
-    if (remaining.length > 0) {
-      const [nextId, nextItem] = remaining[0];
-      activateTerminalSession(nextId, nextItem.name);
-    } else {
-      renderTerminalTabs();
-    }
   }
 
   function enableTouchScroll(element, term, getItem) {

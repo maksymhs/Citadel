@@ -24,11 +24,26 @@ describe('Fleet monitor: health, history, alerts and actions', () => {
   const hooks = [];
   // Mutable fake remote machine.
   const remote = { down: false, legacy: false, disk: 40 };
+  let realGetHealth;
 
   before(async () => {
     cleanDb(testDb);
     // Never let the restart endpoint signal the test runner itself.
     process.env.CITADEL_ALLOW_RESTART = '0';
+
+    // The alert tests set thresholds against fake remote machines; this machine's own
+    // load, memory and disk must not be able to raise alerts of their own.
+    const nodeService = require('../server/services/nodeService');
+    realGetHealth = nodeService.getHealth;
+    nodeService.getHealth = async function getHealth(...args) {
+      const h = await realGetHealth.apply(this, args);
+      return {
+        ...h,
+        loadPerCore: 0.1,
+        memory: { ...h.memory, usedPercent: 30 },
+        disk: h.disk && { ...h.disk, usedPercent: 40 },
+      };
+    };
 
     upstream = http.createServer((req, res) => {
       if (remote.down) {
@@ -99,6 +114,7 @@ describe('Fleet monitor: health, history, alerts and actions', () => {
   });
 
   after(async () => {
+    delete require('../server/services/nodeService').getHealth; // back to the prototype method
     await app.close();
     require('../server/database/db').closeDatabase();
     cleanDb(testDb);

@@ -4,7 +4,6 @@
 const { requireAuth } = require('../security/auth');
 const nodeService = require('../services/nodeService');
 const terminalManager = require('../services/terminalManager');
-const gitService = require('../services/gitService');
 const proxyProvider = require('../services/proxyProvider');
 const dockerService = require('../services/dockerService');
 const updateService = require('../services/updateService');

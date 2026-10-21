@@ -21,14 +21,12 @@ describe('Peer pairing (invite + accept)', () => {
   const testDb = path.resolve(__dirname, '../data/test-pairing.db');
   let app;
   let cookie;
-  let baseUrl;
 
   before(async () => {
     cleanDb(testDb);
     const { buildServer } = require('../server/index');
     app = await buildServer({ customDbPath: testDb, logger: false });
     await app.listen({ port: 0, host: '127.0.0.1' });
-    baseUrl = `http://127.0.0.1:${app.server.address().port}`;
 
     const setup = await app.inject({
       method: 'POST',

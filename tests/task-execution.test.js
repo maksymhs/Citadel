@@ -14,7 +14,6 @@ function cleanDb(file) {
 }
 
 const PAST = () => new Date(Date.now() - 1000).toISOString();
-const FUTURE = () => new Date(Date.now() + 60 * 1000).toISOString();
 
 function leaseOf(id) {
   const row = getDatabase().prepare('SELECT lease_until FROM tasks WHERE id = ?').get(id);

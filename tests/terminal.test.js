@@ -1,3 +1,8 @@
+// A host configured with an admin terminal user would run the global session as that
+// user, under its own tmux server, which these tests cannot see. config.js reads the
+// variable when first loaded, so clear it before any require.
+delete process.env.TERMINAL_ADMIN_USER;
+
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');

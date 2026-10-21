@@ -11,7 +11,6 @@ const { spawnSync } = require('node:child_process');
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-uninstall-'));
 const fakeBin = path.join(base, 'fakebin');
 const scriptDir = path.join(base, 'scripts');
-const LOG = path.join(base, 'calls.log');
 
 function makeFake(name) {
   const file = path.join(fakeBin, name);
