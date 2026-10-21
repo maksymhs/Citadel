@@ -2,6 +2,16 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.42.1](https://github.com/maksymhs/Citadel/releases/tag/v0.42.1) · 2026-10-21
+
+### Fixed
+
+- **tests**: Make monitor and terminal tests independent of the host; drop dead code
+
+### Changed
+
+- **ui**: Split app.js into feature scripts and add a jsdom UI smoke test
+
 ## [0.42.0](https://github.com/maksymhs/Citadel/releases/tag/v0.42.0) · 2026-10-21
 
 ### Added

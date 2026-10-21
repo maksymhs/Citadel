@@ -262,3 +262,17 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   the top of the README is enough. The extra images (terminal, files, machine health,
   selector, phone) and the code that produced them are gone; `scripts/screenshots.js` now
   only builds the two dashboard images (dark and light) from the isolated demo instance.
+
+## 112. Release v0.42.1
+- Highlights since v0.42.0: `public/js/app.js` split into feature scripts (`files`,
+  `pairing`, `fleet`, `activity`, `repos`, `deployments`) with a jsdom UI smoke test;
+  monitor and terminal tests made independent of the host they run on; lint clean;
+  architecture guide rewritten, feature map, ledger split into history and recent,
+  graph benchmark protocol; dashboard screenshot in the README.
+- Verification: `node --test` gives 486 tests, 485 pass, 0 fail, 1 skipped (the
+  update-rollback no-systemd branch). Lint is clean.
+- Known gaps: the moved screens were rendered in jsdom but not clicked through in a
+  real browser; Graphify has not been measured; the macOS Full Disk Access flow from
+  0.42.0 has not been run on a real Mac.
+- Version bumped to `0.42.1`; asset cache-buster token moved to `v0421` (new scripts
+  were added, so browsers must not reuse cached copies of `app.js`).
