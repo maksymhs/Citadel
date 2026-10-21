@@ -3,7 +3,7 @@
 # Citadel — friendly management CLI
 #   citadel status | url | qr | logs | restart | update | help
 #   citadel doctor | network | wifi list | wifi connect | repair
-#   citadel start | stop | menubar [on|off]   (menubar: macOS only)
+#   citadel start | stop | menubar [on|off] | permissions [open]   (macOS only: menubar, permissions)
 #   citadel reset-password [--list | username] | setup-code
 #   citadel power [status|on|off]
 # Installed as /usr/local/bin/citadel (a thin launcher for this file).
@@ -78,6 +78,8 @@ Citadel CLI
   citadel restart        Restart the service
   citadel menubar [on|off|status]
                          macOS menu bar icon: status, open dashboard, start/stop
+  citadel permissions [open]
+                         macOS: one-time Full Disk Access so macOS stops asking per folder
   citadel update         Update to the latest version
   citadel tunnel         Expose the panel globally via a Cloudflare tunnel
                          (--domain=HOST --token=TOKEN for your own domain)
@@ -244,6 +246,14 @@ case "$cmd" in
     esac
     exec env CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" PORT="$PORT" CITADEL_TARGET_DIR="$(dirname "$APP_DIR")" \
       bash "$APP_DIR/scripts/menubar-macos.sh" "$action"
+    ;;
+
+  permissions)
+    if [ "$OS" != "Darwin" ]; then
+      echo "Full Disk Access is a macOS permission; nothing to do on this system." >&2
+      exit 1
+    fi
+    exec env DATA_DIR="$DATA_DIR" node "$APP_DIR/scripts/permissions.js" "$@"
     ;;
 
   restart)

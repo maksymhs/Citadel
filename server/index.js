@@ -52,6 +52,7 @@ const meshService = require('./services/meshService');
 const secretSyncService = require('./services/secretSyncService');
 const updateRolloutService = require('./services/updateRolloutService');
 const monitorService = require('./services/monitorService');
+const macPermissions = require('./services/macPermissions');
 
 async function buildServer(options = {}) {
   // Only honour X-Forwarded-* from explicitly trusted peers (default loopback).
@@ -217,6 +218,7 @@ async function startServer() {
   logService.record({ category: 'system', action: 'server_started', message: `Citadel started (v${APP_VERSION}).` });
   logService.startSampler();
   monitorService.start();
+  macPermissions.start(DATA_DIR);
 
   // Peer address announcements. A Cloudflare Quick Tunnel URL changes on every
   // restart, so paired hosts re-learn this host's current address shortly after
@@ -279,6 +281,7 @@ async function startServer() {
         clearTimeout(announceStartup);
         logService.stopSampler();
         monitorService.stop();
+        macPermissions.stop();
         await fastify.close();
         closeDatabase();
         console.log('[Citadel] Server and database closed cleanly.');

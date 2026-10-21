@@ -1778,3 +1778,21 @@ README/.env.example/architecture. No commits/pushes/deploys.
   still fail on this host as they did on v0.40.0.
 - Version bumped to `0.41.0`; asset cache-buster token moved to `v0410`.
 
+
+## 107. macOS Full Disk Access helper
+- macOS asked for permission per protected folder because the LaunchAgent runs `node`
+  and everything it starts (terminals, tmux, git, agents) as separate binaries. One
+  Full Disk Access grant removes the folder prompts; it can only be made by the user
+  in System Settings (or an MDM profile), so it cannot be scripted.
+- `server/services/macPermissions.js`: the service probes two folders only listable
+  with Full Disk Access and writes `DATA_DIR/permissions.json` every minute (macOS
+  only). `citadel permissions [open]` (`scripts/permissions.js`) reports it, opens the
+  right System Settings pane and reveals the real `node` path. The macOS installer
+  prints a one-line pointer on fresh installs. Documented in `docs/installation.md`.
+- Verified with fakes on Linux (`tests/mac-permissions.test.js`: probe results, status
+  file, report text, `open` arguments) plus the existing menubar/CLI/WSL suites.
+- Known gaps: never run on a real Mac. Unknown whether tmux-spawned terminals are
+  covered by the node grant or need tmux allowed too; the docs tell the user to allow
+  `tmux` and any program a prompt names. Local Network, Automation, Photos and camera
+  prompts are separate permissions and are not covered. `brew upgrade node` changes the
+  real path and loses the grant.

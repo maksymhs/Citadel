@@ -41,6 +41,19 @@ The macOS installer behaves like the Linux one: it opens a public Cloudflare Qui
 
 On macOS only, the installer also tries to add a **menu bar icon** (next to the clock) that shows whether Citadel is running and lets you open the dashboard in the browser, start, stop or restart the service and open the log. It is a tiny Swift app built on your Mac, so it needs the Xcode Command Line Tools (`xcode-select --install`) and a graphical login session; without them (or over SSH) the install still finishes from the command line and tells you how to add the icon later. Skip it with `--no-menubar` (or `CITADEL_NO_MENUBAR=1`), and add or remove it later with `citadel menubar on|off`. **Disk → Quick clean** on macOS looks at `~/Library/Caches` (not `com.apple.*`), `~/Library/Logs`, Xcode (`DerivedData`, archives, device support), simulator caches and Homebrew, plus the cross-platform project and cache categories; it never reads `~/Downloads` or the Trash, which would trigger a macOS permission prompt. On Terminal.app the QR is drawn with coloured cells (no glyphs, so no seams) and the window is enlarged if the code does not fit.
 
+## macOS permissions (Full Disk Access)
+
+macOS asks for permission each time the Citadel service, or a terminal, agent or `git` it starts, first touches a protected folder (Desktop, Documents, Downloads, iCloud Drive, external or network disks). Granting **Full Disk Access** once removes those prompts:
+
+```bash
+citadel permissions open   # opens Privacy & Security > Full Disk Access and shows the file in Finder
+citadel permissions        # what the service sees, and which files to allow
+```
+
+Drag the file shown into the list (or **+**, then `Cmd+Shift+G` to type the path) and switch it on. Allow the real `node` path and, if terminal prompts remain, `tmux`; if a prompt names another program, allow that one too. The service re-checks every minute and records the result in `DATA_DIR/permissions.json`, so `citadel permissions` reports whether it worked without a restart.
+
+Limits you cannot script around: macOS only lets the user grant this in System Settings (Screen Sharing works if the Mac is across the room), or an organisation's MDM profile. It does **not** cover *Local Network* (macOS 15+ when pairing over a LAN address), Automation, Accessibility, Photos, camera or microphone, which are separate prompts. After `brew upgrade node` the real path changes and the grant is lost: repeat the steps and remove the old entry.
+
 ## Security alerts
 
 Besides machine alerts (offline, disk, memory, CPU), the panel can tell you about security events through the same channels (webhook, ntfy, Telegram; **Settings → Alerts**, on by default): a sign-in from an address that user has not used before, repeated failed sign-ins (from one address, or spread over many), a machine that pairs with this one (it gets administrator access), the first administrator being created, a setup code that had to be replaced, and a password reset with `citadel reset-password`. Each message names the machine. Every event is also in the activity log under the `security` category even when pushing is off. Behind a proxy that hides client addresses the "new address" check cannot tell clients apart (see `CITADEL_TRUST_PROXY`).

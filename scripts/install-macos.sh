@@ -271,4 +271,7 @@ fi
 if ! command -v tmux >/dev/null 2>&1; then
   echo "  Note: install tmux (brew install tmux) for persistent terminal sessions."
 fi
+if [ "$UPDATE_MODE" = false ]; then
+  echo "  To stop macOS asking permission folder by folder, allow Citadel once: citadel permissions open"
+fi
 echo "  Manage with: citadel status | qr | update | tunnel   (add $CLI_DIR to PATH if needed)"
