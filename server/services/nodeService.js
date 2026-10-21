@@ -7,6 +7,8 @@ const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const { getDatabase } = require('../database/db');
 const { DATA_DIR } = require('../config');
+const { getMemory } = require('./memoryStats');
+const { getTemperature } = require('./temperature');
 
 const PROCESS_LIMIT_DEFAULT = 15;
 const PROCESS_LIMIT_MAX = 100;
@@ -45,9 +47,7 @@ class LocalNodeService extends INodeService {
    * Return hardware, OS, and software info for the current node
    */
   async getNodeInfo() {
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
+    const { totalBytes: totalMem, freeBytes: freeMem, usedBytes: usedMem } = getMemory();
     const cpus = os.cpus();
 
     // Query active counts from SQLite
@@ -95,9 +95,7 @@ class LocalNodeService extends INodeService {
    * Return lightweight current metrics for real-time monitoring
    */
   async getMetrics() {
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
+    const { totalBytes: totalMem, freeBytes: freeMem, usedBytes: usedMem } = getMemory();
 
     return {
       nodeId: this.nodeId,
@@ -114,8 +112,7 @@ class LocalNodeService extends INodeService {
    * Disk usage covers the data directory's filesystem (where projects live).
    */
   async getHealth() {
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
+    const mem = getMemory();
     const cores = os.cpus().length || 1;
     const load1 = os.loadavg()[0];
 
@@ -153,10 +150,11 @@ class LocalNodeService extends INodeService {
       load1: round(load1, 2),
       loadPerCore: round(load1 / cores, 2),
       memory: {
-        totalBytes: totalMem,
-        usedPercent: Math.round(((totalMem - freeMem) / totalMem) * 100),
+        totalBytes: mem.totalBytes,
+        usedPercent: mem.usedPercent,
       },
       disk,
+      temperature: getTemperature(),
       activeTerminals,
     };
   }

@@ -285,6 +285,7 @@
               <div><span>Uptime</span><strong>${esc(fmtDuration(hl.uptimeSeconds))}</strong></div>
               <div><span>Load (1m)</span><strong>${esc(String(hl.load1))}</strong></div>
               <div><span>Cores</span><strong>${esc(String(hl.cores))}</strong></div>
+              ${hl.temperature ? `<div><span>${hl.temperature.source === 'battery' ? 'Battery temp' : 'CPU temp'}</span><strong>${esc(String(Math.round(hl.temperature.celsius)))} °C</strong></div>` : ''}
               ${hl.disk ? `<div><span>Disk size</span><strong>${esc(fmtBytes(hl.disk.totalBytes))}</strong></div>` : ''}
               ${host.latencyMs !== null && !host.isLocal ? `<div><span>Latency</span><strong>${host.latencyMs} ms</strong></div>` : ''}
               <div><span>Terminals</span><strong>${esc(String(hl.activeTerminals ?? 0))}</strong></div>

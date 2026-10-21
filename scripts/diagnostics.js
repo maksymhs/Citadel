@@ -470,6 +470,10 @@ function collectMemory(deps) {
   } else {
     total = deps.os.totalmem();
     available = deps.os.freemem();
+    if (typeof deps.os.platform === 'function' && deps.os.platform() === 'darwin') {
+      // os.freemem() ignores reclaimable cache on macOS; use the vm_stat-based figure.
+      available = require('../server/services/memoryStats').getMemory().freeBytes;
+    }
     swapTotal = null;
     swapFree = null;
   }
