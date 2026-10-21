@@ -160,16 +160,58 @@
     refreshTimer = setInterval(draw, 15000);
   }
 
-  function spark(points, key, { max = 100, cls = '' } = {}) {
+  // Filled sparkline for the gauge cards: line + soft gradient underneath,
+  // coloured by the card's level through currentColor.
+  function areaSpark(points, key, { max = 100 } = {}) {
     const vals = points.map((p) => p[key]);
-    if (vals.filter((v) => v !== null && v !== undefined).length < 2) return '<div class="mon-muted">Not enough data yet.</div>';
+    if (vals.filter((v) => v !== null && v !== undefined).length < 2) return '<div class="mon-spark-empty">Collecting data…</div>';
     const w = 300;
-    const h = 44;
-    const top = Math.max(max, ...vals.filter((v) => v !== null));
+    const h = 56;
+    const top = Math.max(max, ...vals.filter((v) => v !== null && v !== undefined));
     const step = w / Math.max(1, points.length - 1);
-    const path = vals.map((v, i) => (v === null || v === undefined ? null : `${(i * step).toFixed(1)},${(h - (v / top) * (h - 4) - 2).toFixed(1)}`))
-      .filter(Boolean).join(' ');
-    return `<svg class="mon-spark ${cls}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img"><polyline fill="none" stroke="currentColor" stroke-width="1.6" points="${path}"/></svg>`;
+    const pts = vals
+      .map((v, i) => (v === null || v === undefined ? null : [i * step, h - (v / top) * (h - 6) - 3]))
+      .filter(Boolean);
+    const line = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+    const area = `${pts[0][0].toFixed(1)},${h} ${line} ${pts[pts.length - 1][0].toFixed(1)},${h}`;
+    return `<svg class="mon-area" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-hidden="true">
+      <polygon points="${area}" fill="currentColor" opacity="0.14"/>
+      <polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" points="${line}"/>
+    </svg>`;
+  }
+
+  function levelLabel(cls) {
+    return { 'mon-lvl-ok': 'Healthy', 'mon-lvl-warn': 'Elevated', 'mon-lvl-crit': 'Critical', 'mon-lvl-none': 'No data' }[cls];
+  }
+
+  // One metric card: ring, status pill, human detail line and 24h trend.
+  function gaugeCard(esc, { label, value, warn, crit, detail, points, key, max }) {
+    const v = Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : null;
+    const cls = levelClass(v, warn, crit);
+    return `<div class="card mon-gauge ${cls}">
+      <div class="mon-gauge-top">
+        ${ring(esc, label, v, warn, crit)}
+        <div class="mon-gauge-meta">
+          <span class="mon-gauge-label">${esc(label)}</span>
+          <span class="mon-pill">${esc(levelLabel(cls))}</span>
+          <span class="mon-gauge-detail">${esc(detail || '')}</span>
+        </div>
+      </div>
+      <div class="mon-gauge-trend">${areaSpark(points, key, { max })}<span class="mon-muted">last 24 h</span></div>
+    </div>`;
+  }
+
+  function kpiTile(esc, label, value, sub, tone) {
+    return `<div class="mon-kpi${tone ? ` mon-kpi-${tone}` : ''}">
+      <span class="mon-kpi-label">${esc(label)}</span>
+      <strong class="mon-kpi-value">${esc(String(value))}</strong>
+      ${sub ? `<span class="mon-kpi-sub">${esc(sub)}</span>` : ''}
+    </div>`;
+  }
+
+  function uptimeTone(p) {
+    if (p === null || p === undefined) return '';
+    return p >= 99 ? 'ok' : p >= 95 ? 'warn' : 'crit';
   }
 
   function downBand(points) {
@@ -276,39 +318,47 @@
         const hl = host.health;
         const load = hl ? Math.min(100, Math.round((hl.loadPerCore || 0) * 100)) : null;
         const events = (hist.events || []).slice(0, 8);
+        const mem = hl && hl.memory;
+        const dsk = hl && hl.disk;
+        const memDetail = mem && Number.isFinite(mem.totalBytes)
+          ? `${fmtBytes(Number.isFinite(mem.usedBytes) ? mem.usedBytes : (mem.totalBytes * (mem.usedPercent || 0)) / 100)} of ${fmtBytes(mem.totalBytes)} in use`
+          : '';
+        const dskDetail = dsk && Number.isFinite(dsk.totalBytes)
+          ? `${fmtBytes(Number.isFinite(dsk.freeBytes) ? dsk.freeBytes : dsk.totalBytes * (1 - (dsk.usedPercent || 0) / 100))} free of ${fmtBytes(dsk.totalBytes)}`
+          : '';
+        const cpuDetail = hl ? `Load ${hl.load1} · ${hl.cores} core${hl.cores === 1 ? '' : 's'}` : '';
+        const av24 = hist.uptime;
+        const av7 = host.uptime7d;
         body.innerHTML = `
-          ${hl ? `<div class="card mon-overview-rings">
-            ${ring(esc, 'CPU', load, 70, 100)}
-            ${ring(esc, 'Memory', hl.memory && hl.memory.usedPercent, 80, 95)}
-            ${ring(esc, 'Disk', hl.disk && hl.disk.usedPercent, 80, 90)}
-            <div class="mon-facts">
-              <div><span>Uptime</span><strong>${esc(fmtDuration(hl.uptimeSeconds))}</strong></div>
-              <div><span>Load (1m)</span><strong>${esc(String(hl.load1))}</strong></div>
-              <div><span>Cores</span><strong>${esc(String(hl.cores))}</strong></div>
-              ${hl.temperature ? `<div><span>${hl.temperature.source === 'battery' ? 'Battery temp' : 'CPU temp'}</span><strong>${esc(String(Math.round(hl.temperature.celsius)))} °C</strong></div>` : ''}
-              ${hl.disk ? `<div><span>Disk size</span><strong>${esc(fmtBytes(hl.disk.totalBytes))}</strong></div>` : ''}
-              ${host.latencyMs !== null && !host.isLocal ? `<div><span>Latency</span><strong>${host.latencyMs} ms</strong></div>` : ''}
-              <div><span>Terminals</span><strong>${esc(String(hl.activeTerminals ?? 0))}</strong></div>
-            </div>
-          </div>` : `<div class="card mon-muted">${offline ? esc(host.error || 'Not responding.') : 'No detailed metrics: update this machine to see load, memory and disk.'}</div>`}
-          <div class="card">
-            <div class="mon-detail-grid">
-              <div><div class="mon-muted">Availability 24h</div><strong>${hist.uptime === null ? '—' : `${hist.uptime}%`}</strong></div>
-              <div><div class="mon-muted">Availability 7d</div><strong>${host.uptime7d === null ? '—' : `${host.uptime7d}%`}</strong></div>
-              <div><div class="mon-muted">Version</div><strong>${esc(host.version || '—')}</strong></div>
-            </div>
-            ${downBand(hist.points)}
-            <div class="mon-charts">
-              <div><div class="mon-muted">Memory %</div>${spark(hist.points, 'memPercent')}</div>
-              <div><div class="mon-muted">Disk %</div>${spark(hist.points, 'diskPercent')}</div>
-              <div><div class="mon-muted">CPU load / core</div>${spark(hist.points, 'loadPerCore', { max: 1 })}</div>
-              ${host.isLocal ? '' : `<div><div class="mon-muted">Latency ms</div>${spark(hist.points, 'latencyMs', { max: 100 })}</div>`}
-            </div>
+          ${hl ? `<div class="mon-gauges">
+            ${gaugeCard(esc, { label: 'CPU', value: load, warn: 70, crit: 100, detail: cpuDetail, points: hist.points, key: 'loadPerCore', max: 1 })}
+            ${gaugeCard(esc, { label: 'Memory', value: mem && mem.usedPercent, warn: 80, crit: 95, detail: memDetail, points: hist.points, key: 'memPercent' })}
+            ${gaugeCard(esc, { label: 'Disk', value: dsk && dsk.usedPercent, warn: 80, crit: 90, detail: dskDetail, points: hist.points, key: 'diskPercent' })}
           </div>
-          <div class="card">
-            <div class="mon-muted" style="margin-bottom:6px;">Recent incidents</div>
-            ${events.length ? `<ul class="mon-events">${events.map((e) => `<li><span class="mon-muted">${esc(new Date(e.ts).toLocaleString())}</span> ${esc(e.message || e.action)}</li>`).join('')}</ul>`
-    : '<div class="mon-muted">None in the last 30 days.</div>'}
+          <div class="mon-kpis">
+            ${kpiTile(esc, 'Uptime', fmtDuration(hl.uptimeSeconds), 'since last boot')}
+            ${kpiTile(esc, 'Terminals', hl.activeTerminals ?? 0, 'persistent sessions')}
+            ${hl.temperature ? kpiTile(esc, hl.temperature.source === 'battery' ? 'Battery temp' : 'CPU temp', `${Math.round(hl.temperature.celsius)} °C`, 'current', hl.temperature.celsius >= 85 ? 'crit' : hl.temperature.celsius >= 70 ? 'warn' : 'ok') : ''}
+            ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24))}
+            ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7))}
+            ${host.latencyMs !== null && host.latencyMs !== undefined && !host.isLocal ? kpiTile(esc, 'Latency', `${host.latencyMs} ms`, 'round trip') : kpiTile(esc, 'Version', host.version ? `v${host.version}` : '—', 'Citadel')}
+          </div>` : `<div class="card mon-muted">${offline ? esc(host.error || 'Not responding.') : 'No detailed metrics: update this machine to see load, memory and disk.'}</div>
+          <div class="mon-kpis">
+            ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24))}
+            ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7))}
+          </div>`}
+          <div class="mon-panels">
+            <div class="card mon-panel">
+              <div class="mon-panel-head"><h3>Availability</h3><span class="mon-muted">last 24 h</span></div>
+              ${downBand(hist.points) || '<div class="mon-muted">No history yet.</div>'}
+              <div class="mon-band-legend"><span><i class="up"></i>Online</span><span><i class="part"></i>Degraded</span><span><i class="down"></i>Offline</span></div>
+              ${host.isLocal ? '' : `<div class="mon-panel-sub"><div class="mon-muted">Latency (ms)</div>${areaSpark(hist.points, 'latencyMs', { max: 100 })}</div>`}
+            </div>
+            <div class="card mon-panel">
+              <div class="mon-panel-head"><h3>Recent incidents</h3><span class="mon-muted">${events.length ? `${events.length} latest` : 'last 30 days'}</span></div>
+              ${events.length ? `<ul class="mon-timeline">${events.map((e) => `<li><i></i><div><span>${esc(e.message || e.action)}</span><small class="mon-muted">${esc(new Date(e.ts).toLocaleString())}</small></div></li>`).join('')}</ul>`
+    : '<div class="mon-allclear"><span>✓</span>All clear — no incidents in the last 30 days.</div>'}
+            </div>
           </div>`;
       } catch (err) { fail(err); }
       return;
