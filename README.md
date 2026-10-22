@@ -218,6 +218,8 @@ Then open <http://127.0.0.1:3000>.
 
 Contributing, with a human or an AI agent? [AGENTS.md](AGENTS.md) explains how the project is organised, how to make common changes, which docs to update and how releases work.
 
+See also [CONTRIBUTING.md](CONTRIBUTING.md), the [security policy](SECURITY.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Questions and ideas are welcome in [Discussions](https://github.com/maksymhs/Citadel/discussions).
+
 <details>
 <summary><b>Repository layout</b></summary>
 
