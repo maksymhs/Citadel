@@ -54,6 +54,19 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     });
     assert.equal(setup.status, 200, 'first-run setup should succeed on an empty data directory');
     const cookie = setup.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+    const mission = await fetch(`${base}/api/missions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        goal: 'Render the office smoke mission',
+        title: 'Office smoke',
+        plan: { tasks: [
+          { title: 'Inspect the shell', role: 'analyst' },
+          { title: 'Render the room', role: 'frontend', deps: [0] },
+        ] },
+      }),
+    });
+    assert.equal(mission.status, 201, 'the smoke mission should be created');
 
     const jar = new CookieJar();
     for (const c of cookie.split('; ')) jar.setCookieSync(c, base);
@@ -87,7 +100,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('every feature script registers and the app shell renders', () => {
-    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing']) {
+    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelMissions', 'CitadelKnowledge']) {
       assert.equal(typeof w[name], 'object', `window.${name} is missing`);
     }
     assert.ok(w.document.querySelector('.nav-item'), 'the sidebar should render after sign-in');
@@ -95,7 +108,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('main screens open without script errors', async () => {
-    for (const view of ['files', 'settings', 'projects', 'dashboard']) {
+    for (const view of ['files', 'settings', 'projects', 'dashboard', 'work', 'docs', 'learning']) {
       const link = w.document.querySelector(`.nav-item[data-view="${view}"]`);
       assert.ok(link, `nav item ${view} should exist`);
       link.click();
@@ -105,10 +118,23 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
+  test('the mission office renders a desk for every subtask', async () => {
+    await w.CitadelMissions.renderMissionsView();
+    await sleep(700);
+    const officeTab = w.document.querySelector('[data-action="tab"][data-tab="office"]');
+    assert.ok(officeTab, 'the Office tab should exist');
+    officeTab.click();
+    await sleep(400);
+    assert.ok(w.document.querySelector('.ms-office'), 'the office should render');
+    assert.equal(w.document.querySelectorAll('.ms-desk').length, 2, 'two subtasks should get two desks');
+    assert.equal(w.document.querySelectorAll('.ms-bubble').length, 2, 'each desk should show a status bubble');
+    assert.deepEqual(errors, []);
+  });
+
   test('screens reached from other screens render through their entry points', async () => {
     const entries = [
       ['CitadelRepos', 'renderReposView'], ['CitadelActivity', 'renderActivityView'], ['CitadelFleet', 'renderFleetView'],
-      ['CitadelDeployments', 'renderDeploymentsView'], ['CitadelDeployments', 'renderDockerView'], ['CitadelFiles', 'renderFilesView'],
+      ['CitadelDeployments', 'renderDeploymentsView'], ['CitadelDeployments', 'renderDockerView'], ['CitadelFiles', 'renderFilesView'], ['CitadelMissions', 'renderMissionsView'],
     ];
     for (const [global, fn] of entries) {
       await w[global][fn]();

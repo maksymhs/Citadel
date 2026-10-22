@@ -20,6 +20,7 @@ Which files make up each feature. Start here when a task is phrased in product t
 | Tailscale private address | `tailscaleRoutes` → `tailscaleService` | `settings-tailscale.js` | `tailscale` | [remote-access](remote-access.md) |
 | Activity, audit, service log, metrics | `logRoutes`, `systemRoutes` → `logService`, `auditService`, `serviceLogService` | `activity.js` | `logs`, `system`, `ui-smoke` | [installation](installation.md) |
 | Task mesh, sentinel, MCP | `taskRoutes` → `taskService`; `scripts/sentinel*.js`, `citadel-mcp.js` | — | `tasks`, `task-*`, `sentinel*`, `mcp` | [task-mesh](task-mesh.md) |
+| Work, Docs, Learning (autonomous loop, Markdown wiki, memory) | `missionRoutes`/`learningRoutes`/`docRoutes` → `missionService`/`learningService`/`docService`, `taskService` | `missions.js`, `knowledge.js` | `missions*`, `learning`, `docs`, `knowledge-http`, `ui-smoke` | [missions](missions.md) |
 | Fleet (legacy URL + token hosts) | `fleetRoutes` → `fleetService` | `fleet.js` | `fleet`, `ui-smoke` | [architecture §4](architecture.md) |
 | Domain publishing, Docker (optional) | `proxyRoutes`, `dockerRoutes` → `proxyProvider`, `dockerService` | `deployments.js` | `integrations`, `ui-smoke` | [architecture](architecture.md) |
 | Modules and plugins | `moduleRoutes`, `pluginRoutes` → `modules/registry.js`, `pluginLoader` | `app.js` | `modules`, `plugins` | [architecture §2](architecture.md) |

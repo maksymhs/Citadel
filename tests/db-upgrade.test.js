@@ -80,10 +80,21 @@ describe('In-place database upgrade (older install → current schema)', () => {
     for (const col of ['worker_protocol', 'exec_id', 'reconcile_state', 'attempt', 'claim_token', 'result', 'agent', 'prompt']) {
       assert.ok(taskCols.includes(col), `tasks.${col} should exist after migration`);
     }
+    for (const col of ['title', 'mission_id', 'role', 'deps', 'stage', 'handoff_ref', 'exclusive']) {
+      assert.ok(taskCols.includes(col), `tasks.${col} should exist after migration`);
+    }
+    const missionTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'missions'").get();
+    assert.ok(missionTable, 'missions table should exist after migration');
+    const missionCols = db.prepare('PRAGMA table_info(missions)').all().map((c) => c.name);
+    for (const col of ['goal', 'status', 'planner_task_id', 'workspace', 'plan', 'error']) {
+      assert.ok(missionCols.includes(col), `missions.${col} should exist after migration`);
+    }
 
     // Indexes that depended on the new columns now exist.
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all().map((r) => r.name);
     assert.ok(indexes.includes('idx_tasks_reconcile'));
+    assert.ok(indexes.includes('idx_tasks_mission'));
+    assert.ok(indexes.includes('idx_missions_status'));
 
     // The legacy project was backfilled as its primary repository (once).
     const repos = db.prepare('SELECT * FROM project_repos WHERE project_id = ?').all('p1');

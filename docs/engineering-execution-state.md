@@ -302,3 +302,77 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Known gaps: the workflow itself has never run (it can only run on GitHub); the first tag
   pushed after this is its real test. The changelog must be committed before the tag is
   pushed, otherwise the Release gets a generic note.
+
+## 115. Agent missions MVP (branch `feat/agent-missions`)
+- Added a validated mission DAG on top of the existing task queue: `missions`
+  table, mission columns on `tasks` (`title`, `mission_id`, `role`, `deps`,
+  `stage`, `handoff_ref`, `exclusive`), migrations `011_agent_missions` and
+  `012_task_title`, and an `idx_tasks_mission` index created after the columns
+  exist. The title is stored explicitly so the board and office show the plan's
+  task names instead of "Untitled task".
+- `missionService` validates plans (bounded size, role/agent whitelist, earlier
+  dependencies only, no commands or paths), preflights agents for both creation
+  and imported plans, writes `goal.md`, `plan.json`, `decisions.md` and handoffs
+  under `CITADEL_MISSIONS_DIR`, releases blocked tasks when dependencies are
+  done, ingests a planner's `plan.json` or JSON result, and cascades
+  cancellation. Workspace reads resolve symlinks and refuse to leave the
+  mission directory. `taskService` gained mission metadata, a `blocked`
+  cancellation path, an exclusive-task claim guard per project and a
+  post-completion mission notification.
+- New admin-only `missionRoutes`, module `missions` (enabled by default) and a
+  `public/js/missions.js` screen with a seven-column kanban (including
+  cancelling), dependency hints, priority controls, cancel/import-plan actions,
+  a wiki tab over the workspace files and an **Office** tab: a pixel-art room
+  with one desk per subtask, typing/status animations, a coffee corner for done
+  agents, a day/night cycle and no external assets. Mission metadata detection
+  skips agent version probes so opening the screen and enqueuing a plan stay
+  fast.
+- Verification: full `npm test` gives 508 tests, 507 pass, 0 fail, 1 skipped;
+  lint clean. Covered by `tests/missions.test.js` (12),
+  `tests/missions-http.test.js` (6), `tests/db-upgrade.test.js` (2, extended),
+  task service suites (70) and `tests/ui-smoke.test.js`. A seeded mission was
+  rendered through the real nav in jsdom (7 columns, 2 cards, wiki, office) with
+  no JS errors. The Office tab was also rendered in headless Chromium at 1320px
+  and 430px with six desks covering done/running/failed/blocked/queued, two
+  loungers, active typing animations and no horizontal overflow.
+- Known gaps: no git worktrees or merge gate yet, so parallel writers rely on
+  the `exclusive` flag; only claude/opencode/codex have a headless mapping;
+  missions execute only while a sentinel is running, and the UI only warns when
+  no node heartbeat is recent. Not exercised in a real browser with a live
+  agent and sentinel.
+
+## 116. Work, Docs and Learning — autonomous loop on the task mesh
+
+- Extended the uncommitted agent-missions work rather than replacing it. The
+  `missions` module now exposes three views: Work (missions, acceptance criteria,
+  task review), Docs (Markdown wiki per project) and Learning (structured
+  project/global memory). Migration 013 adds `tasks.acceptance`, `refs`,
+  `autonomous`, `blocked_reason`, `retry_at`, `review_note`, `quota_count`,
+  `learning_recorded`, `missions.plan_version`, `missions.used_lessons`, plus
+  `mission_plan_versions`, `lessons` and `documents`.
+- Autonomous work is a single-agent guard on `tasks.autonomous`: `claimTask`
+  refuses a second autonomous claim anywhere in the instance, while manual queue
+  work and terminals stay independent. Dependencies, leases, claim tokens,
+  cancellation confirmation and restart reconciliation remain the task mesh.
+- Quota/rate-limit failures move an autonomous task to `quota`, clear the sticky
+  failure state and set a `retry_at` cooldown (`CITADEL_QUOTA_COOLDOWN_MS`,
+  default 15 min, 1 min–24 h). It is a next check, not a claimed reset time.
+- Added plan validation (roles, deps, agents, acceptance, size), plan version
+  history, revisions that keep completed evidence, corrections, explicit
+  accept/reject review of a finished task, and docs/lesson context in planning.
+- `learningService` records failures, successes after retry and user corrections;
+  dedupes deterministically; redacts secrets; retrieval is project-first then
+  explicitly promoted global lessons; `used_lessons` makes applied memory visible.
+  `docService` keeps Markdown in the checkout, metadata in SQLite, refuses
+  overwrites, path/symlink escapes and credential-looking content.
+- UI: Work/Docs/Learning nav; Work filters (including quota), task detail with
+  acceptance, correction and review actions, plan revision and used lessons;
+  Docs editor with Git-pending indicator; Learning list and lesson actions.
+- Verified: `npm run lint` clean; full suite `npm test` 529 pass, 0 fail, 1
+  skipped (530 tests); targeted missions/learning/docs/knowledge-http/ui-smoke
+  suites 26/26 after the review changes. `tests/ui-smoke.test.js` now renders
+  Work, Docs and Learning through the real nav and loads `CitadelKnowledge`.
+- Known gaps: acceptance is operator-reviewed, not automatically proven by a
+  test command; no paid inference is added; not exercised end-to-end with a live
+  sentinel and real agent quotas. Docs writes are plain checkout edits (no commit
+  or merge gate).

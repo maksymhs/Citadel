@@ -33,7 +33,20 @@ Citadel provides **logical separation** between projects: each project has its o
 - **In-panel updater** (opt-in: `--enable-updater`, disabled by default and with `--no-updater`): installs a root-owned helper at `/usr/local/sbin/citadel-update` and a sudoers rule allowing the service user to run *only* that helper as root. Before executing it the server verifies the helper is a regular, root-owned file that is not group/other-writable. The privilege granted is narrow (no arbitrary commands), and the helper only pulls the configured branch.
 - **Network exposure**: the server binds `127.0.0.1` and trusts forwarded headers only from the local loopback proxy (`CITADEL_TRUST_PROXY`, default `loopback`). LAN binding (`--lan`/`--host`) and the Cloudflare tunnel (`--tunnel`) are explicit opt-ins, so a fresh install is never published before the administrator account exists.
 - **Git credential helper**: the installer registers a system git credential helper (`/usr/local/bin/citadel-git-credential`) that resolves the host to a provider and decrypts the stored token on demand, so project terminals can `git push` without storing tokens in clear text. Only the service user that owns `DATA_DIR` (and thus `secret.key`) can decrypt them.
-- **Path validation**: an ad-hoc terminal directory sent by the client and the recursive deletion of project files are validated against the managed tree (`PROJECTS_DIR`). The *import* project operation deliberately allows registering any host directory chosen by the administrator (it is an intentional feature, not a vulnerability, and it requires authentication).
+- **Path validation**: an ad-hoc terminal directory sent by the client and the recursive deletion of project files are validated against the managed tree (`PROJECTS_DIR`). Docs paths are resolved against both the canonical project and docs roots, only Markdown files are accepted, and symlinks may not escape; autonomous mission files stay under `CITADEL_MISSIONS_DIR`. The *import* project operation deliberately allows registering any host directory chosen by the administrator (it is an intentional feature, not a vulnerability, and it requires authentication).
 - **WebSocket origin validation**: connections without an `Origin` header (non-browser clients, scripts) are accepted, but in all cases a valid authenticated session via cookie or token is required.
 - **Optional integrations**: Caddy and Docker are only queried when available locally. The Caddy admin API must keep listening on `127.0.0.1:2019` and never be exposed publicly; Docker is accessed only through the local, read-only Unix socket for inspection.
 - **No absolute security guarantee**: Citadel reduces the exposure surface through `HttpOnly`/`SameSite=Strict` cookies, origin validation, rate limiting, security headers and structured process execution, but it does not replace a security review specific to each deployment.
+
+
+## Autonomous work and memory boundaries
+
+Work, Docs and Learning are administrator-only and can be disabled as the
+`missions` module. Mission plans are untrusted model output: the server accepts
+only roles, earlier-task indices, installed agents and bounded acceptance
+criteria, never commands, binaries or paths. One autonomous agent may run at a
+time across the instance; manual queue work and persistent terminals are not
+serialised by that guard. Learning content is advisory and redacted before
+storage; only an explicit operator promotion makes a lesson global, and no
+lesson can change a security policy. Rejected task results and global promotions
+are written to the audit log. See [missions](missions.md).

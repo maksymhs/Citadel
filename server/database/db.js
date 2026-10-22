@@ -216,6 +216,146 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: '011_agent_missions',
+    up: (db) => {
+      // A mission is the durable "mini-Jira" project around a team of agent
+      // tasks. Tasks keep their own lifecycle (claims, leases, retries); the
+      // mission only groups them and records the dependency DAG, the role and
+      // the handoff file. Additive and idempotent for fresh databases.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS missions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          project_id TEXT,
+          goal TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'planning',
+          planner_agent TEXT,
+          planner_task_id TEXT,
+          workspace TEXT NOT NULL,
+          plan TEXT,
+          error TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          finished_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_missions_status ON missions(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_missions_project ON missions(project_id);
+      `);
+      if (!columnExists(db, 'tasks', 'mission_id')) db.exec('ALTER TABLE tasks ADD COLUMN mission_id TEXT');
+      if (!columnExists(db, 'tasks', 'role')) db.exec('ALTER TABLE tasks ADD COLUMN role TEXT');
+      if (!columnExists(db, 'tasks', 'deps')) db.exec('ALTER TABLE tasks ADD COLUMN deps TEXT');
+      if (!columnExists(db, 'tasks', 'stage')) db.exec('ALTER TABLE tasks ADD COLUMN stage INTEGER NOT NULL DEFAULT 0');
+      if (!columnExists(db, 'tasks', 'handoff_ref')) db.exec('ALTER TABLE tasks ADD COLUMN handoff_ref TEXT');
+      if (!columnExists(db, 'tasks', 'exclusive')) db.exec('ALTER TABLE tasks ADD COLUMN exclusive INTEGER NOT NULL DEFAULT 0');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_mission ON tasks(mission_id, created_at)');
+    },
+  },
+  {
+    name: '012_task_title',
+    up: (db) => {
+      // The board and office show a human title; the prompt alone made every
+      // mission card look like "Untitled task".
+      if (!columnExists(db, 'tasks', 'title')) db.exec('ALTER TABLE tasks ADD COLUMN title TEXT');
+    },
+  },
+  {
+    name: '013_autonomous_learning_docs',
+    up: (db) => {
+      // Work: acceptance criteria, references and the autonomous-loop controls.
+      // `autonomous` marks only mission work, so the single-autonomous-agent
+      // guard never serialises manually enqueued tasks. `blocked_reason` and
+      // `retry_at` represent quota/network pauses without inventing a reset time.
+      for (const [column, definition] of [
+        ['acceptance', 'TEXT'],
+        ['refs', 'TEXT'],
+        ['autonomous', 'INTEGER NOT NULL DEFAULT 0'],
+        ['blocked_reason', 'TEXT'],
+        ['retry_at', 'TEXT'],
+        ['review_note', 'TEXT'],
+        ['quota_count', 'INTEGER NOT NULL DEFAULT 0'],
+        ['learning_recorded', 'INTEGER NOT NULL DEFAULT 0'],
+      ]) {
+        if (!columnExists(db, 'tasks', column)) db.exec(`ALTER TABLE tasks ADD COLUMN ${column} ${definition}`);
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_tasks_autonomous
+        ON tasks(status, autonomous) WHERE autonomous = 1;
+      `);
+
+      // Compact plan history: a revision never destroys the plan it replaced.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mission_plan_versions (
+          id TEXT PRIMARY KEY,
+          mission_id TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          plan TEXT NOT NULL,
+          reason TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mission_plan_versions
+        ON mission_plan_versions(mission_id, version);
+      `);
+
+      if (!columnExists(db, 'missions', 'plan_version')) db.exec('ALTER TABLE missions ADD COLUMN plan_version INTEGER NOT NULL DEFAULT 0');
+      if (!columnExists(db, 'missions', 'used_lessons')) db.exec('ALTER TABLE missions ADD COLUMN used_lessons TEXT');
+
+      // Structured, recoverable memory. Text only: no logs, no conversations and
+      // no embeddings. dedupe_key makes repeated observations update a row
+      // instead of multiplying near-identical lessons.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS lessons (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL DEFAULT 'project',
+          status TEXT NOT NULL DEFAULT 'pending',
+          project_id TEXT,
+          task_id TEXT,
+          mission_id TEXT,
+          title TEXT NOT NULL,
+          problem TEXT,
+          context TEXT,
+          root_cause TEXT,
+          root_cause_confirmed INTEGER NOT NULL DEFAULT 0,
+          solution TEXT,
+          rule TEXT,
+          components TEXT,
+          evidence TEXT,
+          tags TEXT,
+          source TEXT,
+          occurrences INTEGER NOT NULL DEFAULT 1,
+          dedupe_key TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          confirmed_at TEXT,
+          superseded_by TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_lessons_dedupe ON lessons(dedupe_key) WHERE dedupe_key IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_lessons_scope ON lessons(scope, status, project_id);
+        CREATE INDEX IF NOT EXISTS idx_lessons_project ON lessons(project_id, status);
+      `);
+
+      // Document metadata only: the Markdown body stays in the project checkout,
+      // versioned by the project's own Git history.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS documents (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          path TEXT NOT NULL,
+          title TEXT,
+          task_id TEXT,
+          mission_id TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(project_id, path)
+        );
+        CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id, path);
+      `);
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -431,11 +571,114 @@ function initDatabase(customPath = null) {
       result TEXT,
       exit_code INTEGER,
       error TEXT,
+      title TEXT,
+      mission_id TEXT,
+      role TEXT,
+      deps TEXT,
+      stage INTEGER NOT NULL DEFAULT 0,
+      handoff_ref TEXT,
+      exclusive INTEGER NOT NULL DEFAULT 0,
+      acceptance TEXT,
+      refs TEXT,
+      autonomous INTEGER NOT NULL DEFAULT 0,
+      blocked_reason TEXT,
+      retry_at TEXT,
+      review_note TEXT,
+      quota_count INTEGER NOT NULL DEFAULT 0,
+      learning_recorded INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       started_at TEXT,
       finished_at TEXT
     );
+
+    -- A mission groups agent tasks into a validated DAG. The tasks table keeps
+    -- its own lifecycle; this row is the durable project/goal and the workspace
+    -- where handoffs and notes live.
+    CREATE TABLE IF NOT EXISTS missions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      project_id TEXT,
+      goal TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'planning',
+      planner_agent TEXT,
+      planner_task_id TEXT,
+      workspace TEXT NOT NULL,
+      plan TEXT,
+      plan_version INTEGER NOT NULL DEFAULT 0,
+      used_lessons TEXT,
+      error TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_missions_status ON missions(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_missions_project ON missions(project_id);
+    -- tasks.autonomous is added by migration 013 on existing installs, so its
+    -- index is created there (never before the column exists).
+    -- tasks.mission_id is added by migration 011 for existing installs, so its
+    -- index is created there too (never before the column exists).
+
+    CREATE TABLE IF NOT EXISTS mission_plan_versions (
+      id TEXT PRIMARY KEY,
+      mission_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      plan TEXT NOT NULL,
+      reason TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mission_plan_versions
+    ON mission_plan_versions(mission_id, version);
+
+    -- Structured learning memory. Project lessons stay scoped to their project;
+    -- global lessons exist only after an explicit promotion.
+    CREATE TABLE IF NOT EXISTS lessons (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL DEFAULT 'project',
+      status TEXT NOT NULL DEFAULT 'pending',
+      project_id TEXT,
+      task_id TEXT,
+      mission_id TEXT,
+      title TEXT NOT NULL,
+      problem TEXT,
+      context TEXT,
+      root_cause TEXT,
+      root_cause_confirmed INTEGER NOT NULL DEFAULT 0,
+      solution TEXT,
+      rule TEXT,
+      components TEXT,
+      evidence TEXT,
+      tags TEXT,
+      source TEXT,
+      occurrences INTEGER NOT NULL DEFAULT 1,
+      dedupe_key TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      confirmed_at TEXT,
+      superseded_by TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_lessons_dedupe ON lessons(dedupe_key) WHERE dedupe_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_lessons_scope ON lessons(scope, status, project_id);
+    CREATE INDEX IF NOT EXISTS idx_lessons_project ON lessons(project_id, status);
+
+    -- Metadata and links only: document bodies live as Markdown in the project.
+    CREATE TABLE IF NOT EXISTS documents (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      title TEXT,
+      task_id TEXT,
+      mission_id TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(project_id, path)
+    );
+    CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id, path);
 
     -- Nodes that run sentinels and report their load via heartbeat.
     CREATE TABLE IF NOT EXISTS nodes (

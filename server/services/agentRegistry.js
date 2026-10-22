@@ -180,9 +180,13 @@ class AgentRegistry {
   }
 
   /**
-   * Get all registered agents with their live detection status
+   * Get all registered agents with their live detection status.
+   *
+   * `versions: false` skips the per-binary version probe (up to a few seconds
+   * each). Mission planning only needs to know whether a binary is runnable, so
+   * it must not pay that cost once per subtask.
    */
-  listAgents() {
+  listAgents({ versions = true } = {}) {
     const db = getDatabase();
     // Load custom configured paths or agents from DB
     const customConfigRow = db.prepare("SELECT value FROM app_config WHERE key = 'custom_agents'").get();
@@ -200,7 +204,7 @@ class AgentRegistry {
     return allDefs.map((def) => {
       const resolvedPath = this.findBinary(def.binaryName, def.customPath);
       const installed = Boolean(resolvedPath);
-      const version = installed ? this.getBinaryVersion(resolvedPath, def.versionArg) : null;
+      const version = installed && versions ? this.getBinaryVersion(resolvedPath, def.versionArg) : null;
 
       return {
         id: def.id,
@@ -219,8 +223,8 @@ class AgentRegistry {
   /**
    * Get single agent by ID
    */
-  getAgent(agentId) {
-    const list = this.listAgents();
+  getAgent(agentId, options = {}) {
+    const list = this.listAgents(options);
     return list.find((a) => a.id === agentId) || null;
   }
 

@@ -179,6 +179,21 @@ const MODULES = [
     capabilities: ['fleet:manage'],
   },
   {
+    id: 'missions',
+    name: 'Agent Missions',
+    description: 'Plan and run a team of CLI agents with roles, dependencies and a shared workspace.',
+    core: false,
+    defaultEnabled: true,
+    requires: { modules: [], services: [] },
+    views: [
+      { id: 'work', title: 'Work' },
+      { id: 'docs', title: 'Docs' },
+      { id: 'learning', title: 'Learning' },
+    ],
+    widgets: [],
+    capabilities: ['missions:create', 'missions:cancel', 'docs:write', 'learning:manage'],
+  },
+  {
     id: 'metrics',
     name: 'Advanced Metrics',
     description: 'Historical resource samples, charts and metric export.',

@@ -56,8 +56,22 @@ function toPublicTask(row, { includeClaimToken = false } = {}) {
     cmd: row.cmd,
     args: parseJson(row.args, []),
     priority: row.priority,
+    title: row.title || null,
     agent: row.agent || null,
     prompt: row.prompt || null,
+    missionId: row.mission_id || null,
+    role: row.role || null,
+    deps: parseJson(row.deps, []),
+    stage: row.stage || 0,
+    handoffRef: row.handoff_ref || null,
+    exclusive: Boolean(row.exclusive),
+    acceptance: parseJson(row.acceptance, []),
+    refs: parseJson(row.refs, []),
+    autonomous: Boolean(row.autonomous),
+    blockedReason: row.blocked_reason || null,
+    retryAt: row.retry_at || null,
+    reviewNote: row.review_note || null,
+    quotaCount: row.quota_count || 0,
     attempt: row.attempt || 0,
     maxAttempts: row.max_attempts || DEFAULT_MAX_ATTEMPTS,
     workerProtocol: row.worker_protocol || 1,
@@ -119,13 +133,37 @@ function resolveAgentCommand(agent, prompt) {
   const build = AGENT_HEADLESS[agent];
   if (!build) throw new Error(`Agent "${agent}" has no headless command mapping.`);
   const agentRegistry = require('./agentRegistry');
-  const info = agentRegistry.getAgent(agent);
+  // Version probing is expensive and irrelevant to execution: only the binary
+  // path and installed flag are used here.
+  const info = agentRegistry.getAgent(agent, { versions: false });
   if (!info) throw new Error(`Agent "${agent}" not found in the registry.`);
   if (!info.installed || !info.path) throw new Error(`Agent "${info.name}" is not installed on this host.`);
   return { cmd: info.path, args: build(String(prompt)) };
 }
 
-function enqueue({ cmd, args, projectPath, priority, node, agent, prompt, maxAttempts } = {}) {
+function enqueue({
+  cmd,
+  args,
+  projectPath,
+  priority,
+  node,
+  agent,
+  prompt,
+  maxAttempts,
+  title,
+  missionId,
+  role,
+  deps,
+  stage,
+  handoffRef,
+  exclusive,
+  status,
+  acceptance,
+  refs,
+  autonomous,
+  blockedReason,
+  retryAt,
+} = {}) {
   let cleanCmd = String(cmd || '').trim();
   let cleanArgs = Array.isArray(args) ? args.map((a) => String(a)) : [];
   let agentId = null;
@@ -133,6 +171,18 @@ function enqueue({ cmd, args, projectPath, priority, node, agent, prompt, maxAtt
   const cleanMaxAttempts = Number.isFinite(maxAttempts)
     ? Math.min(Math.max(Math.trunc(maxAttempts), 1), MAX_MAX_ATTEMPTS)
     : DEFAULT_MAX_ATTEMPTS;
+  // Mission subtasks may start blocked until their dependencies are done.
+  const initialStatus = ['blocked', 'quota'].includes(status) ? status : 'queued';
+  const cleanDeps = Array.isArray(deps)
+    ? deps.map((d) => String(d)).filter(Boolean)
+    : [];
+  const cleanTitle = title ? String(title).trim().slice(0, 200) : null;
+  const cleanAcceptance = Array.isArray(acceptance)
+    ? acceptance.map((a) => String(a).trim()).filter(Boolean).slice(0, 20)
+    : [];
+  const cleanRefs = Array.isArray(refs)
+    ? refs.map((r) => String(r).trim()).filter(Boolean).slice(0, 50)
+    : [];
 
   if (agent) {
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -151,10 +201,15 @@ function enqueue({ cmd, args, projectPath, priority, node, agent, prompt, maxAtt
   const now = new Date().toISOString();
 
   getDatabase().prepare(`
-    INSERT INTO tasks (id, status, node, project_path, cmd, args, priority, agent, prompt, max_attempts, created_at, updated_at)
-    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (
+      id, status, node, project_path, cmd, args, priority, agent, prompt,
+      max_attempts, title, mission_id, role, deps, stage, handoff_ref, exclusive,
+      acceptance, refs, autonomous, blocked_reason, retry_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
+    initialStatus,
     node ? String(node) : null,
     projectPath ? String(projectPath) : null,
     cleanCmd,
@@ -163,6 +218,18 @@ function enqueue({ cmd, args, projectPath, priority, node, agent, prompt, maxAtt
     agentId,
     promptText,
     cleanMaxAttempts,
+    cleanTitle,
+    missionId ? String(missionId) : null,
+    role ? String(role) : null,
+    JSON.stringify(cleanDeps),
+    Number.isFinite(stage) ? Math.trunc(stage) : 0,
+    handoffRef ? String(handoffRef) : null,
+    exclusive ? 1 : 0,
+    JSON.stringify(cleanAcceptance),
+    JSON.stringify(cleanRefs),
+    autonomous ? 1 : 0,
+    blockedReason ? String(blockedReason) : null,
+    retryAt ? String(retryAt) : null,
     now,
     now
   );
@@ -179,10 +246,34 @@ function enqueue({ cmd, args, projectPath, priority, node, agent, prompt, maxAtt
   return getTask(id);
 }
 
-function listTasks({ status, node, limit = 100 } = {}) {
+/**
+ * Let the mission layer react to a terminal task (release dependants, ingest a
+ * planner plan, refresh mission status). Kept outside the task transaction on
+ * purpose: plan ingestion can enqueue more work and probe agent binaries, which
+ * must never hold the task write lock. A missed notification is recovered when
+ * the mission is read, because refreshMission() is idempotent.
+ */
+function notifyMission(task) {
+  if (!task || !task.missionId) return;
+  try {
+    require('./missionService').onTaskChanged(task.missionId);
+  } catch (err) {
+    logService.record({
+      level: 'warn',
+      category: 'task',
+      taskId: task.id,
+      action: 'mission_notify_failed',
+      message: `Mission refresh after task change failed: ${err.message}`,
+    });
+  }
+}
+
+function listTasks({ status, node, missionId, autonomous, limit = 100 } = {}) {
   const where = [];
   const params = [];
   if (status) { where.push('status = ?'); params.push(status); }
+  if (missionId) { where.push('mission_id = ?'); params.push(missionId); }
+  if (autonomous !== undefined) { where.push('autonomous = ?'); params.push(autonomous ? 1 : 0); }
   if (node) { where.push('node = ?'); params.push(node); }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const capped = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
@@ -361,10 +452,32 @@ function claimTask(node, { protocol } = {}) {
     const now = new Date().toISOString();
     const reclaim = reclaimExpired(db, now);
 
+    // An exclusive mission task is only claimable when no other exclusive task
+    // is running in the same project. This keeps front/back agents from writing
+    // the same checkout at once without adding a second scheduler. Tasks with
+    // no project (plain queue work) are not serialised.
     const candidate = db.prepare(`
-      SELECT * FROM tasks
-      WHERE status = 'queued' AND (node IS NULL OR node = ?)
-      ORDER BY priority DESC, created_at ASC
+      SELECT * FROM tasks AS t
+      WHERE t.status = 'queued' AND (t.node IS NULL OR t.node = ?)
+        AND (
+          t.exclusive = 0 OR t.project_path IS NULL OR NOT EXISTS (
+            SELECT 1 FROM tasks AS running
+            WHERE running.exclusive = 1
+              AND running.project_path IS t.project_path
+              AND running.status IN ('running', 'cancelling')
+          )
+        )
+        -- Autonomous work is strictly one attempt at a time across the whole
+        -- instance. Manual queue work is untouched: the guard only looks at
+        -- rows explicitly created by the mission loop.
+        AND (
+          t.autonomous = 0 OR NOT EXISTS (
+            SELECT 1 FROM tasks AS auto
+            WHERE auto.autonomous = 1
+              AND auto.status IN ('running', 'cancelling')
+          )
+        )
+      ORDER BY t.priority DESC, t.created_at ASC
       LIMIT 1
     `).get(cleanNode);
     if (!candidate) return { row: null, reclaim };
@@ -559,11 +672,12 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
         : 'Task completed.'),
     details: { exitCode: task.exitCode, resultRef: task.resultRef, attempt: task.attempt },
   });
+  notifyMission(task);
   return task;
 }
 
 /**
- * Request cancellation of a queued or running task.
+ * Request cancellation of a queued, blocked or running task.
  *
  * Idempotent: cancelling an already `cancelling`/`cancelled` task returns its
  * current state instead of failing, so retries and concurrent HTTP requests are
@@ -590,15 +704,15 @@ function cancelTask(id) {
     if (row.status === 'cancelling' || row.status === 'cancelled') {
       return { row, idempotent: true };
     }
-    if (!['queued', 'running'].includes(row.status)) {
+    if (!['queued', 'blocked', 'quota', 'running'].includes(row.status)) {
       throw new Error('Task not found or already finished.');
     }
 
-    if (row.status === 'queued') {
+    if (['queued', 'blocked', 'quota'].includes(row.status)) {
       db.prepare(`
         UPDATE tasks SET status = 'cancelled', finished_at = ?, updated_at = ?
-        WHERE id = ? AND status = 'queued'
-      `).run(now, now, id);
+        WHERE id = ? AND status = ?
+      `).run(now, now, id, row.status);
     } else {
       const hasExecutionEvidence = Number.isInteger(row.exec_pid)
         || (row.worker_protocol || 1) >= WORKER_PROTOCOL_JOURNAL;
@@ -634,6 +748,7 @@ function cancelTask(id) {
         ? 'Cancellation requested; waiting for the worker to confirm termination.'
         : 'Task cancelled.'),
   });
+  notifyMission(task);
   return task;
 }
 
@@ -1108,6 +1223,7 @@ function listNodes() {
 
 module.exports = {
   LEASE_MS,
+  AGENT_HEADLESS,
   enqueue,
   listTasks,
   getTask,
