@@ -4,7 +4,8 @@ A mission gives one goal to a small team of CLI agents. It is deliberately a thi
 layer over the [task mesh](task-mesh.md): every subtask is a normal row in
 `tasks`, so claims, leases, retries, cancellation, result capture and
 reconciliation are unchanged. The mission adds the parts a queue does not have:
-roles, a validated dependency DAG, a shared workspace and a board/wiki/office.
+roles, a validated dependency DAG, an acceptance review, a shared workspace and a
+board/wiki.
 
 Open **Work**, **Docs** and **Learning** in the sidebar (one module, `missions`,
 enabled by default; every route is administrator-only). The autonomous loop is
@@ -13,7 +14,7 @@ scheduler and no database besides SQLite.
 
 | View | What it is |
 | --- | --- |
-| **Work** | Missions (mini-Jira): goal, validated task DAG, roles/acceptance criteria, board, office and workspace. |
+| **Work** | Missions (mini-Jira): goal, validated task DAG, roles/acceptance criteria, board, acceptance review and workspace. |
 | **Docs** | Mini-Confluence: Markdown pages inside each project checkout, metadata in SQLite, Git pending indicator. |
 | **Learning** | Structured project/global memory of failures, resolutions and explicit user corrections. |
 
@@ -75,9 +76,10 @@ Keep `CITADEL_CAPACITY` low on small machines: each slot is a full agent process
 An `exclusive` task is only claimed when no other exclusive task is running in
 the same project, which keeps two writers out of one checkout.
 
-## Board, office, priority and cancellation
+## Board, priority and cancellation
 
-- Columns: Blocked, Ready, In progress, Cancelling, Done, Failed, Cancelled.
+- Columns: Blocked, Waiting quota, Ready, In progress, Cancelling, Needs review,
+  Done, Failed, Cancelled.
 - **↑ / ↓** on a queued or blocked card reorders the mission backlog
   (`POST /api/missions/:id/prioritize`). Running tasks cannot be reprioritised.
 - **Cancel mission** cascades to queued, blocked and running tasks. Running
@@ -85,25 +87,43 @@ the same project, which keeps two writers out of one checkout.
 - Handoffs, the goal, the plan and `decisions.md` are readable in the **Wiki**
   tab; notes appended there are visible to later agents through the workspace.
 
-## Office
+## Acceptance review
 
-The **Office** tab turns the selected mission into a small pixel-art room: one
-desk per subtask, with the role and title under it. Working agents type at a lit
-monitor, completed agents leave the desk for the coffee corner, failed agents get
-a red screen, and blocked or queued agents wait with a status bubble. The room
-follows the host's local time (dawn, day, dusk, night) and needs no external
-assets: the floor, furniture and characters are CSS and inline SVG.
+A successful autonomous task whose plan declared `acceptance` criteria does not
+count as `done`. It ends in **Needs review**: the process is over, nothing is
+claimed again, and dependent tasks stay `blocked`. The board card and the task
+detail expose **Accept result** and **Reject result**:
 
-Click a desk to open that agent's handoff (or its result when it has finished).
-The tab is read-only and updates with the normal mission polling; it is a view,
-not a second queue.
+- **Accept** (`POST /api/missions/:id/tasks/:taskId/review {accepted:true}`)
+  moves the task to `done`, records `reviewed_at`/`reviewed_by` and releases
+  dependants.
+- **Reject** moves it to `failed` with the note as evidence and
+  `blocked_reason = 'rejected'`, so it is not counted as done and feeds the
+  learning memory. A rejected review re-runs the task's failure classification.
+- **Retry task** (`POST /api/tasks/:id/retry`) requeues a failed task while
+  attempts remain, clearing stale result/error/lease state but keeping the
+  review note and recorded lesson. When attempts are exhausted, revise the plan
+  or enqueue a new task instead.
+
+Tasks without acceptance criteria keep the normal completion path. This is the
+minimum honest gate: Citadel does not invent a test command, and the operator
+owns the decision.
+
+## Budget
+
+Autonomous work is bounded by `CITADEL_AUTONOMOUS_DAILY_BUDGET` (default 50,
+`0` pauses autonomy). The counter is the number of autonomous attempts started
+today, local time; it is a budget proxy because no paid provider is integrated.
+When it is exhausted, new autonomous attempts are not claimed, the Work view
+shows the counter, and manual queue work and persistent terminals keep running.
+It resets at local midnight.
 
 ## HTTP API
 
 ```
 GET  /api/missions                 list (optional ?status=&limit=)
 POST /api/missions                 {goal, projectId?, title?, plan?, plannerAgent?}
-GET  /api/missions/meta            roles + headless agents and install state
+GET  /api/missions/meta            roles + headless agents, install state and today's budget
 GET  /api/missions/:id             mission + tasks + files
 POST /api/missions/:id/plan        import a validated plan
 POST /api/missions/:id/prioritize  {order:[taskId]} or {taskId, priority}
@@ -148,7 +168,7 @@ Task states map to the existing task-mesh rows:
 | Running | `running` | A sentinel holds a claim and a lease. |
 | Blocked | `blocked` | A dependency, policy or human intervention is missing. |
 | Waiting quota | `quota` | The provider reported quota/rate limiting; paused until the next cautious check. |
-| Review | mission `review` | Finished work needs acceptance/rejection or a failed task needs attention. |
+| Needs review | task `review` (mission `review`) | A finished task with acceptance criteria awaits an accept/reject decision; the mission is in review until it is decided. |
 | Done | `done` | Task exited successfully; mission is done only when every required task is done. |
 | Failed | `failed` | Attempts/lifetime exhausted; evidence and a lesson are retained. |
 | Cancelled | `cancelled` / `cancelling` | Cancellation requested or confirmed by the worker. |
@@ -180,9 +200,11 @@ clear the sticky failure state, and record a `retry_at` cooldown
 (`CITADEL_QUOTA_COOLDOWN_MS`, default 15 minutes, bounded to 1 minute–24 hours).
 That timestamp is a **next check**, never a claimed provider reset time. Work
 resumes only after the cooldown, while attempts remain, and no continuous retry
-loop runs. Network, authentication, agent and test failures stay ordinary
-failures with their evidence. An unknown process state remains governed by the
-sentinel journal and reconciliation, not by a blind retry.
+loop runs. Every other failure gets a deterministic, visible class — `auth`,
+`network`, `tests`, `interrupted`, `agent` or `unknown` — stored on the task as
+`failure_kind`. The class is advisory evidence, not a confirmed root cause, and
+it never changes a security policy. An unknown process state remains governed by
+the sentinel journal and reconciliation, not by a blind retry.
 
 ### Planning and revisions
 
@@ -204,14 +226,22 @@ the view shows uncommitted docs files. Paths, extensions (`.md`/`.markdown`) and
 symlinks are checked against the canonical project and docs roots. Content that
 looks like a credential is refused instead of written.
 
-Pages can link to a task and a mission from the UI; the Markdown supports
-`[[other-page.md]]` internal links and `task:<id>` references. Only pages
+Relations are stored in SQLite: `document_links` records every
+`[[other-page]]` / `[[other-page.md]]` wiki link, and `document_refs` records the
+tasks and missions a page belongs to. Reading a page returns its outbound
+`links`, its `backlinks` and its `refs`; links are re-synced from the body on
+read, so editing Markdown by hand is enough. A task's result and handoff are
+scanned for Markdown paths and wiki links once per attempt, and matching pages
+are attributed to that task and mission (`docs_linked` makes it idempotent). Only pages
 relevant to a change should be updated; the planner is instructed to add a docs
 task when architecture, public behaviour, configuration, installation, security
 or operations change.
 
 API: `GET /api/docs`, `GET /api/docs/file`, `POST /api/docs`, `PUT /api/docs`,
 `POST /api/docs/link` (all take `projectId`; admin only).
+
+The legacy `task_id`/`mission_id` columns stay as the most recent single link;
+the relation tables are authoritative.
 
 ## Learning: project and global memory
 
@@ -257,3 +287,13 @@ API: `GET /api/learning`, `GET /api/learning/relevant`,
   promotion and task review are operator actions and are audited.
 - No paid inference is enabled implicitly: autonomous work uses the same local
   CLI agents and their existing quotas/authentication.
+
+The daily budget persists separately from task rows and increments inside the
+claim transaction for **every attempt**, including retries of older tasks.
+Deleting task history does not refund usage. On upgrade from the earlier
+counter, all attempts of tasks first started today are counted conservatively;
+older versions did not retain exact attempt dates. New claims are counted
+exactly thereafter. Plan publication and revision commit the plan version and
+all task changes in one SQLite transaction; `plan.json` is an auxiliary copy.
+Docs references accumulate across page updates, including pages written directly
+by agents. Handoff discovery checks canonical paths and file size.

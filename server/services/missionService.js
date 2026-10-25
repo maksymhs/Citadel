@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { getDatabase } = require('../database/db');
 const { MISSIONS_DIR } = require('../config');
+const { scrub } = require('../security/redact');
 const taskService = require('./taskService');
 const projectService = require('./projectService');
 const logService = require('./logService');
@@ -159,16 +160,18 @@ function validatePlan(raw) {
   const seenTitle = new Set();
   const tasks = plan.tasks.map((item, index) => {
     if (!item || typeof item !== 'object') throw new Error(`Task ${index + 1} is not an object.`);
-    const title = String(item.title || '').trim();
-    if (title.length < 2 || title.length > MAX_TITLE_CHARS) {
+    const rawTitle = String(item.title || '').trim();
+    if (rawTitle.length < 2 || rawTitle.length > MAX_TITLE_CHARS) {
       throw new Error(`Task ${index + 1} needs a title (2-${MAX_TITLE_CHARS} characters).`);
     }
+    const title = scrub(rawTitle, MAX_TITLE_CHARS);
     const role = String(item.role || '').trim().toLowerCase();
     if (!ROLE_IDS.includes(role)) {
-      throw new Error(`Task ${index + 1} has unknown role "${item.role}". Use one of: ${ROLE_IDS.join(', ')}.`);
+      throw new Error(`Task ${index + 1} has unknown role "${scrub(String(item.role || ''), 40)}". Use one of: ${ROLE_IDS.join(', ')}.`);
     }
-    const description = item.description === undefined ? '' : String(item.description).trim();
-    if (description.length > 4000) throw new Error(`Task ${index + 1} description is too long.`);
+    const rawDescription = item.description === undefined ? '' : String(item.description).trim();
+    if (rawDescription.length > 4000) throw new Error(`Task ${index + 1} description is too long.`);
+    const description = scrub(rawDescription, 4000);
 
     // Acceptance criteria are data on the task, not an instruction to the model
     // that can be silently dropped. They are shown in review and included in the
@@ -181,9 +184,10 @@ function validatePlan(raw) {
       .map((value) => String(value).trim())
       .filter(Boolean)
       .slice(0, MAX_ACCEPTANCE)
-      .map((value) => value.slice(0, 500));
+      .map((value) => scrub(value.slice(0, 500), 500))
+      .filter(Boolean);
     const refs = Array.isArray(item.refs)
-      ? item.refs.map((value) => String(value).trim()).filter(Boolean).slice(0, 20)
+      ? item.refs.map((value) => scrub(String(value).trim(), 500)).filter(Boolean).slice(0, 20)
       : [];
 
     let agent = null;
@@ -435,49 +439,60 @@ function enqueuePlan(mission, plan, projectPath) {
     `${String(index + 1).padStart(2, '0')}-${slugify(task.role + '-' + task.title)}.md`,
   ));
 
-  const createdIds = [];
-  plan.tasks.forEach((task, index) => {
-    const deps = task.deps.map((dep) => createdIds[dep]);
-    const agent = pickAgent(task.agent, ROLES[task.role].agent || plannerAgent, installed);
-    const prompt = buildTaskPrompt({
-      mission,
-      task: { ...task, total: plan.tasks.length },
-      handoffs,
-      projectPath,
-      lessons,
-    });
-    const created = taskService.enqueue({
-      agent,
-      prompt,
-      projectPath,
-      title: task.title,
-      missionId: mission.id,
-      role: task.role,
-      deps,
-      stage: task.stage,
-      handoffRef: path.relative(mission.workspace, handoffs[index]),
-      exclusive: task.exclusive,
-      acceptance: task.acceptance,
-      refs: task.refs,
-      autonomous: true,
-      status: deps.length ? 'blocked' : 'queued',
-    });
-    createdIds.push(created.id);
-  });
-
+  // SQLite is authoritative: version, plan and all tasks commit together.
+  // The Markdown workspace is a recoverable copy, written before publication.
   const db = getDatabase();
-  const version = (mission.plan_version || 0) + 1;
-  db.prepare(`
-    INSERT INTO mission_plan_versions (id, mission_id, version, plan, reason, created_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    crypto.randomUUID(), mission.id, version, JSON.stringify(plan),
-    mission.plan_revision_reason || null, mission.created_by || null, nowIso(),
-  );
-  db.prepare(`UPDATE missions SET plan = ?, plan_version = ?, status = ?, error = NULL, finished_at = NULL, updated_at = ?
-    WHERE id = ?`).run(JSON.stringify(plan), version, 'running', nowIso(), mission.id);
+  const planCopy = path.join(mission.workspace, `.plan-${crypto.randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(planCopy, JSON.stringify(plan, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fs.renameSync(planCopy, path.join(mission.workspace, 'plan.json'));
+  } finally {
+    fs.rmSync(planCopy, { force: true });
+  }
+  db.transaction(() => {
+    const version = (mission.plan_version || 0) + 1;
+    db.prepare(`
+      INSERT INTO mission_plan_versions (id, mission_id, version, plan, reason, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      crypto.randomUUID(), mission.id, version, JSON.stringify(plan),
+      mission.plan_revision_reason || null, mission.created_by || null, nowIso(),
+    );
+    db.prepare(`UPDATE missions SET plan = ?, plan_version = ?, status = ?, error = NULL, finished_at = NULL, updated_at = ?
+      WHERE id = ?`).run(JSON.stringify(plan), version, 'running', nowIso(), mission.id);
+
+    const createdIds = [];
+    plan.tasks.forEach((task, index) => {
+      const deps = task.deps.map((dep) => createdIds[dep]);
+      const agent = pickAgent(task.agent, ROLES[task.role].agent || plannerAgent, installed);
+      const prompt = buildTaskPrompt({
+        mission,
+        task: { ...task, total: plan.tasks.length },
+        handoffs,
+        projectPath,
+        lessons,
+      });
+      const created = taskService.enqueue({
+        agent,
+        prompt,
+        projectPath,
+        title: task.title,
+        missionId: mission.id,
+        role: task.role,
+        deps,
+        stage: task.stage,
+        handoffRef: path.relative(mission.workspace, handoffs[index]),
+        exclusive: task.exclusive,
+        acceptance: task.acceptance,
+        refs: task.refs,
+        autonomous: true,
+        status: deps.length ? 'blocked' : 'queued',
+      });
+      createdIds.push(created.id);
+    });
+  })();
+
   learningService.markUsed(mission.id, lessons.map((lesson) => lesson.id));
-  fs.writeFileSync(path.join(mission.workspace, 'plan.json'), JSON.stringify(plan, null, 2), { encoding: 'utf8', mode: 0o600 });
   logService.record({
     category: 'mission',
     action: 'mission_planned',
@@ -561,6 +576,55 @@ function ingestPlannerPlan(mission) {
   }
 }
 
+/**
+ * Link the documents an attempt actually mentioned. It is bounded to docs that
+ * exist, uses the explicit refs plus Markdown paths in the result/handoff, and
+ * runs once per attempt (`docs_linked`) so a refresh loop cannot duplicate work.
+ */
+function linkTaskDocs(mission, task) {
+  if (!mission.project_id || task.docsLinked) return false;
+  let handoff = '';
+  if (task.handoffRef) {
+    try {
+      const abs = checkWorkspacePath(mission, task.handoffRef);
+      const stat = fs.statSync(abs);
+      if (stat.isFile() && stat.size <= MAX_PLAN_BYTES) handoff = fs.readFileSync(abs, 'utf8');
+    } catch { /* optional, missing or unsafe handoff */ }
+  }
+  const text = [task.result || '', task.error || '', handoff, ...(task.refs || [])].join('\n');
+  const candidates = new Set();
+  for (const match of text.matchAll(/\[\[([^\]\n]{1,200})\]\]/g)) candidates.add(match[1]);
+  for (const match of text.matchAll(/[\w./-]+\.md\b/g)) candidates.add(match[0]);
+  const linked = [];
+  let failed = false;
+  for (const raw of candidates) {
+    const rel = String(raw).replace(/\\/g, '/').replace(/^\.\//, '').replace(/^docs\//, '');
+    let clean = docService.existingDoc({ projectId: mission.project_id, relPath: rel });
+    if (!clean) clean = docService.existingDoc({ projectId: mission.project_id, relPath: linkTargetFallback(rel) });
+    if (!clean) continue;
+    try {
+      docService.linkDoc({ projectId: mission.project_id, relPath: clean, taskId: task.id, missionId: mission.id });
+      linked.push(clean);
+    } catch {
+      failed = true;
+    }
+  }
+  if (!failed) getDatabase().prepare('UPDATE tasks SET docs_linked = 1, updated_at = ? WHERE id = ?').run(nowIso(), task.id);
+  if (linked.length) {
+    logService.record({
+      category: 'docs', action: 'document_task_linked',
+      message: `Linked ${linked.length} document(s) to task "${task.title}".`,
+      details: { missionId: mission.id, taskId: task.id, docs: linked },
+    });
+  }
+  return linked.length > 0;
+}
+
+/** Tolerate `[[Page]]` links that omit the extension. */
+function linkTargetFallback(rel) {
+  return path.extname(rel) ? rel : `${rel}.md`;
+}
+
 function computeStatus(mission, tasks) {
   if (mission.status === 'cancelling' || mission.status === 'cancelled') {
     return tasks.some((t) => ACTIVE_TASK_STATES.has(t.status)) ? 'cancelling' : 'cancelled';
@@ -579,6 +643,10 @@ function computeStatus(mission, tasks) {
       return 'planning';
     }
   }
+  // A finished task with acceptance criteria waits for a human decision. It is
+  // neither done nor running: dependencies stay blocked and the mission is
+  // visibly in review until accepted or rejected.
+  if (tasks.some((t) => t.status === 'review')) return 'review';
   // Quota is its own visible state: work is paused, not failed and not running.
   const meaningfulForWait = tasks.filter((t) => t.role !== 'planner');
   if (meaningfulForWait.some((t) => t.status === 'quota')) {
@@ -634,7 +702,7 @@ function refreshMission(id) {
   tasks = tasksOf(id);
   for (const task of tasks.filter((t) => t.status === 'failed')) {
     const text = `${task.error || ''}\n${task.result || ''}`;
-    if (!learningService.isQuotaError(text)) continue;
+    if (task.blockedReason === 'rejected' || task.attempt >= task.maxAttempts || task.quotaCount >= MAX_QUOTA_PAUSES || !learningService.isQuotaError(text)) continue;
     const next = new Date(Date.now() + QUOTA_COOLDOWN_MS).toISOString();
     db.prepare(`
       UPDATE tasks SET status = 'quota', blocked_reason = 'quota', retry_at = ?,
@@ -646,6 +714,27 @@ function refreshMission(id) {
       message: `Task paused until the next quota check (${QUOTA_COOLDOWN_MS}ms).`,
       details: { missionId: id, taskId: task.id, retryAt: next },
     });
+  }
+  // Attach the deterministic failure class so the UI and docs can explain why
+  // an attempt stopped without parsing the agent transcript again.
+  tasks = tasksOf(id);
+  for (const task of tasks.filter((t) => t.status === 'failed')) {
+    const classified = learningService.classifyFailure(`${task.error || ''}\n${task.result || ''}`);
+    const blockedReason = task.blockedReason === 'rejected' ? 'rejected' : classified.kind;
+    if (task.failureKind === classified.kind && task.blockedReason === blockedReason) continue;
+    db.prepare(`
+      UPDATE tasks SET failure_kind = ?, blocked_reason = ?, updated_at = ?
+      WHERE id = ? AND status = 'failed'
+    `).run(classified.kind, blockedReason, now, task.id);
+  }
+  tasks = tasksOf(id);
+
+  for (const task of tasks.filter((t) => ['done', 'review', 'failed'].includes(t.status) && !t.docsLinked)) {
+    try {
+      linkTaskDocs(current, task);
+    } catch (err) {
+      logService.record({ level: 'warn', category: 'docs', action: 'document_task_link_failed', message: err.message, details: { taskId: task.id } });
+    }
   }
   tasks = tasksOf(id);
 
@@ -701,7 +790,7 @@ function refreshMission(id) {
     || released.length > 0;
   if (changed) {
     db.prepare(`
-      UPDATE missions SET status = ?, updated_at = ?, finished_at = COALESCE(?, finished_at)
+      UPDATE missions SET status = ?, updated_at = ?, finished_at = ?
       WHERE id = ?
     `).run(status, now, finished, id);
   }
@@ -722,9 +811,12 @@ function onTaskChanged(missionId) {
 }
 
 function createMission({ goal, projectId, plan, plannerAgent, createdBy, title } = {}) {
-  const cleanGoal = String(goal || '').trim();
-  if (!cleanGoal) throw new Error('A mission requires a "goal".');
-  if (cleanGoal.length > MAX_GOAL_CHARS) throw new Error(`The goal is too long (max ${MAX_GOAL_CHARS} characters).`);
+  const rawGoal = String(goal || '').trim();
+  if (!rawGoal) throw new Error('A mission requires a "goal".');
+  if (rawGoal.length > MAX_GOAL_CHARS) throw new Error(`The goal is too long (max ${MAX_GOAL_CHARS} characters).`);
+  // Goals become prompts and Markdown, so a credential pasted into the form
+  // must not survive in either place.
+  const cleanGoal = scrub(rawGoal, MAX_GOAL_CHARS) || rawGoal;
 
   const project = projectId ? projectService.getProject(String(projectId)) : null;
   if (projectId && !project) throw new Error('Project not found.');
@@ -743,7 +835,8 @@ function createMission({ goal, projectId, plan, plannerAgent, createdBy, title }
   const workspace = path.join(MISSIONS_DIR, id);
   ensureWorkspace(workspace);
   const now = nowIso();
-  const cleanTitle = String(title || '').trim().slice(0, 120) || titleFromGoal(cleanGoal);
+  const requestedTitle = scrub(String(title || '').trim(), 120);
+  const cleanTitle = requestedTitle || titleFromGoal(cleanGoal);
 
   const db = getDatabase();
   db.prepare(`
@@ -1008,9 +1101,10 @@ function cancelMission(id) {
 function addNote(id, text) {
   const mission = missionRow(id);
   if (!mission) throw new Error('Mission not found.');
-  const note = String(text || '').trim();
-  if (!note) throw new Error('A note cannot be empty.');
-  if (note.length > MAX_NOTE_CHARS) throw new Error('The note is too long.');
+  const rawNote = String(text || '').trim();
+  if (!rawNote) throw new Error('A note cannot be empty.');
+  if (rawNote.length > MAX_NOTE_CHARS) throw new Error('The note is too long.');
+  const note = scrub(rawNote, MAX_NOTE_CHARS) || rawNote;
   const file = path.join(mission.workspace, 'decisions.md');
   const block = `\n## ${nowIso()}\n\n${note}\n`;
   fs.appendFileSync(file, block, { encoding: 'utf8', mode: 0o600 });
@@ -1067,22 +1161,24 @@ function revisePlan(id, rawPlan, { reason, createdBy } = {}) {
   const project = mission.project_id ? projectService.getProject(mission.project_id) : null;
   const db = getDatabase();
 
-  for (const task of tasksOf(id)) {
-    if (!['queued', 'blocked', 'quota'].includes(task.status)) continue;
-    try { taskService.cancelTask(task.id); } catch { /* finished meanwhile */ }
-    // Detach superseded pending work so it does not distort progress; the row
-    // remains in the queue history.
-    db.prepare('UPDATE tasks SET mission_id = NULL WHERE id = ?').run(task.id);
-  }
+  db.transaction(() => {
+    for (const task of tasksOf(id)) {
+      if (!['queued', 'blocked', 'quota'].includes(task.status)) continue;
+      try { taskService.cancelTask(task.id); } catch { /* finished meanwhile */ }
+      // Detach superseded pending work so it does not distort progress; the row
+      // remains in the queue history.
+      db.prepare('UPDATE tasks SET mission_id = NULL WHERE id = ?').run(task.id);
+    }
 
-  const refreshed = missionRow(id);
-  refreshed.plan_revision_reason = reason ? String(reason).slice(0, 500) : 'Plan revised';
-  enqueuePlan(refreshed, plan, project ? project.path : null);
-  logService.record({
-    category: 'mission', action: 'mission_plan_revised',
-    message: `Mission "${mission.title}" plan revised.`,
-    details: { missionId: id, reason: refreshed.plan_revision_reason, createdBy: createdBy || null },
-  });
+    const refreshed = missionRow(id);
+    refreshed.plan_revision_reason = reason ? scrub(reason, 500) : 'Plan revised';
+    enqueuePlan(refreshed, plan, project ? project.path : null);
+    logService.record({
+      category: 'mission', action: 'mission_plan_revised',
+      message: `Mission "${mission.title}" plan revised.`,
+      details: { missionId: id, reason: refreshed.plan_revision_reason, createdBy: createdBy || null },
+    });
+  })();
   return getMission(id);
 }
 
@@ -1109,21 +1205,27 @@ function reviewTask(id, taskId, { accepted, note, reviewedBy } = {}) {
   if (!mission) throw new Error('Mission not found.');
   const task = tasksOf(id).find((t) => t.id === String(taskId));
   if (!task) throw new Error('Task not found in this mission.');
-  if (!['done', 'failed'].includes(task.status)) {
+  if (!['review', 'done', 'failed'].includes(task.status)) {
     throw new Error('Only a finished task can be reviewed.');
   }
-  const cleanNote = note ? String(note).trim().slice(0, 4000) : null;
+  const cleanNote = note ? scrub(String(note).trim(), 4000) : null;
+  const reviewer = reviewedBy ? String(reviewedBy).slice(0, 200) : null;
   const now = nowIso();
   const db = getDatabase();
   if (accepted) {
-    db.prepare('UPDATE tasks SET review_note = COALESCE(?, review_note), updated_at = ? WHERE id = ?')
-      .run(cleanNote, now, task.id);
+    db.prepare(`
+      UPDATE tasks SET status = 'done', reviewed_at = ?, reviewed_by = ?,
+        review_note = COALESCE(?, review_note), blocked_reason = NULL,
+        failure_kind = NULL, updated_at = ?
+      WHERE id = ?
+    `).run(now, reviewer, cleanNote, now, task.id);
   } else {
     db.prepare(`
       UPDATE tasks SET status = 'failed', error = COALESCE(?, error), review_note = COALESCE(?, review_note),
+        reviewed_at = ?, reviewed_by = ?, blocked_reason = 'rejected',
         finished_at = ?, learning_recorded = 0, updated_at = ?
       WHERE id = ?
-    `).run(cleanNote || 'Rejected during acceptance review.', cleanNote, now, now, task.id);
+    `).run(cleanNote || 'Rejected during acceptance review.', cleanNote, now, reviewer, now, now, task.id);
   }
   logService.record({
     level: accepted === false ? 'warn' : 'info',

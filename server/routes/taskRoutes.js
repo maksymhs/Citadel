@@ -134,7 +134,10 @@ async function taskRoutes(fastify) {
       // sessions and the legacy shared token are not constrained.
       const expectedNode = request.nodeAuth ? request.nodeIdentity : null;
       const task = taskService.completeTask(request.params.id, { ...(request.body || {}), expectedNode });
-      audit(request, task.status === 'done' ? 'task_completed' : 'task_failed', task.id, {
+      const resultAction = task.status === 'done'
+        ? 'task_completed'
+        : (task.status === 'review' ? 'task_awaiting_review' : 'task_failed');
+      audit(request, resultAction, task.id, {
         exitCode: task.exitCode,
         resultRef: task.resultRef,
       });
@@ -168,6 +171,16 @@ async function taskRoutes(fastify) {
       };
     } catch (err) {
       return sendError(reply, err);
+    }
+  });
+
+  fastify.post('/api/tasks/:id/retry', { preHandler: requireAuth }, async (request, reply) => {
+    try {
+      const task = taskService.retryTask(request.params.id);
+      audit(request, 'task_retried', task.id, { status: task.status, attempt: task.attempt });
+      return { task };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
     }
   });
 

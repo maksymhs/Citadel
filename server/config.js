@@ -54,6 +54,16 @@ const MISSIONS_DIR = resolveFromRoot(process.env.CITADEL_MISSIONS_DIR, path.join
 // Project-relative directory that holds Markdown docs. Existing repositories
 // may already use `docs/`; it is never overwritten, only extended.
 const DOCS_SUBDIR = String(process.env.CITADEL_DOCS_SUBDIR || 'docs').trim();
+// Hard ceiling on autonomous attempts started per local day. It is a budget
+// proxy (no paid provider is integrated), `0` pauses autonomous work, and it
+// never serialises manual queue tasks or persistent terminals.
+const AUTONOMOUS_DAILY_BUDGET = (() => {
+  const raw = process.env.CITADEL_AUTONOMOUS_DAILY_BUDGET;
+  if (raw === undefined || String(raw).trim() === '') return 50;
+  const value = parseInt(raw, 10);
+  if (!Number.isFinite(value)) return 50;
+  return Math.min(Math.max(value, 0), 10000);
+})();
 
 // Allowed origins for CORS and WebSocket handshake
 const allowedOriginsEnv = process.env.ALLOWED_ORIGINS || `http://localhost:${PORT},http://127.0.0.1:${PORT}`;
@@ -213,6 +223,7 @@ module.exports = {
   PLUGINS_DIR,
   MISSIONS_DIR,
   DOCS_SUBDIR,
+  AUTONOMOUS_DAILY_BUDGET,
   ALLOWED_ORIGINS,
   SESSION_TTL_DAYS,
   SESSION_SECRET,

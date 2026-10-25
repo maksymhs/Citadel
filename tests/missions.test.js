@@ -116,6 +116,28 @@ describe('Agent missions (validated DAG over the task queue)', () => {
     assert.equal(result.mission.title, 'Thing mission');
   });
 
+  test('the plan is persisted before the first task is enqueued', () => {
+    const original = taskService.enqueue;
+    let seen = null;
+    let planAtFirstEnqueue = null;
+    taskService.enqueue = (...args) => {
+      if (seen === null) {
+        seen = args[0].missionId;
+        planAtFirstEnqueue = getDatabase()
+          .prepare('SELECT plan FROM missions WHERE id = ?')
+          .get(seen).plan;
+      }
+      return original.apply(taskService, args);
+    };
+    try {
+      missionService.createMission({ goal: 'Plan before queue', plan: SIMPLE_PLAN });
+    } finally {
+      taskService.enqueue = original;
+    }
+    assert.ok(planAtFirstEnqueue, 'the mission already had a plan when the first task was enqueued');
+    assert.equal(JSON.parse(planAtFirstEnqueue).tasks.length, 3);
+  });
+
   test('completing a dependency releases the next task', () => {
     const created = missionService.createMission({ goal: 'Release dependants', plan: SIMPLE_PLAN });
     const claim = taskService.claimTask('node-a');
@@ -246,6 +268,34 @@ describe('Agent missions (validated DAG over the task queue)', () => {
     const after = missionService.addNote(created.mission.id, 'Use the small approach.');
     const decisions = missionService.readMissionFile(after.mission.id, 'decisions.md');
     assert.match(decisions.content, /Use the small approach/);
+  });
+
+  test('goals and notes are redacted before they reach prompts or Markdown', () => {
+    const created = missionService.createMission({
+      goal: 'Deploy with token=supersecretvalue123 and sk-abcdefghijklmnop',
+      plan: SIMPLE_PLAN,
+    });
+    const goalFile = missionService.readMissionFile(created.mission.id, 'goal.md');
+    assert.doesNotMatch(goalFile.content, /supersecretvalue123|sk-abcdefghijklmnop/);
+    assert.match(goalFile.content, /\[REDACTED\]/);
+
+    const after = missionService.addNote(created.mission.id, 'Authorization: Bearer abcdefghijklmnop');
+    const decisions = missionService.readMissionFile(after.mission.id, 'decisions.md');
+    assert.doesNotMatch(decisions.content, /abcdefghijklmnop/);
+    assert.match(decisions.content, /Bearer \[REDACTED\]/);
+
+    const planned = missionService.createMission({
+      goal: 'Plan redaction',
+      plan: { tasks: [{
+        title: 'Rotate token=plaintokenvalue123',
+        role: 'developer',
+        description: 'Use sk-abcdefghijklmnop for the call.',
+        acceptance: ['No ghp_abcdefghijklmnop in the diff'],
+      }] },
+    });
+    const plannedTask = planned.tasks[0];
+    assert.doesNotMatch(JSON.stringify(plannedTask), /plaintokenvalue123|sk-abcdefghijklmnop|ghp_abcdefghijklmnop/);
+    assert.match(plannedTask.title, /\[REDACTED\]/);
   });
 
   test('the task queue exposes mission metadata and the exclusive flag', () => {

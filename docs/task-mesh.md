@@ -11,6 +11,7 @@ POST /api/tasks/claim        {node, protocol?}                            # pull
 POST /api/tasks/:id/result   {status, exitCode?, resultRef?, error?, result?, claimToken, execId?}  # report + captured output
 POST /api/tasks/:id/reconcile {state: alive|terminated|unknown, claimToken, execId, exitCode?, signal?, pid?, pgid?, startedAt?}  # worker-only
 POST /api/tasks/:id/cancel                                                # request cancel (queued or running, idempotent)
+POST /api/tasks/:id/retry                                                 # requeue a failed task while attempts remain
 GET  /api/tasks?status=&node=                                             # progress
 POST /api/nodes/heartbeat    {node, capacity, active, load, tags?, running?: [{id, claimToken, execId?, pid?, pgid?, startedAt?}]}  # liveness + lease renewal
 GET  /api/nodes                                                           # list nodes and load

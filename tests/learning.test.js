@@ -127,6 +127,16 @@ describe('Learning memory', () => {
     assert.match(lesson.rootCause, /12:30|reset/i);
   });
 
+  test('failures are classified by kind with an honest retryability flag', () => {
+    assert.equal(learningService.classifyFailure('HTTP 429 usage limit reached').kind, 'quota');
+    assert.equal(learningService.classifyFailure('401 Unauthorized: invalid_api_key').retryable, false);
+    assert.equal(learningService.classifyFailure('fetch failed: ECONNREFUSED 127.0.0.1:443').kind, 'network');
+    assert.equal(learningService.classifyFailure('3 tests failed\n1) suite breaks').kind, 'tests');
+    assert.equal(learningService.classifyFailure('Execution terminated by signal SIGINT.').kind, 'interrupted');
+    assert.equal(learningService.classifyFailure('Unhandled agent error').kind, 'agent');
+    assert.equal(learningService.classifyFailure('').kind, 'unknown');
+  });
+
   test('a manual row cannot be created directly as global', async () => {
     const lesson = learningService.recordLesson({ scope: 'global', title: 'Try global', status: 'confirmed' });
     assert.equal(lesson.scope, 'project');

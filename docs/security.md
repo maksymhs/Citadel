@@ -46,7 +46,19 @@ Work, Docs and Learning are administrator-only and can be disabled as the
 only roles, earlier-task indices, installed agents and bounded acceptance
 criteria, never commands, binaries or paths. One autonomous agent may run at a
 time across the instance; manual queue work and persistent terminals are not
-serialised by that guard. Learning content is advisory and redacted before
-storage; only an explicit operator promotion makes a lesson global, and no
-lesson can change a security policy. Rejected task results and global promotions
-are written to the audit log. See [missions](missions.md).
+serialised by that guard, and `CITADEL_AUTONOMOUS_DAILY_BUDGET` bounds how many
+autonomous attempts start per day. Learning content is advisory and redacted
+before storage; mission goals, notes, review notes and prompts pass through the
+same redaction, and a document whose body looks like a credential is refused.
+Only an explicit operator promotion makes a lesson global, and no lesson can
+change a security policy. Rejected task results, acceptance decisions and global
+promotions are written to the audit log. See [missions](missions.md).
+
+Session activity timestamps update at most once per minute to avoid writes on
+every polling request. Expiry is still checked on every request and never
+extended by this optimisation. Work redaction handles quoted values, JSON keys,
+Basic/Bearer authorization, credential URLs and private-key blocks; it is a
+format heuristic, not proof that arbitrary text contains no secret. Project
+discovery only lists bounded immediate directories and never executes code or
+follows directory symlinks. Opening VS Code is an explicit desktop action using
+the operator's existing SSH configuration.

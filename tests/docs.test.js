@@ -117,9 +117,52 @@ describe('Project docs', () => {
     assert.ok(!fs.existsSync(path.join(repoPath, 'docs', 'leak.md')));
   });
 
+  test('wiki links and task/mission references become navigable relations', () => {
+    docService.createDoc({
+      projectId: project.id,
+      relPath: 'guide.md',
+      content: '# Guide\n\nSee [[architecture]] for the design. Link to [[missing-page]] too.\n',
+      taskId: 'task-9',
+      missionId: 'mission-9',
+    });
+    const guide = docService.readDoc({ projectId: project.id, relPath: 'guide.md' });
+    assert.deepEqual(guide.links, ['architecture.md', 'missing-page.md']);
+    assert.deepEqual(guide.refs, [{ kind: 'mission', id: 'mission-9' }, { kind: 'task', id: 'task-9' }]);
+
+    const architecture = docService.readDoc({ projectId: project.id, relPath: 'architecture.md' });
+    assert.ok(architecture.backlinks.includes('guide.md'));
+
+    docService.linkDoc({ projectId: project.id, relPath: 'guide.md', taskId: 'task-10' });
+    const relinked = docService.readDoc({ projectId: project.id, relPath: 'guide.md' });
+    assert.deepEqual(relinked.refs, [
+      { kind: 'mission', id: 'mission-9' },
+      { kind: 'task', id: 'task-10' },
+      { kind: 'task', id: 'task-9' },
+    ], 'linking another task keeps the earlier task relation');
+    assert.deepEqual(relinked.links, ['architecture.md', 'missing-page.md'], 'refreshing a link keeps wiki links');
+  });
+
   test('relevantDocs only returns paths and titles, never the body', () => {
     const docs = docService.relevantDocs({ projectId: project.id, q: 'architecture' });
     assert.ok(docs.some((doc) => doc.path === 'architecture.md'));
     assert.ok(docs.every((doc) => !('content' in doc)));
   });
+  test('directly written Markdown is registered on linking and updates preserve earlier refs', () => {
+    fs.writeFileSync(path.join(repoPath, 'docs', 'agent.md'), '# Agent output\n');
+    const linked = docService.linkDoc({ projectId: project.id, relPath: 'agent.md', taskId: 'first' });
+    assert.equal(linked.taskId, 'first');
+    docService.updateDoc({ projectId: project.id, relPath: 'agent.md', content: '# Updated\n', taskId: 'second' });
+    const doc = docService.readDoc({ projectId: project.id, relPath: 'agent.md' });
+    assert.deepEqual(doc.refs, [{ kind: 'task', id: 'first' }, { kind: 'task', id: 'second' }]);
+  });
+
+  test('reading unchanged Markdown does not rewrite metadata or links', () => {
+    const input = { projectId: project.id, relPath: 'guide.md' };
+    docService.readDoc(input);
+    const before = getDatabase().prepare('SELECT total_changes() n').get().n;
+    docService.readDoc(input);
+    const after = getDatabase().prepare('SELECT total_changes() n').get().n;
+    assert.equal(after, before, 'polling unchanged docs must not generate SQLite writes');
+  });
+
 });

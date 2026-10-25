@@ -53,7 +53,11 @@ async function missionRoutes(fastify) {
         version: null,
       };
     });
-    return { roles: missionService.roleList(), agents };
+    return {
+      roles: missionService.roleList(),
+      agents,
+      budget: taskService.autonomousBudgetStatus(),
+    };
   });
 
   fastify.get('/api/missions', async (request) => ({

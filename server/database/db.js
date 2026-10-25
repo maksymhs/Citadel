@@ -356,6 +356,79 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: '014_review_budget_docs',
+    up: (db) => {
+      // Acceptance review is a real state, not an optional note on a task that
+      // already counts as done. `failure_kind` records the deterministic class
+      // of a failed attempt; `docs_linked` makes handoff -> docs linking a
+      // one-time, idempotent operation.
+      for (const [column, definition] of [
+        ['reviewed_at', 'TEXT'],
+        ['reviewed_by', 'TEXT'],
+        ['failure_kind', 'TEXT'],
+        ['docs_linked', 'INTEGER NOT NULL DEFAULT 0'],
+      ]) {
+        if (!columnExists(db, 'tasks', column)) db.exec(`ALTER TABLE tasks ADD COLUMN ${column} ${definition}`);
+      }
+
+      // A document can reference many tasks/missions and many other documents.
+      // The legacy columns on `documents` stay as the most recent single link
+      // for compatibility; these tables are the authoritative relations.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS document_links (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          from_path TEXT NOT NULL,
+          to_path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(project_id, from_path, to_path)
+        );
+        CREATE INDEX IF NOT EXISTS idx_document_links_from
+        ON document_links(project_id, from_path);
+        CREATE INDEX IF NOT EXISTS idx_document_links_to
+        ON document_links(project_id, to_path);
+
+        CREATE TABLE IF NOT EXISTS document_refs (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          path TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          ref_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(project_id, path, kind, ref_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_document_refs_ref
+        ON document_refs(kind, ref_id);
+        CREATE INDEX IF NOT EXISTS idx_document_refs_path
+        ON document_refs(project_id, path);
+      `);
+    },
+  },
+  {
+    name: '015_attempt_usage_and_legacy_refs',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS autonomous_daily_usage (
+          day TEXT PRIMARY KEY,
+          attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0)
+        );
+        -- Older installs lack per-attempt dates. Conservatively count all
+        -- attempts of tasks first started today; exact history is unavailable.
+        INSERT OR IGNORE INTO autonomous_daily_usage (day, attempts)
+        SELECT date(started_at, 'localtime'), SUM(attempt)
+        FROM tasks WHERE autonomous = 1 AND started_at IS NOT NULL
+          AND date(started_at, 'localtime') = date('now', 'localtime')
+        GROUP BY date(started_at, 'localtime');
+        INSERT OR IGNORE INTO document_refs (id, project_id, path, kind, ref_id, created_at)
+        SELECT lower(hex(randomblob(16))), project_id, path, 'task', task_id, created_at
+        FROM documents WHERE task_id IS NOT NULL AND task_id != '';
+        INSERT OR IGNORE INTO document_refs (id, project_id, path, kind, ref_id, created_at)
+        SELECT lower(hex(randomblob(16))), project_id, path, 'mission', mission_id, created_at
+        FROM documents WHERE mission_id IS NOT NULL AND mission_id != '';
+      `);
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -584,8 +657,12 @@ function initDatabase(customPath = null) {
       blocked_reason TEXT,
       retry_at TEXT,
       review_note TEXT,
+      reviewed_at TEXT,
+      reviewed_by TEXT,
+      failure_kind TEXT,
       quota_count INTEGER NOT NULL DEFAULT 0,
       learning_recorded INTEGER NOT NULL DEFAULT 0,
+      docs_linked INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       started_at TEXT,
@@ -679,6 +756,40 @@ function initDatabase(customPath = null) {
       UNIQUE(project_id, path)
     );
     CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id, path);
+
+    CREATE TABLE IF NOT EXISTS autonomous_daily_usage (
+      day TEXT PRIMARY KEY,
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0)
+    );
+
+    -- Relations between pages and many task/mission references. The body stays
+    -- in Markdown; this only records navigable metadata.
+    CREATE TABLE IF NOT EXISTS document_links (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      from_path TEXT NOT NULL,
+      to_path TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(project_id, from_path, to_path)
+    );
+    CREATE INDEX IF NOT EXISTS idx_document_links_from
+    ON document_links(project_id, from_path);
+    CREATE INDEX IF NOT EXISTS idx_document_links_to
+    ON document_links(project_id, to_path);
+
+    CREATE TABLE IF NOT EXISTS document_refs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      ref_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(project_id, path, kind, ref_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_document_refs_ref
+    ON document_refs(kind, ref_id);
+    CREATE INDEX IF NOT EXISTS idx_document_refs_path
+    ON document_refs(project_id, path);
 
     -- Nodes that run sentinels and report their load via heartbeat.
     CREATE TABLE IF NOT EXISTS nodes (

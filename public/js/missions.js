@@ -1,8 +1,8 @@
 /**
- * Agent Missions: a local mini-Jira board, mini-Confluence wiki and a
- * pixel-art office over the mission DAG built by missionService. Loaded before
- * app.js; app.js passes the shared helpers through init(), so this file never
- * reaches into its scope.
+ * Agent Missions: a local board and wiki over the mission DAG built by
+ * missionService, plus the acceptance review for autonomous results. Loaded
+ * before app.js; app.js passes the shared helpers through init(), so this file
+ * never reaches into its scope.
  */
 (function () {
   'use strict';
@@ -29,6 +29,7 @@
     { id: 'queued', label: 'Ready' },
     { id: 'running', label: 'In progress' },
     { id: 'cancelling', label: 'Cancelling' },
+    { id: 'review', label: 'Needs review' },
     { id: 'done', label: 'Done' },
     { id: 'failed', label: 'Failed' },
     { id: 'cancelled', label: 'Cancelled' },
@@ -273,7 +274,7 @@
   function renderDetail() {
     const m = detail.mission;
     const project = projectName(m.projectId);
-    const canCancel = !['done', 'cancelled', 'review'].includes(m.status);
+    const canCancel = !['done', 'cancelled'].includes(m.status);
     const canImport = m.status === 'review' && !m.hasPlan;
     const live = liveNodes();
     return `
@@ -301,16 +302,17 @@
         ${m.error ? `<div class="ms-callout">${escapeHtml(m.error)}</div>` : ''}
         ${m.usedLessons && m.usedLessons.length ? `<div class="ms-callout ms-callout-lessons">Lessons applied: ${escapeHtml((detail.lessons || []).map((l) => l.title).join(' · ') || `${m.usedLessons.length} recorded lesson(s)`)}</div>` : ''}
         ${m.status === 'quota' ? '<div class="ms-callout ms-callout-warn">Autonomous work is paused by a provider quota signal. It resumes only after the recorded cooldown, and only if an attempt remains.</div>' : ''}
+        ${m.status === 'review' ? '<div class="ms-callout ms-callout-warn">A finished task is waiting for acceptance. Dependencies stay blocked until you accept or reject it.</div>' : ''}
+        ${meta && meta.budget && meta.budget.exhausted ? `<div class="ms-callout ms-callout-warn">Autonomous budget reached for today (${meta.budget.used}/${meta.budget.limit}). Manual queue tasks still run; it resets at local midnight.</div>` : ''}
         ${live.length === 0 ? '<div class="ms-callout ms-callout-warn">No sentinel heartbeat in the last 2 minutes. Tasks stay queued until a node runs <code>scripts/sentinel.js</code>.</div>' : ''}
         <div class="ms-tabs">
           <button class="ms-tab ${tab === 'board' ? 'active' : ''}" data-action="tab" data-tab="board">Board</button>
-          <button class="ms-tab ${tab === 'office' ? 'active' : ''}" data-action="tab" data-tab="office">Office</button>
           <button class="ms-tab ${tab === 'wiki' ? 'active' : ''}" data-action="tab" data-tab="wiki">Wiki</button>
           <span class="ms-tab-spacer"></span>
           <span class="ms-stage-summary">${stageSummary()}</span>
         </div>
       </header>
-      <div class="ms-tab-body">${tab === 'board' ? renderBoard() : tab === 'wiki' ? renderWiki() : renderOffice()}</div>`;
+      <div class="ms-tab-body">${tab === 'wiki' ? renderWiki() : renderBoard()}</div>`;
   }
 
   function stageSummary() {
@@ -357,161 +359,6 @@
         </span>
       </div>
     </article>`;
-  }
-
-  // --- Office --------------------------------------------------------------
-  // Everything is CSS/SVG drawn in code: no image assets, no CDN. Each subtask
-  // gets a desk whose animation is driven only by its status and role.
-
-  const OFFICE_STATE = {
-    running: { label: 'Working' },
-    cancelling: { label: 'Stopping' },
-    queued: { label: 'Waiting' },
-    blocked: { label: 'Blocked' },
-    done: { label: 'Coffee break' },
-    failed: { label: 'Needs a human' },
-    cancelled: { label: 'Left the office' },
-  };
-  const ROLE_WORK = {
-    planner: 'sketching the plan',
-    analyst: 'searching the code',
-    backend: 'writing code',
-    frontend: 'building the UI',
-    qa: 'running tests',
-    reviewer: 'reviewing the diff',
-    docs: 'writing docs',
-    devops: 'checking the pipes',
-  };
-
-  function officePhase() {
-    const hour = new Date().getHours();
-    if (hour >= 6 && hour < 9) return { id: 'dawn', label: 'Early shift' };
-    if (hour >= 9 && hour < 18) return { id: 'day', label: 'Day shift' };
-    if (hour >= 18 && hour < 21) return { id: 'dusk', label: 'Late shift' };
-    return { id: 'night', label: 'Night shift' };
-  }
-
-  function officeClock() {
-    return new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  }
-
-  function officeLine(task) {
-    if (task.status === 'running') return ROLE_WORK[task.role] || 'working';
-    if (task.status === 'cancelling') return 'packing up';
-    if (task.status === 'blocked') {
-      const dep = ((task.deps || []).map((id) => detail.tasks.find((t) => t.id === id)).find(Boolean));
-      return dep ? `waiting on ${roleOf(dep.role).short}` : 'waiting on deps';
-    }
-    return (OFFICE_STATE[task.status] || { label: task.status }).label.toLowerCase();
-  }
-
-  function officeAvatar(role) {
-    return `<svg viewBox="0 0 18 22" class="ms-avatar-svg" aria-hidden="true" shape-rendering="crispEdges">
-      <rect x="5" y="1" width="8" height="2" fill="#2b2118"/>
-      <rect x="4" y="3" width="2" height="2" fill="#2b2118"/>
-      <rect x="6" y="3" width="6" height="5" fill="#e6b98f"/>
-      <rect x="7" y="5" width="1" height="1" fill="#241a14"/>
-      <rect x="10" y="5" width="1" height="1" fill="#241a14"/>
-      <rect x="8" y="7" width="2" height="1" fill="#c98d68"/>
-      <rect x="4" y="8" width="10" height="2" fill="${escapeHtml(role.color)}"/>
-      <rect x="4" y="10" width="10" height="8" fill="#2d333b"/>
-      <rect x="7" y="10" width="4" height="5" fill="${escapeHtml(role.color)}"/>
-      <rect x="2" y="11" width="2" height="6" fill="#2d333b"/>
-      <rect x="14" y="11" width="2" height="6" fill="#2d333b"/>
-      <rect x="2" y="17" width="2" height="2" fill="#e6b98f"/>
-      <rect x="14" y="17" width="2" height="2" fill="#e6b98f"/>
-      <rect x="6" y="18" width="6" height="2" fill="#252a31"/>
-    </svg>`;
-  }
-
-  function officeDesk(task) {
-    const role = roleOf(task.role);
-    const status = OFFICE_STATE[task.status] ? task.status : 'queued';
-    const deps = (task.deps || []).map((id) => {
-      const dep = detail.tasks.find((t) => t.id === id);
-      return dep ? dep.title : id.slice(0, 8);
-    });
-    const hint = [role.label, task.agent || 'agent', deps.length ? `after ${deps.join(', ')}` : '']
-      .filter(Boolean)
-      .join(' · ');
-    return `<button class="ms-desk" data-status="${status}" data-action="office-task" data-id="${escapeHtml(task.id)}" style="--role-color:${escapeHtml(role.color)}" title="${escapeHtml(hint)}">
-      <span class="ms-bubble">${escapeHtml(officeLine(task))}</span>
-      <span class="ms-desk-scene">
-        <span class="ms-plant" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span class="ms-monitor" aria-hidden="true">
-          <span class="ms-screen">
-            <span class="ms-code-lines"><i></i><i></i><i></i><i></i></span>
-            <span class="ms-screen-glow"></span>
-          </span>
-          <span class="ms-monitor-neck"></span>
-          <span class="ms-monitor-foot"></span>
-        </span>
-        <span class="ms-agent" aria-hidden="true">${officeAvatar(role)}<span class="ms-hands"><i></i><i></i></span></span>
-        <span class="ms-desk-top" aria-hidden="true"></span>
-        <span class="ms-keyboard" aria-hidden="true"></span>
-        <span class="ms-mug" aria-hidden="true"><i></i></span>
-        <span class="ms-chair" aria-hidden="true"></span>
-      </span>
-      <span class="ms-desk-label">
-        <span class="ms-desk-role">${escapeHtml(role.short)} ${escapeHtml(role.label)}</span>
-        <span class="ms-desk-title">${escapeHtml(task.title || 'Untitled task')}</span>
-      </span>
-    </button>`;
-  }
-
-  function officeLounge(tasks) {
-    const resting = tasks.filter((t) => t.status === 'done');
-    if (!resting.length) {
-      return `<div class="ms-lounge-empty">The coffee machine is ready.</div>`;
-    }
-    return resting.map((task) => {
-      const role = roleOf(task.role);
-      return `<div class="ms-lounger" style="--role-color:${escapeHtml(role.color)}" title="${escapeHtml(task.title)}">
-        <span class="ms-lounger-cup"></span>
-        ${officeAvatar(role)}
-        <span class="ms-lounger-name">${escapeHtml(role.short)}</span>
-      </div>`;
-    }).join('');
-  }
-
-  function renderOffice() {
-    if (!detail || !detail.tasks.length) {
-      return `<div class="ms-office-empty">
-        <div class="ms-office-empty-room"><span></span><span></span><span></span></div>
-        <h3>The office is empty</h3>
-        <p>${detail && detail.mission.status === 'planning' ? 'The planner is sketching the floor plan. Desks appear as soon as the plan is accepted.' : 'Create a plan to move the team in.'}</p>
-      </div>`;
-    }
-    const phase = officePhase();
-    const working = detail.tasks.filter((t) => ['running', 'cancelling'].includes(t.status)).length;
-    const waiting = detail.tasks.filter((t) => ['queued', 'blocked'].includes(t.status)).length;
-    const resting = detail.tasks.filter((t) => t.status === 'done').length;
-    return `<div class="ms-office" data-phase="${phase.id}">
-      <div class="ms-office-bar">
-        <span class="ms-office-shift"><span class="ms-sky" aria-hidden="true"></span>${phase.label} · ${officeClock()}</span>
-        <span class="ms-office-stats">
-          <span class="ms-office-stat"><b>${working}</b> working</span>
-          <span class="ms-office-stat"><b>${waiting}</b> waiting</span>
-          <span class="ms-office-stat"><b>${resting}</b> resting</span>
-        </span>
-      </div>
-      <div class="ms-room">
-        <div class="ms-room-wall" aria-hidden="true">
-          <span class="ms-window"><i></i><i></i></span>
-          <span class="ms-wall-shelf"><i></i><i></i><i></i><i></i></span>
-          <span class="ms-wall-clock" style="--hour:${(new Date().getHours() % 12) * 30 + new Date().getMinutes() * 0.5}deg;--minute:${new Date().getMinutes() * 6}deg"><i></i><i></i></span>
-          <span class="ms-wall-lamp"></span>
-        </div>
-        <div class="ms-room-floor">
-          <div class="ms-desks">${detail.tasks.map(officeDesk).join('')}</div>
-          <div class="ms-lounge">
-            <div class="ms-lounge-label">Coffee corner</div>
-            <div class="ms-lounge-people">${officeLounge(detail.tasks)}</div>
-          </div>
-        </div>
-      </div>
-      <p class="ms-office-hint">Click a desk to open that agent's handoff or result. The room follows your local time.</p>
-    </div>`;
   }
 
   function fileLabel(file) {
@@ -617,8 +464,6 @@
           tab = el.getAttribute('data-tab');
           if (tab === 'wiki' && (!wikiDoc || wikiDoc.path !== wikiPath)) await fetchDoc(wikiPath);
           paint();
-        } else if (action === 'office-task') {
-          await openOfficeTask(el.getAttribute('data-id'));
         } else if (action === 'open-file') {
           tab = 'wiki';
           wikiPath = el.getAttribute('data-path');
@@ -644,24 +489,6 @@
       }
     };
   }
-
-  async function openOfficeTask(taskId) {
-    const task = detail && detail.tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    if (task.result) {
-      showResult(task.id);
-      return;
-    }
-    if (task.handoffRef && (detail.files || []).some((file) => file.path === task.handoffRef)) {
-      tab = 'wiki';
-      wikiPath = task.handoffRef;
-      await fetchDoc(wikiPath);
-      paint();
-      return;
-    }
-    showToast('This agent has not written a handoff yet.', 'info');
-  }
-
 
   function openTaskDetail(taskId) {
     const task = detail && detail.tasks.find((t) => t.id === taskId);
@@ -694,12 +521,14 @@
         ${task.error ? `<pre class="ms-doc ms-result">${escapeHtml(task.error)}</pre>` : ''}
         ${task.result ? `<pre class="ms-doc ms-result">${escapeHtml(truncate(task.result, 6000))}</pre>` : '<p class="ms-hint">No result captured yet.</p>'}
         ${task.retryAt ? `<p class="ms-hint">Next quota check: ${escapeHtml(fmtDate(task.retryAt))} (not a provider reset guarantee).</p>` : ''}
+        ${task.failureKind ? `<p class="ms-hint">Failure class: <code>${escapeHtml(task.failureKind)}</code></p>` : ''}
         ${task.reviewNote ? `<h4>Review / correction note</h4><p>${escapeHtml(task.reviewNote)}</p>` : ''}
         <h4>Correct this result</h4>
         <textarea id="ms-correction-text" rows="4" placeholder="What should the agent do differently next time? This becomes confirmed project memory."></textarea>
         <div class="ms-note-actions">
           <button class="btn btn-secondary btn-sm" id="ms-correction-save">Save correction</button>
-          ${['done', 'failed'].includes(task.status) ? '<button class="btn btn-secondary btn-sm" id="ms-review-accept">Accept result</button><button class="btn btn-danger btn-sm" id="ms-review-reject">Reject result</button>' : ''}
+          ${['review', 'done', 'failed'].includes(task.status) ? '<button class="btn btn-secondary btn-sm" id="ms-review-accept">Accept result</button><button class="btn btn-danger btn-sm" id="ms-review-reject">Reject result</button>' : ''}
+          ${task.status === 'failed' ? '<button class="btn btn-secondary btn-sm" id="ms-retry-task">Retry task</button>' : ''}
         </div>
       </div>`,
       confirmText: 'Close',
@@ -724,6 +553,20 @@
     if (accept) accept.onclick = () => review(true);
     const reject = document.getElementById('ms-review-reject');
     if (reject) reject.onclick = () => review(false);
+    const retry = document.getElementById('ms-retry-task');
+    if (retry) {
+      retry.onclick = async () => {
+        try {
+          await api(`/api/tasks/${encodeURIComponent(task.id)}/retry`, { method: 'POST' });
+          await Promise.all([loadMissions(), loadDetail()]);
+          document.getElementById('modal-cancel-btn').click();
+          paint();
+          showToast('Task requeued for another attempt.', 'success');
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      };
+    }
     const save = document.getElementById('ms-correction-save');
     if (save) {
       save.onclick = async () => {

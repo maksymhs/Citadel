@@ -93,10 +93,82 @@ function resolveDoc(project, relPath, { create = false } = {}) {
   return { abs, clean };
 }
 
+/**
+ * Resolve a candidate path only if it names an existing Markdown document
+ * inside the project's docs root. Used by task-result linking, where a stale or
+ * hostile path must be ignored rather than thrown. Returns null when absent.
+ */
+function existingDoc({ projectId, relPath } = {}) {
+  try {
+    const project = requireProject(projectId);
+    const { abs, clean } = resolveDoc(project, relPath);
+    if (!fs.existsSync(abs)) return null;
+    if (!fs.statSync(abs).isFile() || fs.statSync(abs).size > MAX_BYTES) return null;
+    return clean;
+  } catch {
+    return null;
+  }
+}
+
 function titleFrom(content, fallback) {
   const line = String(content || '').split(/\r?\n/).find((l) => /^#\s+/.test(l));
   if (line) return line.replace(/^#\s+/, '').trim().slice(0, 200);
   return path.basename(fallback, path.extname(fallback)).replace(/[-_]+/g, ' ').slice(0, 200);
+}
+
+/** Normalise a `[[wiki link]]` target into a document-relative path. */
+function linkTarget(raw) {
+  let target = String(raw || '').trim().replace(/\\/g, '/');
+  if (!target || target.startsWith('/') || target.includes('\0')) return null;
+  if (!path.extname(target)) target += '.md';
+  try {
+    return normaliseRel(target);
+  } catch {
+    return null;
+  }
+}
+
+/** Sync Markdown links incrementally; references accumulate across attempts. */
+function syncRelations(projectId, relPath, content, { taskId, missionId } = {}) {
+  const db = getDatabase();
+  const now = nowIso();
+  const pid = String(projectId);
+  const targets = new Set();
+  for (const match of String(content || '').matchAll(/\[\[([^\]\n]{1,200})\]\]/g)) {
+    const target = linkTarget(match[1]);
+    if (target && target !== relPath) targets.add(target);
+  }
+  db.transaction(() => {
+    const existing = new Set(db.prepare('SELECT to_path FROM document_links WHERE project_id = ? AND from_path = ?').all(pid, relPath).map((row) => row.to_path));
+    const remove = db.prepare('DELETE FROM document_links WHERE project_id = ? AND from_path = ? AND to_path = ?');
+    for (const target of existing) if (!targets.has(target)) remove.run(pid, relPath, target);
+    const insert = db.prepare(`INSERT INTO document_links (id, project_id, from_path, to_path, created_at)
+      VALUES (?, ?, ?, ?, ?)`);
+    for (const target of targets) if (!existing.has(target)) insert.run(crypto.randomUUID(), pid, relPath, target, now);
+    const hasRef = db.prepare('SELECT 1 FROM document_refs WHERE project_id = ? AND path = ? AND kind = ? AND ref_id = ?');
+    const addRef = db.prepare(`INSERT INTO document_refs (id, project_id, path, kind, ref_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)`);
+    for (const [kind, id] of [['task', taskId], ['mission', missionId]]) {
+      if (id && !hasRef.get(pid, relPath, kind, String(id))) addRef.run(crypto.randomUUID(), pid, relPath, kind, String(id), now);
+    }
+  })();
+}
+
+function relationsFor(projectId, relPath) {
+  const db = getDatabase();
+  const links = db.prepare(`
+    SELECT to_path FROM document_links
+    WHERE project_id = ? AND from_path = ? ORDER BY to_path
+  `).all(String(projectId), relPath).map((row) => row.to_path);
+  const backlinks = db.prepare(`
+    SELECT from_path FROM document_links
+    WHERE project_id = ? AND to_path = ? ORDER BY from_path
+  `).all(String(projectId), relPath).map((row) => row.from_path);
+  const refs = db.prepare(`
+    SELECT kind, ref_id FROM document_refs
+    WHERE project_id = ? AND path = ? ORDER BY kind, ref_id
+  `).all(String(projectId), relPath).map((row) => ({ kind: row.kind, id: row.ref_id }));
+  return { links, backlinks, refs };
 }
 
 function upsertMeta({ projectId, relPath, title, taskId, missionId, createdBy, updatedAt }) {
@@ -110,6 +182,10 @@ function upsertMeta({ projectId, relPath, title, taskId, missionId, createdBy, u
       task_id = COALESCE(excluded.task_id, documents.task_id),
       mission_id = COALESCE(excluded.mission_id, documents.mission_id),
       updated_at = excluded.updated_at
+    WHERE documents.title IS NOT excluded.title
+      OR documents.updated_at IS NOT excluded.updated_at
+      OR documents.task_id IS NOT COALESCE(excluded.task_id, documents.task_id)
+      OR documents.mission_id IS NOT COALESCE(excluded.mission_id, documents.mission_id)
   `).run(
     crypto.randomUUID(), String(projectId), relPath, title || null,
     taskId ? String(taskId) : null, missionId ? String(missionId) : null,
@@ -207,12 +283,14 @@ function readDoc({ projectId, relPath, path: pathField }) {
   const content = fs.readFileSync(abs, 'utf8');
   const title = titleFrom(content, clean);
   const meta = upsertMeta({ projectId: project.id, relPath: clean, title, updatedAt: stat.mtime.toISOString() });
+  syncRelations(project.id, clean, content);
   const gitRel = path.relative(project.path, abs).replace(/\\/g, '/');
   return toPublic(meta, {
     content,
     size: stat.size,
     modifiedAt: stat.mtime.toISOString(),
     gitPath: gitRel,
+    ...relationsFor(project.id, clean),
   });
 }
 
@@ -237,6 +315,7 @@ function createDoc({ projectId, relPath, path: pathField, title, content, taskId
     projectId: project.id, relPath: clean, title: title || titleFrom(body, clean),
     taskId, missionId, createdBy, updatedAt: stat.mtime.toISOString(),
   });
+  syncRelations(project.id, clean, body, { taskId, missionId });
   logService.record({
     category: 'docs', action: 'document_created',
     message: `Created document ${clean} in project ${project.name}.`,
@@ -264,6 +343,7 @@ function updateDoc({ projectId, relPath, path: pathField, content, title, taskId
     projectId: project.id, relPath: clean, title: title || titleFrom(body, clean),
     taskId, missionId, updatedAt: next.mtime.toISOString(),
   });
+  syncRelations(project.id, clean, body, { taskId, missionId });
   logService.record({
     category: 'docs', action: 'document_updated',
     message: `Updated document ${clean} in project ${project.name}.`,
@@ -275,13 +355,16 @@ function updateDoc({ projectId, relPath, path: pathField, content, title, taskId
 function linkDoc({ projectId, relPath, path: pathField, taskId, missionId }) {
   relPath = relPath || pathField;
   const project = requireProject(projectId);
-  const { clean } = resolveDoc(project, relPath);
+  const { abs, clean } = resolveDoc(project, relPath);
   const db = getDatabase();
-  const existing = db.prepare('SELECT * FROM documents WHERE project_id = ? AND path = ?').get(project.id, clean);
-  if (!existing) throw new Error('Document metadata not found; open or create it first.');
+  // Agents write Markdown directly, so register it before attaching refs.
+  const doc = readDoc({ projectId: project.id, relPath: clean });
+  const existing = { id: doc.id };
   db.prepare('UPDATE documents SET task_id = COALESCE(?, task_id), mission_id = COALESCE(?, mission_id), updated_at = ? WHERE id = ?')
     .run(taskId ? String(taskId) : null, missionId ? String(missionId) : null, nowIso(), existing.id);
-  return toPublic(db.prepare('SELECT * FROM documents WHERE id = ?').get(existing.id));
+  const body = fs.readFileSync(abs, 'utf8');
+  syncRelations(project.id, clean, body, { taskId, missionId });
+  return toPublic(db.prepare('SELECT * FROM documents WHERE id = ?').get(existing.id), relationsFor(project.id, clean));
 }
 
 function relevantDocs({ projectId, q, limit = 12 } = {}) {
@@ -309,6 +392,8 @@ module.exports = {
   createDoc,
   updateDoc,
   linkDoc,
+  existingDoc,
   relevantDocs,
+  relationsFor,
   docsRoot,
 };

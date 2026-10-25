@@ -218,8 +218,24 @@
           <button class="btn btn-primary btn-sm" data-doc-action="edit">Edit</button>
         </div>
       </div>
-      ${doc.taskId || doc.missionId ? `<div class="kn-links">${doc.taskId ? `<span>Task <code>${escapeHtml(doc.taskId.slice(0, 8))}</code></span>` : ''}${doc.missionId ? `<span>Mission <code>${escapeHtml(doc.missionId.slice(0, 8))}</code></span>` : ''}</div>` : ''}
+      ${renderDocRelations(doc)}
       <article class="ms-doc kn-markdown">${renderMarkdown(doc.content)}</article>`;
+  }
+
+  function renderDocRelations(doc) {
+    const refs = doc.refs || [];
+    const chips = [];
+    for (const ref of refs) chips.push(`${ref.kind === 'mission' ? 'Mission' : 'Task'} <code>${escapeHtml(String(ref.id).slice(0, 8))}</code>`);
+    if (!refs.length && doc.taskId) chips.push(`Task <code>${escapeHtml(doc.taskId.slice(0, 8))}</code>`);
+    if (!refs.length && doc.missionId) chips.push(`Mission <code>${escapeHtml(doc.missionId.slice(0, 8))}</code>`);
+    const outbound = (doc.links || []).map((path) => `<button class="kn-doc-link" data-doc-path="${escapeHtml(path)}">${escapeHtml(path)}</button>`);
+    const inbound = (doc.backlinks || []).map((path) => `<button class="kn-doc-link" data-doc-path="${escapeHtml(path)}">${escapeHtml(path)}</button>`);
+    if (!chips.length && !outbound.length && !inbound.length) return '';
+    return `<div class="kn-relations">
+      ${chips.length ? `<div class="kn-links">${chips.map((chip) => `<span>${chip}</span>`).join('')}</div>` : ''}
+      ${outbound.length ? `<div class="kn-rel-row"><span class="kn-rel-label">Links to</span>${outbound.join('')}</div>` : ''}
+      ${inbound.length ? `<div class="kn-rel-row"><span class="kn-rel-label">Linked from</span>${inbound.join('')}</div>` : ''}
+    </div>`;
   }
 
   function bindDocs() {

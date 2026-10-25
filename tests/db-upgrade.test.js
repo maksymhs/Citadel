@@ -83,6 +83,13 @@ describe('In-place database upgrade (older install → current schema)', () => {
     for (const col of ['title', 'mission_id', 'role', 'deps', 'stage', 'handoff_ref', 'exclusive']) {
       assert.ok(taskCols.includes(col), `tasks.${col} should exist after migration`);
     }
+    for (const col of ['reviewed_at', 'reviewed_by', 'failure_kind', 'docs_linked']) {
+      assert.ok(taskCols.includes(col), `tasks.${col} should exist after migration`);
+    }
+    for (const table of ['document_links', 'document_refs']) {
+      const found = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+      assert.ok(found, `${table} table should exist after migration`);
+    }
     const missionTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'missions'").get();
     assert.ok(missionTable, 'missions table should exist after migration');
     const missionCols = db.prepare('PRAGMA table_info(missions)').all().map((c) => c.name);
@@ -124,4 +131,23 @@ describe('In-place database upgrade (older install → current schema)', () => {
     closeDatabase();
     cleanDb(testDb);
   });
+  test('migration 015 retains legacy refs and seeds usage once', () => {
+    const { initDatabase, runMigrations, closeDatabase } = require('../server/database/db');
+    const db = initDatabase(testDb);
+    db.prepare("INSERT INTO documents (id, project_id, path, task_id, mission_id, created_at, updated_at) VALUES ('doc', 'project', 'old.md', 'task', 'mission', 'now', 'now')").run();
+    db.prepare("INSERT INTO tasks (id, cmd, autonomous, attempt, started_at, created_at, updated_at) VALUES ('task', 'true', 1, 2, ?, 'now', 'now')").run(new Date().toISOString());
+    db.prepare("DELETE FROM schema_migrations WHERE name = '015_attempt_usage_and_legacy_refs'").run();
+    db.prepare('DELETE FROM autonomous_daily_usage').run();
+    runMigrations(db);
+    assert.equal(db.prepare("SELECT attempts FROM autonomous_daily_usage").get().attempts, 2);
+    assert.deepEqual(db.prepare('SELECT kind, ref_id FROM document_refs ORDER BY kind').all(), [
+      { kind: 'mission', ref_id: 'mission' }, { kind: 'task', ref_id: 'task' },
+    ]);
+    runMigrations(db);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM document_refs').get().n, 2);
+    assert.equal(db.prepare('SELECT attempts FROM autonomous_daily_usage').get().attempts, 2);
+    closeDatabase();
+    cleanDb(testDb);
+  });
+
 });

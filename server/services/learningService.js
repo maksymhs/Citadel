@@ -17,33 +17,22 @@
  */
 const crypto = require('node:crypto');
 const { getDatabase } = require('../database/db');
+const { scrub } = require('../security/redact');
 const logService = require('./logService');
 
-const MAX_TEXT = 4000;
 const MAX_RULE = 1000;
 const SCOPES = new Set(['project', 'global']);
 const STATUSES = new Set(['pending', 'confirmed', 'discarded', 'superseded']);
 const SOURCES = new Set(['failure', 'user_correction', 'success', 'manual']);
 const QUOTA_PATTERN = /(usage limit|quota|rate.?limit|too many requests|insufficient_quota|credit balance|\b429\b)/i;
 const RESET_PATTERN = /(reset|retry|try again)[^.\n]{0,40}?(\d{1,2}:\d{2}|in \d+ ?(?:s|m|h|min|hour))/i;
+const AUTH_PATTERN = /(unauthori[sz]ed|authentication|invalid api key|forbidden|expired token|not logged in|\b401\b|\b403\b)/i;
+const NETWORK_PATTERN = /(econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up|connection (reset|refused)|network (error|unreachable)|temporary failure|bad gateway|\b502\b|\b503\b|\b504\b)/i;
+const TESTS_PATTERN = /(test(s)? failed|failing test|assertionerror|assertion failed|npm test.*(fail|error)|\bFAIL\b)/i;
+const INTERRUPTED_PATTERN = /(terminated by signal|sigterm|sigint|sigkill|process (was )?killed|interrupted)/i;
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-/**
- * Remove credentials and keep rows small. Lessons are context for a model, so
- * an accidentally pasted token must not survive here even when the caller
- * forgot to scrub it.
- */
-function scrub(value, max = MAX_TEXT) {
-  if (value === undefined || value === null) return '';
-  let text = String(value);
-  text = text.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]');
-  text = text.replace(/\b(sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,})/g, '[REDACTED]');
-  text = text.replace(/\b(password|passwd|secret|token|api[_-]?key|cookie|authorization)\b(\s*[:=]\s*)(\S+)/gi, '$1$2[REDACTED]');
-  text = text.replace(/\b[A-Za-z0-9+/=_-]{48,}\b/g, '[REDACTED]');
-  return text.trim().slice(0, max);
 }
 
 function normaliseForKey(value) {
@@ -249,6 +238,24 @@ function isQuotaError(text) {
   return QUOTA_PATTERN.test(String(text || ''));
 }
 
+/**
+ * Classify a failed attempt deterministically. The result is advisory: a
+ * classification never changes a security policy and a hypothesis is not a
+ * confirmed root cause. `retryable` only says whether waiting for the same
+ * external condition could plausibly produce a different outcome; the caller
+ * still owns the attempt budget.
+ */
+function classifyFailure(text) {
+  const value = String(text || '');
+  if (!value.trim()) return { kind: 'unknown', retryable: false };
+  if (QUOTA_PATTERN.test(value)) return { kind: 'quota', retryable: true };
+  if (AUTH_PATTERN.test(value)) return { kind: 'auth', retryable: false };
+  if (NETWORK_PATTERN.test(value)) return { kind: 'network', retryable: true };
+  if (TESTS_PATTERN.test(value)) return { kind: 'tests', retryable: false };
+  if (INTERRUPTED_PATTERN.test(value)) return { kind: 'interrupted', retryable: false };
+  return { kind: 'agent', retryable: false };
+}
+
 function detectResetHint(text) {
   const match = String(text || '').match(RESET_PATTERN);
   return match ? match[0].slice(0, 120) : null;
@@ -260,32 +267,52 @@ function detectResetHint(text) {
  */
 function recordFailure({ task, projectId, missionId }) {
   if (!task) return null;
-  const quota = isQuotaError(`${task.error || ''}\n${task.result || ''}`);
-  const title = quota
-    ? 'Agent provider quota was exhausted'
-    : `Task failed: ${String(task.title || task.error || 'unknown error').slice(0, 160)}`;
-  const resetHint = detectResetHint(`${task.error || ''}\n${task.result || ''}`);
+  const text = `${task.error || ''}\n${task.result || ''}`;
+  const { kind } = classifyFailure(text);
+  const quota = kind === 'quota';
+  const resetHint = detectResetHint(text);
+  const titles = {
+    quota: 'Agent provider quota was exhausted',
+    network: 'Transient network failure reached the agent provider',
+    auth: 'Agent authentication failed',
+    tests: 'Tests or verification failed',
+    interrupted: 'Agent execution was interrupted',
+    agent: 'Agent execution failed',
+    unknown: 'Task failed with an unknown execution state',
+  };
+  const rules = {
+    quota: 'Pause autonomous work when the provider says quota is exhausted; resume only after a confirmed availability check.',
+    network: 'Wait for connectivity or the provider, then retry once with the previous evidence instead of changing the code blindly.',
+    auth: 'Stop and ask the operator to authenticate the agent; retrying does not fix missing or expired credentials.',
+    tests: 'Read the failing assertion and fix the cause; do not claim completion until the relevant validation passes.',
+    interrupted: 'Check whether a human or the host stopped the process before retrying the same action.',
+    agent: 'Reproduce the failure and inspect evidence before retrying the same approach.',
+    unknown: 'Reconcile the real process state before starting another attempt.',
+  };
+  const rootCauses = {
+    quota: resetHint ? `Provider reset hint: ${resetHint}` : 'No confirmed reset time was provided.',
+    network: 'Not confirmed: the provider or the local network was unreachable.',
+    auth: 'Not confirmed by evidence: credentials may be missing, expired or scoped incorrectly.',
+    tests: 'Not confirmed: the failing assertion identifies a symptom, not necessarily the root cause.',
+    interrupted: 'Not confirmed: the process may have been stopped by the operator, the host or a crash.',
+    agent: 'Not confirmed: the failure may come from the change, the environment or the agent.',
+    unknown: 'Not confirmed: the execution outcome is unknown.',
+  };
   return recordLesson({
     scope: 'project',
     projectId,
     taskId: task.id,
     missionId,
-    title,
-    problem: quota
-      ? 'The agent process stopped because the provider reported a quota or rate limit.'
-      : (task.error || 'The agent process exited without a successful result.'),
-    context: `Role ${task.role || 'unknown'} in mission ${missionId || 'none'}. Attempt ${task.attempt || 0}/${task.maxAttempts || 0}.`,
-    rootCause: quota
-      ? (resetHint ? `Provider reset hint: ${resetHint}` : 'No confirmed reset time was provided.')
-      : 'Not confirmed: the failure may come from the change, the environment or the agent.',
+    title: titles[kind] || titles.agent,
+    problem: task.error || 'The agent process exited without a successful result.',
+    context: `Role ${task.role || 'unknown'} in mission ${missionId || 'none'}. Attempt ${task.attempt || 0}/${task.maxAttempts || 0}. Failure class: ${kind}.`,
+    rootCause: rootCauses[kind] || rootCauses.agent,
     rootCauseConfirmed: false,
     solution: '',
-    rule: quota
-      ? 'Pause autonomous work when the provider says quota is exhausted; resume only after a confirmed availability check.'
-      : 'Reproduce the failure and inspect evidence before retrying the same approach.',
-    components: [task.role || 'task', task.agent || 'agent'].filter(Boolean),
+    rule: rules[kind] || rules.agent,
+    components: [task.role || 'task', task.agent || 'agent', kind].filter(Boolean),
     evidence: evidenceFor(task),
-    tags: quota ? ['quota', 'provider'] : ['failure', 'retry'],
+    tags: quota ? ['quota', 'provider'] : ['failure', kind],
     source: 'failure',
   });
 }
@@ -456,6 +483,7 @@ module.exports = {
   supersedeLesson,
   promoteLesson,
   isQuotaError,
+  classifyFailure,
   detectResetHint,
   scrub,
 };
