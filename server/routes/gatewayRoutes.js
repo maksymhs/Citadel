@@ -34,5 +34,15 @@ async function gatewayRoutes(fastify) {
   fastify.get('/api/settings/gateway/models', async (request, reply) => {
     try { return { models: await gateway.models() }; } catch (err) { return reply.status(400).send({ error: err.message }); }
   });
+  fastify.get('/api/settings/gateway/discovery', async () => gateway.discovery());
+  fastify.post('/api/settings/gateway/discovery/refresh', async (request, reply) => {
+    const provider = request.body?.provider;
+    if (provider !== undefined && !['codex', 'claude'].includes(provider)) return reply.status(400).send({ error: 'Provider must be codex or claude.' });
+    try {
+      const result = await gateway.refreshDiscovery({ provider });
+      audit.logAction({ userId: request.user.id, action: 'gateway_discovery_refreshed', targetType: 'gateway', ip: request.ip });
+      return result;
+    } catch (err) { return reply.status(400).send({ error: err.message }); }
+  });
 }
 module.exports = gatewayRoutes;

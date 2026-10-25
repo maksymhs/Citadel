@@ -36,18 +36,33 @@ A setup-only proxy stops once Claude authorization finishes.
 | Claude only | Your gateway-connected Claude account supplies all three roles |
 | Auto | Claude has priority; ChatGPT is the fallback on eligible quota/availability failures |
 
-Select a mode and model IDs for each provider, then **Save**. ChatGPT defaults
-remain Sol for planning and Luna for execution/background work. Claude defaults
-are Opus 5.5 / Sonnet 5.5 / Haiku 5.5 from the pinned catalog; defaults do not
-establish account access. **Refresh status / models** loads advertised model IDs.
-**Test model** sends a small execution-role request using your allowance and
-shows the returned model ID when available. Test each provider's mode separately
-before relying on Auto. Auto requires both accounts connected.
+Choose a routing mode and model IDs for each provider. Settings loads the provider
+catalogs and subscription usage when a connected account is available. Each
+provider has separate selectors for planning, execution and background work;
+the saved model stays selected even if a later catalog does not list it. Choose
+**Enter a model ID manually…** to enter a newer or custom ID. A catalog listing is
+informational and does not guarantee that your subscription can use that model.
 
-Enable **Use gateway for Claude Code in new project terminals**. The checkbox
-saves immediately; **Save** applies later mode/model edits. Open a new project
-terminal and type `claude`. The terminal prints **AI Gateway active**.
-Project agent launches use the same configuration.
+The gateway may show provider-reported usage windows and reset times, such as
+Claude's five-hour/seven-day windows or Codex's windows when the upstream account
+reports their duration. These subscription endpoints are not stable public API
+contracts: usage can be unavailable or stale without preventing model
+configuration. A missing value is not unlimited usage. Multiple accounts are
+shown separately; Citadel does not add their percentages together or infer a
+daily limit from an unnamed window.
+
+ChatGPT defaults remain Sol for planning and Luna for execution/background work.
+Claude defaults remain Opus 5.5 / Sonnet 5.5 / Haiku 5.5 from the pinned catalog;
+these defaults do not establish account access. Refresh a provider to update its
+catalog and usage. **Test saved configuration** sends a small execution-role
+request and consumes your allowance. Test each provider separately before relying
+on Auto; Auto requires both accounts connected.
+
+The **Use in new terminals** switch applies immediately to the saved
+configuration and does not save other pending edits. Use **Save configuration**
+to apply model or mode changes; pending edits are kept separate from activation.
+Open a new project terminal and type `claude`. The terminal prints **AI Gateway
+active**. Project agent launches use the same configuration.
 
 ### Changing routes without restarting Claude
 
@@ -72,12 +87,16 @@ message. Quota and transient availability failures can fail over; invalid
 requests, authentication, billing and policy-denial statuses are surfaced.
 If all eligible accounts are exhausted, the request fails explicitly.
 
-The context budget defaults to the previous conservative 200,000-token
-assumption and is declared with `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, avoiding the
-unknown-alias context warning. Set a budget supported by **every** eligible
-model. This is operator configuration, not verified model capacity. Requests
-already emitted and arbitrary tool side effects are not guaranteed replayable;
-streaming/live subscription interoperability still needs real-account tests.
+The shared context budget defaults to 1,000,000 tokens and is declared with
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, avoiding the unknown-alias context warning. The
+current built-in Claude defaults and GPT-6.1 Sol / GPT-6 Luna defaults support at
+least 1M tokens, but discovered or manually entered model IDs may have smaller
+windows. Set a budget supported by **every** eligible model, including Auto's
+fallback; this is operator configuration, not verified model capacity. Previously
+saved budgets are preserved and can be changed in Advanced options. Context
+changes require a new terminal. Requests already emitted and arbitrary tool side
+effects are not guaranteed replayable; streaming/live subscription interoperability
+still needs real-account tests.
 
 ## Disable and disconnect
 
@@ -96,11 +115,14 @@ jobs retain their own setup. No shell profile is edited.
 The listener binds to `127.0.0.1`. Its management API is now enabled only on that
 listener, with remote access disabled and a separate random key kept in private
 runtime memory/files, never returned to the browser. Citadel exposes only
-administrator-authenticated, origin-checked setup/settings/test/callback routes.
-OAuth callback state and redirect origin/path are validated, callback URLs never
-enter audit details, and responses use `Cache-Control: no-store`. Panel downloads,
-network discovery, usage aggregation and request/error-body capture are disabled.
-Provider stdout/stderr are discarded.
+administrator-authenticated, origin-checked setup/settings/test/callback and
+provider-discovery routes. OAuth callback state and redirect origin/path are
+validated, callback URLs never enter audit details, and responses use
+`Cache-Control: no-store`. Discovery sends fixed read-only subscription-usage
+requests through the local proxy; it does not expose credentials, account
+identifiers, upstream headers or response bodies. Panel downloads, passive usage
+aggregation and request/error-body capture are disabled. Provider stdout/stderr
+are discarded.
 
 Account tokens and the client key persist encrypted with Citadel's existing
 AES-GCM key in `app_config`. The proxy needs plaintext while running: its own

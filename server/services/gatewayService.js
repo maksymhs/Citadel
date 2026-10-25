@@ -10,6 +10,7 @@ const { DATA_DIR } = require('../config');
 const { getDatabase } = require('../database/db');
 const { encrypt, decrypt } = require('../security/secrets');
 const { ALIASES, DEFAULTS, providerOf, aliasesFor, errorRules, requireConnections } = require('./gatewayRouting');
+const { normalizeModels, normalizeClaudeUsage, normalizeCodexUsage, safeProviderSnapshot } = require('./gatewayDiscoveryService');
 
 const VERSION = '8.0.43';
 const RELEASE = `https://github.com/router-for-me/CLIProxyAPI/releases/download/v${VERSION}`;
@@ -21,6 +22,10 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
   const root = path.join(dataDir, 'gateway');
   const binary = path.join(root, 'cli-proxy-api');
   let runtime = null, processHandle = null, loginHandle = null, login = null, lastError = null, busy = false, credentialTimer = null, loginTimer = null, managementKey = null, pollingLogin = false;
+  const discoveryCache = new Map();
+  const discoveryGeneration = { value: 0 };
+  const DISCOVERY_TTL = { models: 10 * 60 * 1000, usage: 60 * 1000 };
+  const lastDiscoveryRefresh = new Map();
   const read = (key) => database().prepare('SELECT value FROM app_config WHERE key = ?').get(key)?.value;
   const write = (key, value) => database().prepare(`INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(key, value, new Date().toISOString());
@@ -215,6 +220,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
   }
   async function loginStart(provider = 'codex') {
     return exclusive(async () => {
+      invalidateDiscovery();
       if (!installed()) throw new Error('Install the gateway first.');
       if (!['codex', 'claude'].includes(provider)) throw new Error('Unknown gateway provider.');
       if (loginHandle || ['waiting_callback', 'exchanging'].includes(login?.state)) throw new Error('Finish or disconnect the pending login first.');
@@ -255,6 +261,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
         if (loginHandle !== child) return;
         loginHandle = null;
         try { persistCredentials(); } catch { lastError = 'Could not save gateway credentials.'; }
+        invalidateDiscovery();
         login = { provider, state: code === 0 && connected() ? 'connected' : 'failed' };
         if (processHandle) writeRuntime();
         releaseIdleRuntime();
@@ -299,6 +306,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       if (!['ok', 'error'].includes(result.status)) return;
       clearInterval(loginTimer);
       persistCredentials();
+      invalidateDiscovery();
       login = { provider: 'claude', state: result.status === 'ok' && connections().claude ? 'connected' : 'failed' };
       if (config().enabled) writeRuntime(); else await stopSetupGateway();
     } catch {
@@ -385,6 +393,103 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     const data = await api('/v1/models');
     return (data.data || []).map(m => m.id).filter(id => typeof id === 'string' && MODEL.test(id)).slice(0, 256);
   }
+  function invalidateDiscovery() { discoveryGeneration.value++; discoveryCache.clear(); lastDiscoveryRefresh.clear(); }
+  function discoverySnapshot() {
+    const connectedProviders = connections();
+    return { providers: Object.fromEntries(['codex', 'claude'].map(provider => {
+      const cached = discoveryCache.get(provider);
+      return [provider, safeProviderSnapshot(connectedProviders[provider], cached)];
+    })) };
+  }
+  function parseManagementBody(result) {
+    if (!Number.isInteger(result?.status_code) || result.status_code < 200 || result.status_code >= 300 || typeof result.body !== 'string' || result.body.length > 1024 * 1024) throw new Error('Provider information is unavailable.');
+    try { return JSON.parse(result.body); } catch { throw new Error('Provider information is unavailable.'); }
+  }
+  async function upstreamUsage(authIndex, provider) {
+    const claude = provider === 'claude';
+    const result = await api('/v8/management/requests/api-call', {
+      auth_index: authIndex,
+      method: 'GET',
+      url: claude ? 'https://api.anthropic.com/api/oauth/usage' : 'https://chatgpt.com/backend-api/wham/usage',
+      header: claude ? {
+        Authorization: 'Bearer $TOKEN$', 'Content-Type': 'application/json',
+        'User-Agent': 'claude-cli/2.1.280 (external, cli)', 'anthropic-beta': 'oauth-2025-04-20',
+      } : {
+        Authorization: 'Bearer $TOKEN$', 'Content-Type': 'application/json',
+        'User-Agent': 'codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)',
+      },
+    }, { management: true });
+    return parseManagementBody(result);
+  }
+  async function refreshDiscovery({ provider: onlyProvider } = {}) {
+    return exclusive(async () => {
+      const now = Date.now();
+      const refreshKey = onlyProvider || 'all';
+      if (now - (lastDiscoveryRefresh.get(refreshKey) || 0) < 30000) return discoverySnapshot();
+      lastDiscoveryRefresh.set(refreshKey, now);
+      const connectedProviders = connections();
+      const targets = onlyProvider ? [onlyProvider] : ['codex', 'claude'];
+      if (targets.some(provider => connectedProviders[provider]) && !processHandle) {
+        if (!installed()) return discoverySnapshot();
+        if (loginHandle || ['waiting', 'waiting_callback', 'exchanging', 'starting'].includes(login?.state)) throw new Error('Finish the pending provider login before refreshing discovery.');
+      }
+      const startedHere = !processHandle && targets.some(provider => connectedProviders[provider]);
+      const generation = discoveryGeneration.value;
+      try {
+        if (startedHere) await start({ setup: true });
+        if (!processHandle) return discoverySnapshot();
+        const authFiles = await api('/v8/management/credentials', null, { management: true });
+        const files = Array.isArray(authFiles.files) ? authFiles.files.slice(0, 64) : [];
+        for (const provider of targets) {
+          if (!connectedProviders[provider]) { discoveryCache.delete(provider); continue; }
+          const previous = discoveryCache.get(provider) || {};
+          let modelState = previous.models;
+          let usageState = previous.usage;
+          let modelError = false, usageError = false;
+          try {
+            const credentials = files.filter(file => String(file.provider || file.type || '').toLowerCase() === provider && typeof file.name === 'string' && (typeof file.auth_index === 'string' || Number.isSafeInteger(file.auth_index)) && String(file.auth_index).length <= 128 && !file.disabled);
+            const catalogs = await Promise.all(credentials.map(async file => {
+              try {
+                const result = await api(`/v8/management/credentials/models?name=${encodeURIComponent(file.name)}`, null, { management: true });
+                return normalizeModels(result.models);
+              } catch { return []; }
+            }));
+            let items = normalizeModels(catalogs.flat());
+            let source = 'credential_catalog';
+            if (!items.length) {
+              const definitions = await api(`/v8/management/routing/model-definitions/${provider}`, null, { management: true });
+              items = normalizeModels(definitions.models);
+              source = 'proxy_catalog';
+            }
+            modelState = { status: items.length ? 'available' : 'unavailable', source: items.length ? source : null, fetchedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + DISCOVERY_TTL.models).toISOString(), stale: false, items };
+          } catch { modelError = true; }
+          try {
+            const credentials = files.filter(file => String(file.provider || file.type || '').toLowerCase() === provider && (typeof file.auth_index === 'string' || Number.isSafeInteger(file.auth_index)) && String(file.auth_index).length <= 128 && !file.disabled).slice(0, 8);
+            const accounts = await Promise.all(credentials.map(async (_, index) => {
+              try {
+                const payload = await upstreamUsage(credentials[index].auth_index, provider);
+                const windows = provider === 'claude' ? normalizeClaudeUsage(payload) : normalizeCodexUsage(payload);
+                return { label: `Account ${index + 1}`, status: windows.length ? 'available' : 'unavailable', windows };
+              } catch { return { label: `Account ${index + 1}`, status: 'unavailable', windows: [] }; }
+            }));
+            usageState = { status: accounts.some(account => account.status === 'available') ? (accounts.every(account => account.status === 'available') ? 'available' : 'partial') : 'unavailable', fetchedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + DISCOVERY_TTL.usage).toISOString(), stale: false, accounts };
+            usageError = usageState.status === 'unavailable';
+          } catch { usageError = true; }
+          if (generation === discoveryGeneration.value) {
+            const markStale = state => state ? { ...state, stale: true } : state;
+            discoveryCache.set(provider, {
+              models: modelError ? markStale(modelState) : modelState,
+              usage: usageError ? markStale(usageState) : usageState,
+              error: modelError || usageError,
+            });
+          }
+        }
+      } finally {
+        if (startedHere && processHandle) await stopSetupGateway();
+      }
+      return discoverySnapshot();
+    });
+  }
   async function testConnection() {
     const c = config();
     const result = await api('/v1/messages', { model: ALIASES.execution, max_tokens: 64, messages: [{ role: 'user', content: 'Reply OK.' }] });
@@ -410,12 +515,13 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     return exclusive(async () => {
       await close();
       const c = config(); c.enabled = false; write(KEY, JSON.stringify(c));
+      invalidateDiscovery();
       database().prepare('DELETE FROM app_config WHERE key = ?').run(AUTH_KEY);
       login = null; lastError = null;
       return status();
     });
   }
   async function resume() { if (config().enabled) { try { await start(); } catch { lastError = 'Gateway could not resume. Open Settings → AI Gateway.'; } } }
-  return { status, install, loginStart, save, models, testConnection, launchOptions, close, disconnect, resume, callback, refreshLogin };
+  return { status, install, loginStart, save, models, discovery: discoverySnapshot, refreshDiscovery, testConnection, launchOptions, close, disconnect, resume, callback, refreshLogin };
 }
 module.exports = { ...createGatewayService(), createGatewayService, VERSION };

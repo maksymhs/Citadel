@@ -58,6 +58,13 @@ if (process.argv.includes('--codex-device-login')) {
       else if (req.url === '/v8/management/oauth/callback') {
         fs.writeFileSync(path.join(c.oauth['auth-dir'], 'claude-fixture.json'), JSON.stringify({ type: 'claude', access_token: 'fixture-claude-secret' }));
         authStatus = 'ok'; res.end(JSON.stringify({ status: 'ok' }));
+      } else if (req.url === '/v8/management/credentials') res.end(JSON.stringify({ files: [{ name: 'codex-fixture.json', provider: 'codex', auth_index: 'fixture-codex' }, { name: 'claude-fixture.json', provider: 'claude', auth_index: 'fixture-claude' }] }));
+      else if (req.url.startsWith('/v8/management/credentials/models')) res.end(JSON.stringify({ models: [{ id: req.url.includes('codex-fixture') ? 'gpt-fixture' : 'claude-fixture', display_name: 'Fixture model' }, { id: 'citadel-execution' }] }));
+      else if (req.url === '/v8/management/routing/model-definitions/codex' || req.url === '/v8/management/routing/model-definitions/claude') res.end(JSON.stringify({ models: [{ id: 'catalog-fixture' }] }));
+      else if (req.url === '/v8/management/requests/api-call') {
+        const call = JSON.parse(raw);
+        const payload = call.url.includes('anthropic.com') ? { five_hour: { utilization: 0, resets_at: new Date(Date.now() + 3600000).toISOString() }, seven_day: { utilization: 25, resets_at: new Date(Date.now() + 86400000).toISOString() } } : { rate_limit: { primary_window: { used_percent: 5, limit_window_seconds: 18000, reset_after_seconds: 1200 }, secondary_window: { used_percent: 40, limit_window_seconds: 604800, reset_after_seconds: 7200 } } };
+        res.end(JSON.stringify({ status_code: 200, body: JSON.stringify(payload), header: {} }));
       } else res.end(JSON.stringify({ status: authStatus }));
       return;
     }
@@ -74,7 +81,7 @@ test('gateway routes require administrator access and never reveal stored values
   assert.equal((await app.inject({ url: '/api/settings/gateway' })).statusCode, 401);
   getDatabase().prepare("UPDATE users SET role = 'viewer'").run();
   try {
-    for (const [method, url] of [['GET', ''], ['PUT', ''], ['POST', '/install'], ['POST', '/login'], ['DELETE', '/login'], ['GET', '/models'], ['POST', '/test'], ['POST', '/callback']]) {
+    for (const [method, url] of [['GET', ''], ['PUT', ''], ['POST', '/install'], ['POST', '/login'], ['DELETE', '/login'], ['GET', '/models'], ['GET', '/discovery'], ['POST', '/discovery/refresh'], ['POST', '/test'], ['POST', '/callback']]) {
       assert.equal((await app.inject({ method, url: `/api/settings/gateway${url}`, cookies, ...(method === 'PUT' ? { payload: { enabled: true } } : {}) })).statusCode, 403);
     }
     const gateway = require('../server/services/gatewayService');
@@ -90,6 +97,11 @@ test('gateway routes require administrator access and never reveal stored values
   assert.equal(result.json().gateway.enabled, false);
   assert.equal(result.json().gateway.running, false);
   assert.equal((await app.inject({ method: 'POST', url: '/api/settings/gateway/login', cookies, headers: { origin: 'https://untrusted.example' } })).statusCode, 403);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/settings/gateway/discovery/refresh', cookies, payload: { provider: 'other' } })).statusCode, 400);
+  const discovery = await app.inject({ url: '/api/settings/gateway/discovery', cookies });
+  assert.equal(discovery.statusCode, 200);
+  assert.equal(discovery.headers['cache-control'], 'no-store');
+  assert.equal(discovery.json().providers.codex.connected, false);
   assert.equal((await app.inject({ method: 'PUT', url: '/api/settings/gateway', cookies, payload: { enabled: true } })).statusCode, 400);
 });
 
@@ -199,6 +211,30 @@ test('provider errors and malformed responses never echo response bodies', async
   await s.disconnect();
 });
 
+test('provider discovery uses credential catalogs, isolates usage windows and stops temporary proxy', async () => {
+  const { dir, service: s } = fresh(); fakeBinary(dir);
+  await s.save({ enabled: false, port: await port() });
+  await s.loginStart(); await until(() => s.status().connected);
+  await s.loginStart('claude');
+  assert.equal(s.status().running, true, 'Claude login uses a setup-only proxy');
+  await s.callback('http://localhost:54545/callback?state=fixture-state&code=fixture-code');
+  await s.refreshLogin();
+  assert.equal(s.status().running, false, 'setup proxy stops after authorization');
+  const before = s.status();
+  const result = await s.refreshDiscovery();
+  assert.equal(s.status().running, false, 'discovery stops only the temporary proxy');
+  assert.equal(s.status().enabled, before.enabled, 'discovery never activates the gateway');
+  assert.deepEqual(result.providers.codex.models.items.map(model => model.id), ['gpt-fixture']);
+  assert.deepEqual(result.providers.claude.models.items.map(model => model.id), ['claude-fixture']);
+  assert.equal(result.providers.claude.usage.accounts[0].windows[0].usedPercent, 0);
+  assert.equal(result.providers.claude.usage.accounts[0].windows[0].durationSeconds, 18000);
+  assert.equal(result.providers.codex.usage.accounts[0].windows[1].durationSeconds, 604800);
+  assert.ok(!JSON.stringify(result).includes('fixture-claude-secret'));
+  assert.ok(!JSON.stringify(result).includes('fixture-codex'));
+  assert.ok(!JSON.stringify(result).includes('codex-fixture.json'));
+  await s.disconnect();
+});
+
 test('agent launch routes Claude through scoped wrapper and keeps native mode available', () => {
   const registry = require('../server/services/agentRegistry');
   const terminals = require('../server/services/terminalManager');
@@ -298,7 +334,7 @@ test('separate Claude authorization validates callbacks and hot policy changes p
   assert.equal(proxy.oauth['model-alias'].claude[1].name, 'claude-fixture-updated');
   const after = gatewayEnvironment({}, JSON.parse(fs.readFileSync(settingsFile)));
   assert.equal(before.ANTHROPIC_DEFAULT_SONNET_MODEL, after.ANTHROPIC_DEFAULT_SONNET_MODEL);
-  assert.equal(after.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '200000');
+  assert.equal(after.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1000000');
   assert.ok(!JSON.stringify(s.status()).includes(proxy.management['secret-key']));
   await s.disconnect();
 });

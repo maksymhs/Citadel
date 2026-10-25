@@ -1,6 +1,6 @@
 /** Stable client aliases and explicit provider policy for the local gateway. */
 const ALIASES = Object.freeze({ planning: 'citadel-planning', execution: 'citadel-execution', small: 'citadel-small' });
-const DEFAULTS = Object.freeze({ mode: 'chatgpt', contextTokens: 200000,
+const DEFAULTS = Object.freeze({ mode: 'chatgpt', contextTokens: 1000000,
   claudePlanningModel: 'claude-opus-5-5', claudeExecutionModel: 'claude-sonnet-5-5', claudeSmallModel: 'claude-haiku-5-5' });
 function providerOf(name, metadata) {
   if (metadata.type === 'claude' || metadata.type === 'anthropic') return 'claude';

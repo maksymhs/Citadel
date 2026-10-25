@@ -152,7 +152,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.equal(w.document.getElementById('gateway-planning').value, 'gpt-6.1-sol');
     assert.equal(w.document.getElementById('gateway-execution').value, 'gpt-6-luna');
     assert.equal(w.document.getElementById('gateway-mode').value, 'chatgpt');
-    assert.equal(w.document.getElementById('gateway-context').value, '200000');
+    assert.equal(w.document.getElementById('gateway-context').value, '1000000');
     assert.ok(w.document.getElementById('gateway-login-claude'));
     assert.match(w.document.getElementById('gateway-body').textContent, /Auto requires both providers/);
     w.document.querySelector('.nav-item[data-view="projects"]').click();
@@ -169,9 +169,12 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       const calls = [], notices = [];
       let gateway = { installed: true, supported: true, running: true, connected: true, enabled: true, port: 8317, version: 'fixture', mode: 'chatgpt', contextTokens: 200000,
         planningModel: 'gpt-plan', executionModel: 'gpt-run', smallModel: 'gpt-small', claudePlanningModel: 'claude-plan', claudeExecutionModel: 'claude-run', claudeSmallModel: 'claude-small', connections: { codex: true, claude: false } };
+      const discovery = { providers: { codex: { connected: true, models: { status: 'available', source: 'credential_catalog', fetchedAt: new Date().toISOString(), stale: false, items: [{ id: 'gpt-run', label: 'GPT run' }] }, usage: { status: 'available', accounts: [{ label: 'Account 1', windows: [{ id: 'primary', label: '5-hour window', usedPercent: 0, durationSeconds: 18000, resetsAt: new Date(Date.now() + 60000).toISOString() }] }] } }, claude: { connected: false, models: { status: 'not_connected', items: [] }, usage: { status: 'not_connected', accounts: [] } } } };
       await win.CitadelGatewaySettings.init({ escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), showToast: msg => notices.push(msg),
         api: async (url, opts = {}) => {
           calls.push({ url, ...opts });
+          if (url.endsWith('/discovery/refresh')) return discovery;
+          if (url.endsWith('/discovery')) return discovery;
           if (url.endsWith('/models')) return { models: ['gpt-run', 'claude-run'] };
           if (url.endsWith('/login') && opts.method === 'POST') gateway = { ...gateway, login: { provider: 'claude', state: 'waiting_callback', url: 'https://claude.ai/oauth/authorize?state=fixture' } };
           if (url.endsWith('/callback')) gateway = { ...gateway, login: { provider: 'claude', state: 'connected' }, connections: { codex: true, claude: true } };
@@ -183,15 +186,26 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(calls.find(call => call.method === 'POST').body.provider, 'claude');
       const callback = 'http://localhost:54545/callback?state=fixture&code=private-fixture-code';
       win.document.getElementById('gateway-callback').value = callback;
-      win.document.getElementById('gateway-refresh').click(); await sleep(30);
+      win.document.querySelector('[data-refresh-provider="codex"]').click(); await sleep(30);
       assert.equal(win.document.getElementById('gateway-callback').value, callback, 'status polling must preserve callback input');
       win.document.getElementById('gateway-submit-callback').click(); await sleep(30);
       assert.equal(calls.find(call => call.url.endsWith('/callback')).body.redirectUrl, callback);
       assert.equal(win.document.getElementById('gateway-callback'), null);
       assert.ok(!win.document.body.textContent.includes('private-fixture-code'));
+      assert.equal(win.document.getElementById('gateway-planning').value, 'gpt-plan', 'model choices preserve saved IDs even outside the live catalog');
+      assert.match(win.document.getElementById('gateway-body').textContent, /0% used/);
+      assert.match(win.document.getElementById('gateway-body').textContent, /Resets/);
       win.document.getElementById('gateway-mode').value = 'auto';
-      win.document.getElementById('gateway-form').dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true })); await sleep(30);
+      win.document.getElementById('gateway-mode').dispatchEvent(new win.Event('change', { bubbles: true }));
+      win.document.getElementById('gateway-save').click(); await sleep(30);
       assert.equal(calls.find(call => call.method === 'PUT').body.mode, 'auto');
+      const planning = win.document.getElementById('gateway-planning');
+      planning.value = 'gpt-run'; planning.dispatchEvent(new win.Event('change', { bubbles: true }));
+      const enabled = win.document.getElementById('gateway-enabled'); enabled.checked = false; enabled.dispatchEvent(new win.Event('change', { bubbles: true })); await sleep(30);
+      const toggle = calls.filter(call => call.method === 'PUT').at(-1);
+      assert.deepEqual(Object.keys(toggle.body), ['enabled'], 'the activation switch sends no other configuration fields');
+      assert.equal(toggle.body.enabled, false, 'the activation switch sends its new state');
+      assert.equal(win.document.getElementById('gateway-planning').value, 'gpt-run', 'pending model edit survives an activation update');
       win.document.getElementById('gateway-test').click(); await sleep(30);
       assert.ok(notices.some(message => message.includes('actual-fixture-model')));
       assert.ok(calls.every(call => !call.url.includes('private-fixture-code')));
