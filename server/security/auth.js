@@ -155,7 +155,7 @@ function getSessionUser(sessionId) {
 
   const db = getDatabase();
   const session = db.prepare(`
-    SELECT s.id AS session_id, s.expires_at, u.id AS user_id, u.username, u.role
+    SELECT s.id AS session_id, s.expires_at, s.last_active, u.id AS user_id, u.username, u.role
     FROM sessions s
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ?
@@ -172,8 +172,11 @@ function getSessionUser(sessionId) {
     return null;
   }
 
-  // Update last_active
-  db.prepare('UPDATE sessions SET last_active = ? WHERE id = ?').run(now, sessionId);
+  // Activity is informational, not an expiry extension. Polling should not
+  // turn every authenticated GET into a WAL write; one update/minute suffices.
+  if (!session.last_active || Date.parse(now) - Date.parse(session.last_active) >= 60000) {
+    db.prepare('UPDATE sessions SET last_active = ? WHERE id = ?').run(now, sessionId);
+  }
 
   return {
     id: session.user_id,

@@ -69,6 +69,24 @@ describe('Auth & Security API Tests', () => {
     assert.equal(verifyPassword('anything', 'ab'.repeat(4), 'salt'), false);
   });
 
+  test('session polling avoids repeated writes while expiry is still enforced', () => {
+    const { getDatabase } = require('../server/database/db');
+    const { login, getSessionUser } = require('../server/security/auth');
+    const db = getDatabase();
+    const session = login('admin', 'SuperSecretPassword123!');
+    const id = session.id || session.sessionId;
+    db.prepare("UPDATE sessions SET last_active = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(id);
+    assert.ok(getSessionUser(id));
+    const last = db.prepare('SELECT last_active, expires_at FROM sessions WHERE id = ?').get(id);
+    assert.notEqual(last.last_active, '2000-01-01T00:00:00.000Z');
+    const before = db.prepare('SELECT total_changes() n').get().n;
+    assert.ok(getSessionUser(id));
+    assert.equal(db.prepare('SELECT total_changes() n').get().n, before);
+    assert.equal(db.prepare('SELECT expires_at FROM sessions WHERE id = ?').get(id).expires_at, last.expires_at);
+    db.prepare("UPDATE sessions SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(id);
+    assert.equal(getSessionUser(id), null);
+  });
+
   test('concurrent setup attempts can only create one administrator', async () => {
     const { initDatabase } = require('../server/database/db');
     const concurrentDb = path.resolve(__dirname, '../data/test-auth-concurrent.db');

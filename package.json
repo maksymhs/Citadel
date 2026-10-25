@@ -8,6 +8,7 @@
     "dev": "node --watch server/index.js",
     "test": "CITADEL_SELF_UPDATE=0 node --test",
     "doctor": "node scripts/doctor.js",
+    "benchmark": "node scripts/benchmark.js",
     "sentinel": "node scripts/sentinel.js",
     "mcp": "node scripts/citadel-mcp.js",
     "postinstall": "node scripts/copy-vendor.js",
