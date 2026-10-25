@@ -1,6 +1,6 @@
 # Citadel working plan
 
-Release preparation for v0.44.0, 2026-10-25. External contribution and platform
+Progress for v0.45.0, 2026-10-25. External contribution and platform
 checks remain tracked below.
 
 - [x] Repair review/retry, per-attempt budgets, plan transactions, Markdown links
@@ -28,11 +28,11 @@ A hosted editor or more autonomous machinery should follow evidence from the
 contribution exercise. No second queue, scheduler, database or external service
 is introduced by this work.
 
-## Project management redesign (working branch)
+## Project management redesign (v0.45.0)
 
 - [x] Consolidate Work, Docs and Learning navigation into one optional Project hub.
 - [x] Show project tasks, priorities, Markdown, confirmed context and a code graph.
 - [x] Add project-scoped traces with cursors, filters, pause/resume and stale status.
 - [x] Include terminal lifecycle events without collecting keystrokes/transcripts.
 - [x] Test the integrated view and regenerate isolated demo screenshots.
-- [ ] Review and publish this redesign separately from v0.44.0.
+- [x] Prepare the reviewed redesign for release as v0.45.0.
