@@ -1,0 +1,321 @@
+/** Optional local CLIProxyAPI lifecycle, encrypted credentials and Claude launch settings. */
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const net = require('node:net');
+const { spawn, execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const { DATA_DIR } = require('../config');
+const { getDatabase } = require('../database/db');
+const { encrypt, decrypt } = require('../security/secrets');
+
+const VERSION = '8.0.43';
+const RELEASE = `https://github.com/router-for-me/CLIProxyAPI/releases/download/v${VERSION}`;
+const MODEL = /^[a-zA-Z0-9][a-zA-Z0-9._:/+()-]{0,159}$/;
+const KEY = 'ai.gateway';
+const AUTH_KEY = 'ai.gateway.credentials';
+
+function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetchImpl = fetch, spawnImpl = spawn, execFileImpl = promisify(execFile), platform = process.platform, arch = process.arch } = {}) {
+  const root = path.join(dataDir, 'gateway');
+  const binary = path.join(root, 'cli-proxy-api');
+  let runtime = null, processHandle = null, loginHandle = null, login = null, lastError = null, busy = false, credentialTimer = null;
+  const read = (key) => database().prepare('SELECT value FROM app_config WHERE key = ?').get(key)?.value;
+  const write = (key, value) => database().prepare(`INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(key, value, new Date().toISOString());
+  const config = () => ({ enabled: false, port: 8317, planningModel: 'gpt-6.1-sol', executionModel: 'gpt-6-luna', smallModel: 'gpt-6-luna', ...JSON.parse(read(KEY) || '{}') });
+  const connected = () => Boolean(read(AUTH_KEY));
+  const installed = () => { try { return fs.lstatSync(binary).isFile() && !fs.lstatSync(root).isSymbolicLink(); } catch { return false; } };
+  const supported = () => ['linux', 'darwin'].includes(platform) && ['x64', 'arm64'].includes(arch);
+
+  async function exclusive(fn) {
+    if (busy) throw new Error('Another gateway operation is in progress.');
+    busy = true;
+    try { return await fn(); } finally { busy = false; }
+  }
+  function prepareRoot() {
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    if (fs.realpathSync(root) !== path.join(fs.realpathSync(dataDir), 'gateway')) throw new Error('Gateway directory must not be a symlink.');
+    fs.chmodSync(root, 0o700);
+  }
+  function token() {
+    const c = config();
+    if (!c.clientKey) { c.clientKey = encrypt(crypto.randomBytes(32).toString('hex')); write(KEY, JSON.stringify(c)); }
+    return decrypt(c.clientKey);
+  }
+  function persistCredentials() {
+    if (!runtime) return;
+    const dir = path.join(runtime, 'auth');
+    const entries = {};
+    let total = 0;
+    for (const name of fs.readdirSync(dir)) {
+      if (!/^[a-zA-Z0-9_.@+-]+\.json$/.test(name)) continue;
+      const file = path.join(dir, name);
+      const st = fs.lstatSync(file);
+      if (!st.isFile() || st.isSymbolicLink() || st.size > 256 * 1024) continue;
+      const text = fs.readFileSync(file, 'utf8');
+      try { JSON.parse(text); } catch { continue; }
+      total += Buffer.byteLength(text);
+      if (total > 1024 * 1024 || Object.keys(entries).length >= 32) throw new Error('Gateway credential store exceeds its limit.');
+      fs.chmodSync(file, 0o600);
+      entries[name] = text;
+    }
+    if (Object.keys(entries).length) {
+      const value = JSON.stringify(entries);
+      // Avoid an encrypted DB write on every status poll.
+      const previous = read(AUTH_KEY);
+      if (!previous || decrypt(previous) !== value) write(AUTH_KEY, encrypt(value));
+    }
+  }
+  function releaseIdleRuntime() {
+    if (runtime && !processHandle && !loginHandle) {
+      fs.rmSync(runtime, { recursive: true, force: true }); runtime = null;
+    }
+  }
+  function ensureRuntime() {
+    if (runtime) return;
+    prepareRoot();
+    // Linux keeps live token material in memory where available. Other systems
+    // use a private temporary directory; the durable copy is always encrypted.
+    const tempBase = platform === 'linux' && fs.existsSync('/dev/shm') ? '/dev/shm' : os.tmpdir();
+    runtime = fs.mkdtempSync(path.join(tempBase, 'citadel-gateway-'));
+    fs.chmodSync(runtime, 0o700);
+    fs.mkdirSync(path.join(runtime, 'auth'), { mode: 0o700 });
+    const saved = read(AUTH_KEY);
+    if (saved) {
+      for (const [name, text] of Object.entries(JSON.parse(decrypt(saved)))) {
+        if (!/^[a-zA-Z0-9_.@+-]+\.json$/.test(name) || typeof text !== 'string') continue;
+        fs.writeFileSync(path.join(runtime, 'auth', name), text, { mode: 0o600 });
+      }
+    }
+    writeRuntime();
+  }
+  function writeRuntime() {
+    const c = config();
+    const key = token();
+    const proxy = {
+      'config-version': 8,
+      server: { host: '127.0.0.1', port: c.port, 'commercial-mode': true, discovery: { enabled: false } },
+      // Upstream otherwise captures error request bodies even with request-log=false.
+      observability: { logs: { debug: false, 'logging-to-file': false, 'request-log': false }, usage: { 'usage-statistics-enabled': false }, pprof: { enable: false } },
+      management: { 'secret-key': '', 'disable-control-panel': true, 'disable-auto-update-panel': true },
+      access: { 'api-keys': [key] },
+      oauth: { 'auth-dir': path.join(runtime, 'auth') },
+      routing: { retry: { 'request-retry': 0, 'max-retry-interval': 0 } },
+    };
+    fs.writeFileSync(path.join(runtime, 'config.json'), JSON.stringify(proxy), { mode: 0o600 });
+    fs.writeFileSync(path.join(runtime, 'launch.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${c.port}`, token: key, planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel }), { mode: 0o600 });
+  }
+  function spawnGateway(args) {
+    const child = spawnImpl(binary, ['--config', path.join(runtime, 'config.json'), '--local-model', ...args], {
+      cwd: runtime, env: { PATH: process.env.PATH || '/usr/bin:/bin', HOME: runtime, TMPDIR: runtime }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    // Provider output may contain credential material. Never forward it to logs.
+    child.stdout?.resume(); child.stderr?.resume();
+    return child;
+  }
+  function request(url, options = {}) {
+    return fetchImpl(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(15000) });
+  }
+  async function api(route, body) {
+    const c = config();
+    if (!processHandle) throw new Error('Gateway is not running.');
+    const res = await request(`http://127.0.0.1:${c.port}${route}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    if (!res.ok) { await res.body?.cancel(); throw new Error(`Gateway request failed (HTTP ${res.status}). Check account access and model availability.`); }
+    // Neither provider error bodies nor generated content are reflected to clients.
+    const text = await boundedBody(res, 1024 * 1024);
+    try { return JSON.parse(text.toString('utf8')); } catch { throw new Error('Gateway returned an invalid response.'); }
+  }
+  async function boundedBody(res, limit) {
+    const chunks = []; let size = 0;
+    for await (const chunk of res.body) {
+      size += chunk.length;
+      if (size > limit) throw new Error('Gateway response exceeded its size limit.');
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }
+  async function download(name, limit) {
+    let url = `${RELEASE}/${name}`;
+    for (let i = 0; i < 5; i++) {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:' || !['github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(parsed.hostname) || parsed.username || parsed.password) throw new Error('Untrusted gateway download destination.');
+      const res = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(60000) });
+      if ([301, 302, 303, 307, 308].includes(res.status)) {
+        const location = res.headers.get('location');
+        await res.body?.cancel();
+        if (!location) throw new Error('Invalid release redirect.');
+        url = new URL(location, url).href;
+        continue;
+      }
+      if (!res.ok) throw new Error('Gateway download failed.');
+      return boundedBody(res, limit);
+    }
+    throw new Error('Too many release redirects.');
+  }
+  async function install() {
+    return exclusive(async () => {
+      if (!supported()) throw new Error('Gateway installation supports Linux/macOS on x64/arm64.');
+      if (installed()) return status();
+      prepareRoot();
+      const suffix = platform === 'linux' ? '_no-plugin' : '';
+      const asset = `CLIProxyAPI_${VERSION}_${platform}_${arch === 'arm64' ? 'aarch64' : 'amd64'}${suffix}.tar.gz`;
+      const temp = fs.mkdtempSync(path.join(root, 'install-'));
+      try {
+        const [archive, checksums] = await Promise.all([download(asset, 100 * 1024 * 1024), download('checksums.txt', 128 * 1024)]);
+        const line = checksums.toString('utf8').split('\n').find(line => line.trim().split(/\s+/).at(-1)?.replace(/^\*/, '') === asset);
+        const hash = line?.trim().split(/\s+/)[0];
+        if (!hash || hash !== crypto.createHash('sha256').update(archive).digest('hex')) throw new Error('Gateway checksum verification failed.');
+        const archivePath = path.join(temp, 'gateway.tar.gz');
+        fs.writeFileSync(archivePath, archive, { mode: 0o600 });
+        await execFileImpl('tar', ['-xzf', archivePath, '-C', temp, 'cli-proxy-api'], { timeout: 15000, maxBuffer: 1024 * 1024 });
+        const extracted = path.join(temp, 'cli-proxy-api');
+        if (!fs.lstatSync(extracted).isFile() || fs.lstatSync(extracted).isSymbolicLink()) throw new Error('Invalid gateway archive.');
+        fs.chmodSync(extracted, 0o700);
+        fs.renameSync(extracted, binary);
+      } catch (err) {
+        // Low-level network/tar messages can contain paths or provider data.
+        if (/checksum|supports|Invalid gateway/.test(err.message)) throw err;
+        throw new Error('Could not install gateway. Check network access and that tar is installed.');
+      } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+      return status();
+    });
+  }
+  function status() {
+    const c = config();
+    return { version: VERSION, supported: supported(), installed: installed(), enabled: c.enabled, running: Boolean(processHandle), connected: connected(), port: c.port,
+      planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel,
+      busy, error: lastError, login: login ? { ...login } : null };
+  }
+  async function loginStart() {
+    return exclusive(async () => {
+      if (!installed()) throw new Error('Install the gateway first.');
+      if (loginHandle) return status();
+      ensureRuntime();
+      login = { state: 'starting' };
+      const child = spawnGateway(['--codex-device-login', '--no-browser']);
+      loginHandle = child;
+      let output = '';
+      const capture = chunk => {
+        output = (output + chunk.toString()).slice(-8192);
+        const code = output.match(/Codex device code:\s*([A-Z0-9-]{4,32})/i)?.[1];
+        if (code && login.state !== 'waiting') login = { state: 'waiting', url: 'https://auth.openai.com/codex/device', code, expiresAt: new Date(Date.now() + 15 * 60000).toISOString() };
+      };
+      child.stdout.on('data', capture); child.stderr.on('data', capture);
+      const timer = setTimeout(() => child.kill('SIGTERM'), 16 * 60000); timer.unref();
+      child.on('error', () => { lastError = 'Could not start ChatGPT login.'; });
+      child.on('close', code => {
+        clearTimeout(timer);
+        if (loginHandle !== child) return;
+        loginHandle = null;
+        try { persistCredentials(); } catch { lastError = 'Could not save gateway credentials.'; }
+        login = { state: code === 0 && connected() ? 'connected' : 'failed' };
+        releaseIdleRuntime();
+      });
+      return status();
+    });
+  }
+  async function freePort(port) {
+    const server = net.createServer();
+    await new Promise((resolve, reject) => { server.once('error', () => reject(new Error('Gateway port is already in use. Choose another port.'))); server.listen(port, '127.0.0.1', resolve); });
+    await new Promise(resolve => server.close(resolve));
+  }
+  async function start() {
+    if (processHandle) return;
+    if (!installed()) throw new Error('Install the gateway first.');
+    if (!connected()) throw new Error('Connect ChatGPT first.');
+    ensureRuntime(); writeRuntime();
+    await freePort(config().port);
+    lastError = null;
+    const child = spawnGateway([]);
+    processHandle = child;
+    child.on('error', () => { lastError = 'Could not start the gateway.'; });
+    child.on('close', () => {
+      if (processHandle !== child) return;
+      processHandle = null;
+      clearInterval(credentialTimer);
+      lastError = lastError || 'Gateway stopped. Disable and enable it to restart.';
+      try { persistCredentials(); } catch { /* report safe status only */ }
+      releaseIdleRuntime();
+    });
+    for (let i = 0; i < 40; i++) {
+      if (!processHandle) break;
+      try { await api('/v1/models');
+        credentialTimer = setInterval(() => { try { persistCredentials(); } catch { lastError = 'Could not save refreshed gateway credentials.'; } }, 10000);
+        credentialTimer.unref(); return;
+      } catch { await new Promise(resolve => setTimeout(resolve, 100)); }
+    }
+    await stopChild(child); processHandle = null;
+    throw new Error('Gateway did not become ready. Check the port and installation.');
+  }
+  async function stopChild(child) {
+    if (!child || child.exitCode !== null || child.signalCode) return;
+    await new Promise(resolve => {
+      const timer = setTimeout(() => { child.kill('SIGKILL'); }, 2000);
+      child.once('close', () => { clearTimeout(timer); resolve(); });
+      child.kill('SIGTERM');
+    });
+  }
+  async function save(input) {
+    return exclusive(async () => {
+      const c = config();
+      if (typeof input.enabled !== 'boolean') throw new Error('enabled must be a boolean.');
+      for (const key of ['planningModel', 'executionModel', 'smallModel']) {
+        if (input[key] !== undefined) {
+          if (typeof input[key] !== 'string' || !MODEL.test(input[key])) throw new Error('Invalid model identifier.');
+          c[key] = input[key];
+        }
+      }
+      if (input.port !== undefined) {
+        if (!Number.isInteger(input.port) || input.port < 1024 || input.port > 65535) throw new Error('Port must be between 1024 and 65535.');
+        if (processHandle && c.port !== input.port) throw new Error('Disable the gateway before changing its port.');
+        c.port = input.port;
+      }
+      // Persist enabled only after the process is actually healthy.
+      const enabled = input.enabled;
+      c.enabled = false;
+      write(KEY, JSON.stringify(c));
+      try {
+        if (enabled) { await start(); c.clientKey = config().clientKey; c.enabled = true; write(KEY, JSON.stringify(c)); if (runtime) writeRuntime(); }
+        else { clearInterval(credentialTimer); const child = processHandle; processHandle = null; await stopChild(child); if (runtime) persistCredentials(); releaseIdleRuntime(); }
+      } catch (err) { lastError = err.message; throw err; }
+      return status();
+    });
+  }
+  async function models() {
+    const data = await api('/v1/models');
+    return (data.data || []).map(m => m.id).filter(id => typeof id === 'string' && MODEL.test(id)).slice(0, 256);
+  }
+  async function testConnection() {
+    const c = config();
+    const result = await api('/v1/messages', { model: c.executionModel, max_tokens: 16, messages: [{ role: 'user', content: 'Reply OK.' }] });
+    if (result.type !== 'message' || !Array.isArray(result.content) || result.error) throw new Error('Gateway did not return a valid model response.');
+    return { ok: true, model: c.executionModel };
+  }
+  function launchOptions() {
+    if (!config().enabled) return null;
+    if (!processHandle || !runtime) throw new Error('AI Gateway is enabled but stopped. Restart it in Settings → AI Gateway.');
+    return { command: process.execPath, args: [path.resolve(__dirname, '../../scripts/gateway-launch.js'), path.join(runtime, 'launch.json')] };
+  }
+  async function close() {
+    clearInterval(credentialTimer);
+    const children = [loginHandle, processHandle]; loginHandle = null; processHandle = null;
+    await Promise.all(children.map(stopChild));
+    if (runtime) {
+      try { persistCredentials(); }
+      finally { fs.rmSync(runtime, { recursive: true, force: true }); runtime = null; }
+    }
+  }
+  async function disconnect() {
+    return exclusive(async () => {
+      await close();
+      const c = config(); c.enabled = false; write(KEY, JSON.stringify(c));
+      database().prepare('DELETE FROM app_config WHERE key = ?').run(AUTH_KEY);
+      login = null; lastError = null;
+      return status();
+    });
+  }
+  async function resume() { if (config().enabled) { try { await start(); } catch { lastError = 'Gateway could not resume. Open Settings → AI Gateway.'; } } }
+  return { status, install, loginStart, save, models, testConnection, launchOptions, close, disconnect, resume };
+}
+module.exports = { ...createGatewayService(), createGatewayService, VERSION };

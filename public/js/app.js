@@ -1151,6 +1151,7 @@
     if (from !== view && !Object.prototype.hasOwnProperty.call(DETAIL_VIEWS, from)) state.backView = from;
     // Files always opens as a grid; the list toggle only lasts while you stay in Files.
     if (view === 'files' && from !== 'files') state.filesMode = 'grid';
+    if (view !== 'settings') window.CitadelGatewaySettings.dispose();
     if (view === 'settings' && from !== 'settings' && !state.keepSettingsSection) state.settingsSection = null;
     state.keepSettingsSection = false;
     state.currentView = view;
@@ -1535,7 +1536,7 @@
         const name = btn.getAttribute('data-project-name');
         const project = state.projects.find((p) => p.id === id);
         openContextMenu(btn, [
-          { label: 'Open in VS Code…', onSelect: () => window.CitadelProjectTools.showEditor(project) },
+          { label: 'Open VS Code in browser', onSelect: () => window.CitadelProjectTools.showEditor(project) },
           { label: 'Associate a folder…', onSelect: () => showAssociateRepoModal(project) },
           { label: 'Clone a repository here…', onSelect: () => showCloneRepoModal(project) },
           { sep: true },
@@ -3020,6 +3021,7 @@
   function connectSourceNote(...args) { return window.CitadelDeployments.connectSourceNote(...args); }
 
   const SETTINGS_SECTIONS = {
+    gateway: { title: 'AI Gateway', desc: 'Connect ChatGPT and choose the models used by new Claude Code sessions on this machine.' },
     updates: { title: 'Updates', desc: 'Keep this machine and the machines paired with it on the latest version.' },
     machines: { title: 'Machines', desc: 'Pair other Citadels to reach them from this panel. Live health and alerts are on the Dashboard.' },
     network: { title: 'Network & access', desc: 'The address Citadel advertises to other devices. This only changes the advertised address; it never opens ports or exposes anything by itself.' },
@@ -3029,6 +3031,7 @@
   };
 
   const SETTINGS_ICONS = {
+    gateway: NAV_ICONS.agents,
     updates: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5M5.6 15A8 8 0 0018.4 9M18.4 9L20 9M5.6 15L4 15"/>',
     machines: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>',
     network: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
@@ -3060,6 +3063,12 @@
     const titleEl = document.getElementById('top-bar-title');
     if (titleEl) titleEl.textContent = section ? `Settings · ${SETTINGS_SECTIONS[section].title}` : 'Settings';
     updateBackButton('settings');
+    window.CitadelGatewaySettings.dispose();
+    if (section === 'gateway') {
+      content.innerHTML = `<div class="settings-screen"><div class="settings-screen-head"><h2>AI Gateway</h2><p>${escapeHtml(SETTINGS_SECTIONS.gateway.desc)}</p></div><div class="card settings-panel" id="gateway-body">Loading…</div></div>`;
+      await window.CitadelGatewaySettings.init({ api, escapeHtml, showToast });
+      return;
+    }
     content.innerHTML = '<div style="color:var(--text-secondary);">Loading settings...</div>';
 
     try {
@@ -3899,6 +3908,7 @@
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
+  window.CitadelBrowserEditor.init({ api, escapeHtml, showToast, state });
   window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state });
   window.CitadelRepos.init({ api, escapeHtml, loadProjects, openModal, renderProjectsView, showToast });
   window.CitadelFiles.init({ api, escapeHtml, formatBytes, hostApiPath, openContextMenu, openModal, showToast, state });

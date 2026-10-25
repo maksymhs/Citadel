@@ -1,15 +1,15 @@
 /**
- * Project folder discovery and desktop VS Code handoff; no background processes.
+ * Project folder discovery and browser editor entry point.
  */
 (function () {
   'use strict';
-  const REQUIRED = ['api', 'escapeHtml', 'openModal', 'renderProjectsView', 'showToast', 'state'];
-  let api, escapeHtml, openModal, renderProjectsView, showToast, state;
+  const REQUIRED = ['api', 'escapeHtml', 'renderProjectsView', 'showToast', 'state'];
+  let api, escapeHtml, renderProjectsView, showToast, state;
 
   function init(ctx) {
     const missing = REQUIRED.filter((key) => ctx[key] === undefined);
     if (missing.length) throw new Error(`project-tools.js: missing ${missing.join(', ')}`);
-    ({ api, escapeHtml, openModal, renderProjectsView, showToast, state } = ctx);
+    ({ api, escapeHtml, renderProjectsView, showToast, state } = ctx);
   }
 
   async function mountDiscovery(content) {
@@ -52,61 +52,7 @@
     }
   }
 
-  function editorUrl(projectPath, sshHost = '') {
-    if (typeof projectPath !== 'string' || !projectPath.startsWith('/') || /[\x00-\x1f\x7f]/.test(projectPath)) {
-      throw new Error('A valid absolute project path is required.');
-    }
-    const encodedPath = projectPath.split('/').map(encodeURIComponent).join('/').replace(/\/$/, '') + '/';
-    if (!sshHost) return `vscode://file${encodedPath}`;
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/.test(sshHost)) {
-      throw new Error('Use an SSH config host alias, such as citadel-vps.');
-    }
-    return `vscode://vscode-remote/ssh-remote+${encodeURIComponent(sshHost)}${encodedPath}`;
-  }
+  function showEditor(project) { return window.CitadelBrowserEditor.open(project); }
 
-  function showEditor(project) {
-    const storageKey = `citadel.editor.${state.activeHostId}`;
-    let saved = '';
-    try { saved = localStorage.getItem(storageKey) || ''; } catch { /* optional preference */ }
-    openModal({
-      title: `Open ${project.name} in VS Code`,
-      bodyHtml: `<p class="mon-muted">Opens VS Code on your computer. For a server, install Remote - SSH and use a host alias from your SSH config.</p>
-        <div class="form-group"><label for="editor-mode">Project location</label><select class="form-input" id="editor-mode">
-          <option value="ssh">Remote machine (SSH)</option><option value="local">This computer</option>
-        </select></div>
-        <div class="form-group"><label for="editor-ssh-host">SSH host alias (remote only)</label><input class="form-input" id="editor-ssh-host" value="${escapeHtml(saved)}" placeholder="citadel-vps" autocomplete="off"></div>
-        <p class="proj-path">${escapeHtml(project.path)}</p>
-        <p class="mon-muted" id="editor-link-hint"></p>
-        <a class="btn btn-primary" id="editor-open-link" hidden>Open VS Code</a>`,
-      confirmText: 'Close',
-    });
-    const mode = document.getElementById('editor-mode');
-    const input = document.getElementById('editor-ssh-host');
-    const link = document.getElementById('editor-open-link');
-    const hint = document.getElementById('editor-link-hint');
-    const updateLink = () => {
-      const remote = mode.value === 'ssh';
-      input.disabled = !remote;
-      try {
-        if (remote && !input.value.trim()) throw new Error('Enter the SSH host alias configured on your computer.');
-        link.href = editorUrl(project.path, remote ? input.value.trim() : '');
-        link.hidden = false;
-        hint.textContent = remote ? 'Connects using your existing SSH configuration.' : 'The project path must exist on this computer.';
-      } catch (err) {
-        link.hidden = true;
-        link.removeAttribute('href');
-        hint.textContent = err.message;
-      }
-    };
-    mode.onchange = updateLink;
-    input.oninput = updateLink;
-    link.onclick = () => {
-      if (mode.value === 'ssh') {
-        try { localStorage.setItem(storageKey, input.value.trim()); } catch { /* optional preference */ }
-      }
-    };
-    updateLink();
-  }
-
-  window.CitadelProjectTools = { init, mountDiscovery, showEditor, editorUrl };
+  window.CitadelProjectTools = { init, mountDiscovery, showEditor };
 })();

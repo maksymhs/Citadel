@@ -87,7 +87,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('every feature script registers and the app shell renders', () => {
-    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelProjectTools']) {
+    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelProjectTools', 'CitadelGatewaySettings', 'CitadelBrowserEditor']) {
       assert.equal(typeof w[name], 'object', `window.${name} is missing`);
     }
     assert.ok(w.document.querySelector('.nav-item'), 'the sidebar should render after sign-in');
@@ -138,7 +138,27 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
-  test('project discovery imports a folder and VS Code links encode paths safely', async () => {
+  test('AI Gateway settings expose installation, login and model activation controls', async () => {
+    w.document.querySelector('.nav-item[data-view="settings"]').click();
+    await sleep(800);
+    const tile = w.document.querySelector('[data-settings-section="gateway"]');
+    assert.ok(tile, 'Gateway is reachable from Settings');
+    tile.click();
+    await sleep(500);
+    assert.ok(w.document.getElementById('gateway-install'));
+    assert.equal(w.document.getElementById('gateway-login').disabled, true);
+    assert.equal(w.document.getElementById('gateway-enabled').checked, false);
+    assert.equal(w.document.getElementById('gateway-enabled').disabled, true);
+    assert.equal(w.document.getElementById('gateway-planning').value, 'gpt-6.1-sol');
+    assert.equal(w.document.getElementById('gateway-execution').value, 'gpt-6-luna');
+    assert.match(w.document.getElementById('gateway-body').textContent, /Automatic quota fallback is not enabled/);
+    w.document.querySelector('.nav-item[data-view="projects"]').click();
+    await sleep(300);
+    assert.equal(w.document.getElementById('gateway-body'), null);
+    assert.deepEqual(errors, []);
+  });
+
+  test('project discovery imports a folder and browser editor offers a Citadel return action', async () => {
     w.document.querySelector('.nav-item[data-view="projects"]').click();
     await sleep(800);
     const importButton = w.document.querySelector('[data-discover-index]');
@@ -147,16 +167,13 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     await sleep(800);
     assert.ok(w.document.querySelector('.proj-name').textContent.includes('ui-discovered'));
     assert.equal(w.document.querySelector('[data-discover-index]'), null, 'imported folder is not suggested twice');
-    assert.equal(w.CitadelProjectTools.editorUrl('/tmp/a # b'), 'vscode://file/tmp/a%20%23%20b/');
-    assert.throws(() => w.CitadelProjectTools.editorUrl('/tmp/project', 'host/path'), /SSH config/);
-    w.CitadelProjectTools.showEditor({ name: 'Project', path: '/srv/a # b' });
-    const host = w.document.getElementById('editor-ssh-host');
-    host.value = 'my-vps';
-    host.dispatchEvent(new w.Event('input'));
-    const link = w.document.getElementById('editor-open-link');
-    assert.equal(link.hidden, false);
-    assert.equal(link.getAttribute('href'), 'vscode://vscode-remote/ssh-remote+my-vps/srv/a%20%23%20b/');
-    w.document.getElementById('modal-close-btn').click();
+    await w.CitadelProjectTools.showEditor({ id: 'fixture-project', name: 'Project', path: '/srv/a # b' });
+    assert.ok(w.document.getElementById('editor-back'));
+    assert.ok(w.document.getElementById('editor-install'));
+    assert.equal(w.document.getElementById('editor-ssh-host'), null);
+    assert.equal(w.document.querySelector('a[href^="vscode:"]'), null);
+    w.document.getElementById('editor-back').click();
+    assert.equal(w.document.querySelector('.browser-editor'), null);
     assert.deepEqual(errors, []);
   });
 

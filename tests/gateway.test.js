@@ -1,0 +1,201 @@
+/** Local gateway lifecycle, credential isolation, downloads and administrator boundaries. */
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { execFileSync } = require('node:child_process');
+const net = require('node:net');
+const { Response } = globalThis;
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-gateway-suite-'));
+Object.assign(process.env, { DATA_DIR: root, DATABASE_PATH: path.join(root, 'db.sqlite'), PROJECTS_DIR: path.join(root, 'projects'), LOGS_DIR: path.join(root, 'logs'), CITADEL_SELF_UPDATE: '0' });
+const { getDatabase, closeDatabase } = require('../server/database/db');
+const { createGatewayService, VERSION } = require('../server/services/gatewayService');
+const { gatewayEnvironment } = require('../scripts/gateway-launch');
+const { buildServer } = require('../server/index');
+const { decrypt } = require('../server/security/secrets');
+let app, cookies;
+const services = [];
+before(async () => {
+  app = await buildServer({ logger: false });
+  const setup = await app.inject({ method: 'POST', url: '/api/auth/setup', payload: { username: 'gateway', password: 'Gateway-test-password-123' } });
+  cookies = { session_id: setup.cookies.find(c => c.name === 'session_id').value };
+});
+after(async () => { for (const s of services) await s.close(); await app.close(); closeDatabase(); fs.rmSync(root, { recursive: true, force: true }); });
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function until(fn) { for (let i = 0; i < 100; i++) { if (fn()) return; await pause(30); } throw new Error('Timed out waiting for gateway fixture.'); }
+async function port() {
+  const server = net.createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const p = server.address().port; await new Promise(resolve => server.close(resolve)); return p;
+}
+function fresh() {
+  getDatabase().prepare("DELETE FROM app_config WHERE key LIKE 'ai.gateway%'").run();
+  const dir = fs.mkdtempSync(path.join(root, 'instance-'));
+  const service = createGatewayService({ dataDir: dir }); services.push(service);
+  return { dir, service };
+}
+function fakeBinary(dir) {
+  fs.mkdirSync(path.join(dir, 'gateway'), { mode: 0o700 });
+  fs.writeFileSync(path.join(dir, 'gateway', 'cli-proxy-api'), `#!/usr/bin/env node
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+const c = JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--config') + 1]));
+if (process.argv.includes('--codex-device-login')) {
+  console.log('Codex device URL: https://auth.openai.com/codex/device');
+  console.log('Codex device code: FIXTURE-CODE');
+  setTimeout(() => { fs.writeFileSync(path.join(c.oauth['auth-dir'], 'codex-fixture.json'), JSON.stringify({ access_token: 'fixture-provider-secret' })); }, 200);
+} else {
+  http.createServer(async (req, res) => {
+    let raw = ''; for await (const part of req) raw += part;
+    if (req.headers.authorization !== 'Bearer ' + c.access['api-keys'][0]) { res.writeHead(401); res.end(); return; }
+    res.setHeader('content-type','application/json');
+    if (req.url === '/v1/models') res.end(JSON.stringify({ data: [{ id: 'fixture-model' }] }));
+    else res.end(JSON.stringify({ type: 'message', content: [{ type: 'text', text: 'OK' }] }));
+  }).listen(c.server.port, c.server.host);
+}
+`, { mode: 0o700 });
+}
+
+test('gateway routes require administrator access and never reveal stored values', async () => {
+  assert.equal((await app.inject({ url: '/api/settings/gateway' })).statusCode, 401);
+  getDatabase().prepare("UPDATE users SET role = 'viewer'").run();
+  try {
+    for (const [method, url] of [['GET', ''], ['PUT', ''], ['POST', '/install'], ['POST', '/login'], ['DELETE', '/login'], ['GET', '/models'], ['POST', '/test']]) {
+      assert.equal((await app.inject({ method, url: `/api/settings/gateway${url}`, cookies, ...(method === 'PUT' ? { payload: { enabled: true } } : {}) })).statusCode, 403);
+    }
+  } finally { getDatabase().prepare("UPDATE users SET role = 'admin'").run(); }
+  const result = await app.inject({ url: '/api/settings/gateway', cookies });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.json().gateway.enabled, false);
+  assert.equal(result.json().gateway.running, false);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/settings/gateway/login', cookies, headers: { origin: 'https://untrusted.example' } })).statusCode, 403);
+  assert.equal((await app.inject({ method: 'PUT', url: '/api/settings/gateway', cookies, payload: { enabled: true } })).statusCode, 400);
+});
+
+test('managed lifecycle keeps credentials encrypted, scopes launcher settings and stops cleanly', async () => {
+  const { dir, service: s } = fresh(); fakeBinary(dir);
+  assert.equal(s.launchOptions(), null);
+  await s.loginStart();
+  await until(() => s.status().login?.code === 'FIXTURE-CODE');
+  assert.equal(s.status().login.url, 'https://auth.openai.com/codex/device');
+  await until(() => s.status().connected);
+  assert.equal(s.status().login.state, 'connected');
+  const value = getDatabase().prepare("SELECT value FROM app_config WHERE key = 'ai.gateway.credentials'").get().value;
+  assert.ok(!value.includes('fixture-provider-secret'));
+  assert.ok(decrypt(value).includes('fixture-provider-secret'));
+  assert.ok(!JSON.stringify(s.status()).includes('fixture-provider-secret'));
+  await s.save({ enabled: true, port: await port(), planningModel: 'fixture-plan', executionModel: 'fixture-model', smallModel: 'fixture-model' });
+  assert.equal(s.status().running, true);
+  const launch = s.launchOptions();
+  assert.equal(launch.command, process.execPath);
+  assert.ok(!launch.args.join(' ').includes('fixture-provider-secret'));
+  const launchConfig = launch.args[1];
+  const settings = JSON.parse(fs.readFileSync(launchConfig));
+  assert.equal(fs.statSync(launchConfig).mode & 0o777, 0o600);
+  const runtimeConfig = JSON.parse(fs.readFileSync(path.join(path.dirname(launchConfig), 'config.json')));
+  assert.equal(runtimeConfig.server.host, '127.0.0.1');
+  assert.equal(runtimeConfig.server['commercial-mode'], true);
+  assert.equal(runtimeConfig.management['secret-key'], '');
+  assert.equal(runtimeConfig.management['disable-control-panel'], true);
+  assert.deepEqual(await s.models(), ['fixture-model']);
+  assert.deepEqual(await s.testConnection(), { ok: true, model: 'fixture-model' });
+  const env = gatewayEnvironment({ ANTHROPIC_API_KEY: 'old-key', CLAUDE_CODE_OAUTH_TOKEN: 'old-token', CLAUDE_CODE_USE_BEDROCK: '1', KEEP: 'yes' }, settings);
+  assert.equal(env.ANTHROPIC_API_KEY, undefined);
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+  assert.equal(env.CLAUDE_CODE_USE_BEDROCK, undefined);
+  assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'fixture-plan');
+  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'fixture-model');
+  assert.equal(env.KEEP, 'yes');
+  assert.ok(!getDatabase().prepare("SELECT value FROM app_config WHERE key = 'ai.gateway'").get().value.includes(settings.token));
+  await assert.rejects(s.save({ enabled: true, planningModel: 'bad\nmodel' }), /Invalid model/);
+  await assert.rejects(s.save({ enabled: true, port: 22 }), /Port must/);
+  await s.close();
+  assert.equal(fs.existsSync(path.dirname(launchConfig)), false);
+  await s.resume();
+  assert.equal(s.status().running, true, 'enabled gateway resumes with encrypted credentials');
+  const resumedRuntime = path.dirname(s.launchOptions().args[1]);
+  await s.save({ enabled: false });
+  assert.equal(fs.existsSync(resumedRuntime), false, 'disabled gateway retains only encrypted credentials');
+  assert.equal(s.launchOptions(), null);
+  assert.equal(s.status().running, false);
+  await s.disconnect();
+  assert.equal(s.status().connected, false);
+});
+
+test('checksum mismatch and redirects to untrusted hosts never install executable code', async () => {
+  const { dir } = fresh();
+  const bad = createGatewayService({ dataDir: dir, fetchImpl: async url => new Response(url.endsWith('checksums.txt') ? 'bad checksum' : 'not an archive') }); services.push(bad);
+  await assert.rejects(bad.install(), /checksum/);
+  assert.equal(bad.status().installed, false);
+  const redirects = [];
+  const redirected = createGatewayService({ dataDir: dir, fetchImpl: async url => { redirects.push(url); return new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/private' } }); } }); services.push(redirected);
+  await assert.rejects(redirected.install(), /Could not install/);
+  assert.ok(redirects.every(url => url.startsWith('https://github.com/')));
+});
+
+test('installer verifies pinned archive and extracts only the expected binary', async () => {
+  const { dir } = fresh();
+  const archiveDir = fs.mkdtempSync(path.join(root, 'archive-'));
+  fs.writeFileSync(path.join(archiveDir, 'cli-proxy-api'), '#!/bin/sh\nexit 0\n');
+  execFileSync('tar', ['-czf', path.join(archiveDir, 'fixture.tar.gz'), '-C', archiveDir, 'cli-proxy-api']);
+  const bytes = fs.readFileSync(path.join(archiveDir, 'fixture.tar.gz'));
+  const hash = crypto.createHash('sha256').update(bytes).digest('hex');
+  const name = `CLIProxyAPI_${VERSION}_linux_amd64_no-plugin.tar.gz`;
+  const installer = createGatewayService({ dataDir: dir, platform: 'linux', arch: 'x64', fetchImpl: async url => new Response(url.endsWith('checksums.txt') ? `${hash}  ${name}\n` : bytes) }); services.push(installer);
+  await installer.install();
+  assert.equal(installer.status().installed, true);
+  assert.equal(fs.statSync(path.join(dir, 'gateway', 'cli-proxy-api')).mode & 0o777, 0o700);
+});
+
+test('port conflict leaves activation disabled and model errors do not reflect provider secrets', async () => {
+  const { dir, service: s } = fresh(); fakeBinary(dir);
+  await s.loginStart(); await until(() => s.status().connected);
+  const occupied = net.createServer();
+  await new Promise(resolve => occupied.listen(0, '127.0.0.1', resolve));
+  try { await assert.rejects(s.save({ enabled: true, port: occupied.address().port }), /port is already/); }
+  finally { await new Promise(resolve => occupied.close(resolve)); }
+  assert.equal(s.status().enabled, false);
+  await s.disconnect();
+});
+
+test('provider errors and malformed responses never echo response bodies', async () => {
+  const { dir } = fresh(); fakeBinary(dir);
+  let responseKind = 'error';
+  const s = createGatewayService({ dataDir: dir, fetchImpl: async url => {
+    if (url.endsWith('/v1/models')) return new Response(JSON.stringify({ data: [] }));
+    if (responseKind === 'error') return new Response('fixture-provider-secret', { status: 429 });
+    return new Response('fixture-provider-secret');
+  } }); services.push(s);
+  await s.loginStart(); await until(() => s.status().connected);
+  await s.save({ enabled: true, port: await port() });
+  await assert.rejects(s.testConnection(), err => /HTTP 429/.test(err.message) && !err.message.includes('fixture-provider-secret'));
+  responseKind = 'invalid';
+  await assert.rejects(s.testConnection(), err => err.message === 'Gateway returned an invalid response.');
+  await s.disconnect();
+});
+
+test('agent launch routes Claude through scoped wrapper and keeps native mode available', () => {
+  const registry = require('../server/services/agentRegistry');
+  const terminals = require('../server/services/terminalManager');
+  const projects = require('../server/services/projectService');
+  const gateway = require('../server/services/gatewayService');
+  const project = projects.createProject({ name: 'Gateway launch' });
+  const original = { getAgent: registry.getAgent, createSession: terminals.createSession, launchOptions: gateway.launchOptions };
+  const launches = [];
+  try {
+    registry.getAgent = () => ({ id: 'claude', name: 'Claude', installed: true, path: '/usr/bin/claude', defaultArgs: [] });
+    terminals.createSession = options => { launches.push(options); return { sessionId: 'gateway-fixture' }; };
+    gateway.launchOptions = () => ({ command: process.execPath, args: ['/wrapper.js', '/private/runtime/launch.json'] });
+    registry.launchAgent({ projectId: project.id, agentId: 'claude', extraArgs: ['argument with spaces'] });
+    assert.equal(launches[0].command, process.execPath);
+    assert.deepEqual(launches[0].args, ['/wrapper.js', '/private/runtime/launch.json', '/usr/bin/claude', 'argument with spaces']);
+    gateway.launchOptions = () => null;
+    registry.launchAgent({ projectId: project.id, agentId: 'claude' });
+    assert.equal(launches[1].command, undefined);
+  } finally {
+    registry.getAgent = original.getAgent; terminals.createSession = original.createSession; gateway.launchOptions = original.launchOptions;
+  }
+});

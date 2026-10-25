@@ -97,6 +97,20 @@ Beside the database, `DATA_DIR` holds `secret.key` (AES-256-GCM key, mode 0600, 
 | `doctor`, `repair`, maintenance | [operations.md](operations.md) |
 | What changed and how it was verified | [engineering-execution-state.md](engineering-execution-state.md) |
 
+## Optional developer tools
+
+AI Gateway settings supervise one optional local CLIProxyAPI process. Credentials
+persist encrypted in the existing app_config store; a private runtime directory
+supplies the external process and scoped Claude launcher. Native launches retain
+their existing setup. See [AI Gateway](ai-gateway.md).
+
+Browser VS Code uses an optional pinned code-server distribution, started on
+demand. An administrator-only HTTP/WebSocket bridge forwards to its protected
+loopback listener without passing browser/peer credentials. The browser keeps a
+return action outside the editor iframe. Stop/shutdown terminates its process
+group; persistent editor settings and extensions remain under DATA_DIR/editor.
+See [browser editor](browser-editor.md).
+
 ## Retired project management
 
 Project hub and its mission, document, learning and graph APIs have been removed.

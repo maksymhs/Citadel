@@ -9,6 +9,7 @@ Which files make up each feature. Start here when a task is phrased in product t
 | Persistent terminals | `terminalRoutes`, `wsTerminal` → `terminalManager` | `app.js` (`renderWorkspaceView`, terminal tabs) | `terminal` | [architecture §7](architecture.md) |
 | AI agents (launch, install, reinstall/update, remove) | `agentRoutes` → `agentRegistry`, `agentInstallService`, `agentLifecycle`, `agentCatalogue` | `app.js`, `monitor.js` | `agents`, `agent-install`, `agent-lifecycle` | [architecture §7](architecture.md) |
 | Credential vault, `citadel-creds` | `secretRoutes` → `secretStore`, `secretSyncService`, `security/secrets.js`; CLI `scripts/citadel-creds.js` | `app.js` (Settings) | `secrets`, `secret-sync`, `gitcred` | [security](security.md) |
+| Browser VS Code (optional) | `editorRoutes` → `editorService`, `releaseDownload` | `browser-editor.js`, `project-tools.js` | `editor`, `ui-smoke` | [browser editor](browser-editor.md) |
 | Files explorer | `fileRoutes` → `fileService`; `scripts/fsAgent.js` (privileged ops) | `files.js` | `files`, `ui-smoke` | [installation](installation.md) |
 | Disk usage and quick cleanup | `fileRoutes` (`/api/files/cleanup`) → `fileService`, `scripts/fsAgent.js` | `disk-cleanup.js` | `files` | [installation](installation.md) |
 | Machine switching (one URL, many hosts) | `hostRoutes`, `remoteProxyRoutes` → `hostService` | `app.js` (machine selector) | `remote-proxy`, `known-peers` | [architecture §3](architecture.md) |
@@ -23,6 +24,7 @@ Which files make up each feature. Start here when a task is phrased in product t
 | Fleet (legacy URL + token hosts) | `fleetRoutes` → `fleetService` | `fleet.js` | `fleet`, `ui-smoke` | [architecture §4](architecture.md) |
 | Domain publishing, Docker (optional) | `proxyRoutes`, `dockerRoutes` → `proxyProvider`, `dockerService` | `deployments.js` | `integrations`, `ui-smoke` | [architecture](architecture.md) |
 | Modules and plugins | `moduleRoutes`, `pluginRoutes` → `modules/registry.js`, `pluginLoader` | `app.js` | `modules`, `plugins` | [architecture §2](architecture.md) |
+| AI Gateway (optional, Claude Code models via ChatGPT) | `gatewayRoutes` → `gatewayService`, `agentRegistry`; `scripts/gateway-launch.js`, `gateway-trial.js` | `settings-gateway.js` (Settings → AI Gateway) | `gateway`, `agents`, `ui-smoke` | [AI Gateway](ai-gateway.md) |
 | Tools detection | `systemRoutes` → `toolsService` | `app.js` (Settings → Tools) | none yet | — |
 | CLI: `doctor`, `network`, `wifi`, `repair` | `scripts/doctor.js`, `scripts/diagnostics.js` | — | `diagnostics`, `doctor-cli` | [operations](operations.md) |
 | CLI: `citadel` wrapper, `reset-password`, `setup-code` | `scripts/citadel`, `reset-password.js`, `setup-code.js` | — | `cli` | [installation](installation.md) |

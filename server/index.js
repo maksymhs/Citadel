@@ -176,6 +176,8 @@ async function buildServer(options = {}) {
   await fastify.register(pluginRoutes);
   await fastify.register(moduleRoutes);
   await fastify.register(settingsRoutes);
+  await fastify.register(require('./routes/gatewayRoutes'));
+  await fastify.register(require('./routes/editorRoutes'));
   await fastify.register(tailscaleRoutes);
   await fastify.register(secretRoutes);
   await fastify.register(hostRoutes);

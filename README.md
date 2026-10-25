@@ -44,7 +44,7 @@ Self-hosted, lightweight and secure. Runs on a VPS, a Mac or a spare laptop.
 <td width="50%" valign="top">
 
 ### 🤖 AI agent launcher
-Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries. Missing agents install with one click, once for every user.
+Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries. Missing agents install with one click, once for every user. Optionally connect ChatGPT and select Claude Code models in **Settings → AI Gateway** ([experimental setup](docs/ai-gateway.md)).
 
 </td>
 </tr>
@@ -52,7 +52,7 @@ Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**
 <td valign="top">
 
 ### 📁 Projects & Git
-Register, create, import and clone repositories with live branch status. Connect GitHub or GitLab and clone your private repos in one click.
+Register, create, import and clone repositories with live branch status. Connect GitHub or GitLab and clone your private repos in one click. Open optional [browser VS Code](docs/browser-editor.md) without SSH and return to Citadel with one button.
 
 </td>
 <td valign="top">

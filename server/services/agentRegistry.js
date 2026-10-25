@@ -204,6 +204,8 @@ class AgentRegistry {
     const safeExtraArgs = Array.isArray(extraArgs) ? extraArgs.filter((a) => typeof a === 'string') : [];
     const commandArgs = [...agent.defaultArgs, ...safeExtraArgs];
 
+    const gateway = agent.id === 'claude' ? require('./gatewayService').launchOptions() : null;
+
     // Create session
     const sessionName = `${agent.name} — ${project.name}`;
     const session = terminalManager.createSession({
@@ -211,12 +213,13 @@ class AgentRegistry {
       name: sessionName,
       cwd: project.path,
       agentId: agent.id,
+      ...(gateway ? { command: gateway.command, args: [...gateway.args, agent.path, ...commandArgs] } : {}),
     });
 
     // Write command into the terminal PTY with structured execution.
     // Every argument is shell-quoted so user-supplied extraArgs cannot inject commands.
     const activeSession = terminalManager.activePtySessions.get(session.sessionId);
-    if (activeSession) {
+    if (activeSession && !gateway) {
       // Send execution to the newly started shell/tmux
       const fullCmd = [agent.path, ...commandArgs].map(shellQuote).join(' ');
       activeSession.ptyProcess.write(`${fullCmd}\r`);

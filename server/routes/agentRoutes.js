@@ -24,6 +24,9 @@ async function agentRoutes(fastify) {
       return reply.status(400).send({ error: 'Both projectId and agentId are required.' });
     }
 
+    if (agentId === 'claude' && require('../services/gatewayService').status().enabled && request.user.role !== 'admin') {
+      return reply.status(403).send({ error: 'Administrator privileges are required to use AI Gateway.' });
+    }
     try {
       const result = agentRegistry.launchAgent({ projectId, agentId, extraArgs });
       auditService.logAction({

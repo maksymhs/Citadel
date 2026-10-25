@@ -114,7 +114,7 @@ Open `http://127.0.0.1:3001`. Set `CITADEL_TRIAL_PORT=3010` to choose another po
 docker compose exec citadel cat /data/setup-code
 ```
 
-State (SQLite, projects, mission workspaces) lives in the `citadel-data` volume: `docker compose down` keeps it, `docker compose down -v` discards it. The port is published on loopback only; change it in `compose.yaml` if you deliberately want LAN access.
+State (SQLite and projects) lives in the `citadel-data` volume: `docker compose down` keeps it, `docker compose down -v` discards it. The port is published on loopback only; change it in `compose.yaml` if you deliberately want LAN access.
 
 The image includes `tmux` and `git`, so persistent terminals and projects work. AI CLI agents are **not** installed — install them inside the container only for a throwaway test. To use your own repositories, add a bind mount under `/data/projects` in `compose.yaml`.
 
@@ -123,6 +123,14 @@ This image is for trying Citadel out, not for running it. For anything real, use
 This image exercises **Linux**, including when Docker runs on a Mac. It does not
 simulate macOS or validate launchd, Keychain or macOS permissions. Run platform
 checks on a real Mac or a macOS VM; Linux trial checks need no host installation.
+
+### Optional AI Gateway
+
+Open **Settings → AI Gateway** as an administrator to install the local component,
+connect ChatGPT by device login, choose planning/execution models and enable it
+for new Claude Code sessions launched from Projects. It binds only to loopback,
+requires no sudo and remains off by default. This experimental integration does
+not enable automatic quota fallback. See [setup and limitations](ai-gateway.md).
 
 ### Project folders and VS Code
 
@@ -133,18 +141,13 @@ are directory symlinks and `node_modules`. Scans stop after 500 entries or 100
 suggestions and never recurse or execute repository code. Use **Import folder**
 for other folders or to choose a different project name.
 
-A project's **More actions → Open in VS Code** prepares a desktop link. Choose
-**This computer** only when that exact project path exists on your computer.
-For a VPS or another machine, install the
-[Remote - SSH extension](https://code.visualstudio.com/docs/remote/ssh) locally
-and enter a host alias from your local SSH configuration (for example
-`citadel-vps`). Citadel remembers the alias per machine in this browser; SSH keys
-and passwords remain in your SSH tools. Click **Open VS Code** to launch it.
-The link uses the documented
-[local and remote URL formats](https://code.visualstudio.com/docs/configure/command-line#_opening-vs-code-with-urls).
-This integration adds no editor server or listening port. Container paths belong
-to the container; use VS Code Dev Containers or a separately configured SSH host
-for those paths rather than the host's local-file option.
+A project's **More actions → Open VS Code in browser** opens the optional web
+editor inside Citadel. On first use, choose **Install browser editor and open
+project**; afterwards the project action opens it directly. **Back to Citadel**
+restores the panel. No desktop app or SSH setup is required. The editor is
+administrator-only, runs on demand and consumes additional resources. It
+currently supports the machine serving this panel; for paired machines, use
+that machine's own panel. See [browser editor setup](browser-editor.md).
 
 ## Updating an existing installation
 

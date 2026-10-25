@@ -55,8 +55,16 @@ redacts nested credential fields, including historical rows. No raw PTY output
 or keystrokes are copied into this journal.
 
 Project discovery lists bounded immediate directories and never executes code
-or follows directory symlinks. Opening VS Code is an explicit desktop action
-using the operator's existing SSH configuration.
+or follows directory symlinks. The optional [browser editor](browser-editor.md)
+requires administrator access for setup, HTTP and WebSockets. Its protected
+backend binds only to loopback, with server-side authentication; browser session
+credentials are filtered at the proxy. It runs as the Citadel user and is not a
+project sandbox. Stopping it terminates its editor process group.
 
-The [gateway trial](gateway-trial.md) uses isolated configuration and credentials.
-It is not a production service and does not import existing CLI OAuth caches.
+The optional [AI Gateway](ai-gateway.md) requires administrator setup, binds to
+loopback and uses a separate ChatGPT login. Persistent credentials are encrypted;
+the external proxy needs private temporary plaintext files while running (Linux
+uses `/dev/shm` where available). Clean shutdown removes those files; abrupt
+termination can leave them until host cleanup. Request/error-body capture,
+management and panel downloads are disabled. Existing CLI OAuth caches are never
+imported. Model/account compatibility and live quota fallback are not guaranteed.
