@@ -2,6 +2,22 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.44.0](https://github.com/maksymhs/Citadel/releases/tag/v0.44.0) · 2026-10-25
+
+### Added
+
+- **trial**: Add a Linux Docker trial and document the project workflow
+- **projects**: Discover folders and open projects in desktop VS Code
+- **missions**: Add Work, Docs and autonomous learning
+
+### Fixed
+
+- **work**: Enforce attempt budgets and acceptance review with durable docs links
+
+### Improved
+
+- **core**: Avoid repeated session writes and add an isolated API benchmark
+
 ## [0.43.0](https://github.com/maksymhs/Citadel/releases/tag/v0.43.0) · 2026-10-25
 
 ### Added

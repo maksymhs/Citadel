@@ -189,7 +189,8 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 
 | Latest | |
 | --- | --- |
-| **[v0.43.0](https://github.com/maksymhs/Citadel/releases/tag/v0.43.0)** | Isolated AI agent installs with validation, reinstall/update and managed-launcher removal |
+| **[v0.44.0](https://github.com/maksymhs/Citadel/releases/tag/v0.44.0)** | Work, Docs and Learning with acceptance review and attempt budgets; project discovery, VS Code links and a Linux Docker trial |
+| [v0.43.0](https://github.com/maksymhs/Citadel/releases/tag/v0.43.0) | Isolated AI agent installs with validation, reinstall/update and managed-launcher removal |
 | [v0.42.2](https://github.com/maksymhs/Citadel/releases/tag/v0.42.2) | Documentation maintenance: open items and known gaps recorded |
 | [v0.42.1](https://github.com/maksymhs/Citadel/releases/tag/v0.42.1) | Maintenance: the web app code split into per-screen scripts with a browser-level smoke test, tests that no longer depend on the host, architecture and feature guides rewritten |
 | [v0.42.0](https://github.com/maksymhs/Citadel/releases/tag/v0.42.0) | Redesigned machine overview and selector, real RAM and temperature on macOS, one-time Full Disk Access setup (`citadel permissions`), new README and guides, `AGENTS.md` for contributors and AI agents |

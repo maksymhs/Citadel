@@ -4,7 +4,8 @@ Use a small real issue with a measurable result. The current Work/Docs fixes in
 Citadel are the first local contribution candidate: a retry must consume budget,
 a failed plan publication must leave no partial queue, and existing Markdown
 must link without opening the Docs screen first. Regression suites cover those
-cases. The working branch remains unpublished for maintainer review.
+cases. These fixes ship in Citadel v0.44.0; an external contribution remains a
+separate follow-up.
 
 For another open source repository:
 

@@ -1,6 +1,7 @@
 # Citadel working plan
 
-Progress as of 2026-10-25; work remains uncommitted and unpublished.
+Release preparation for v0.44.0, 2026-10-25. External contribution and platform
+checks remain tracked below.
 
 - [x] Repair review/retry, per-attempt budgets, plan transactions, Markdown links
   and credential redaction, with regression coverage.
