@@ -144,7 +144,9 @@ for other folders or to choose a different project name.
 A project's **More actions → Open VS Code in browser** opens the optional web
 editor inside Citadel. On first use, choose **Install browser editor and open
 project**; afterwards the project action opens it directly. **Back to Citadel**
-restores the panel. No desktop app or SSH setup is required. The editor is
+restores the panel. The project terminal toolbar also has a **VS Code** button.
+New editor profiles start in dark mode; existing theme preferences are preserved.
+No desktop app or SSH setup is required. The editor is
 administrator-only, runs on demand and consumes additional resources. It
 currently supports the machine serving this panel; for paired machines, use
 that machine's own panel. See [browser editor setup](browser-editor.md).

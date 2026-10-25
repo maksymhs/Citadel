@@ -177,6 +177,38 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
+  test('project terminal opens its own editor and returns to the same workspace', async () => {
+    w.document.querySelector('.nav-item[data-view="projects"]').click();
+    await sleep(500);
+    const projectButton = w.document.querySelector('.open-workspace-btn');
+    const projectId = projectButton.getAttribute('data-project-id');
+    const originalFetch = w.fetch;
+    w.fetch = (url, opts = {}) => {
+      if (String(url).includes('/api/terminals') && opts.method === 'POST') return Promise.reject(new Error('Terminal creation disabled in UI fixture'));
+      return originalFetch(url, opts);
+    };
+    try {
+      projectButton.click();
+      await sleep(800);
+      const button = w.document.getElementById('ws-editor-btn');
+      assert.equal(button.textContent, 'VS Code');
+      const viewport = w.document.getElementById('terminal-viewport');
+      button.click();
+      await sleep(300);
+      assert.ok(w.document.getElementById('editor-install'));
+      assert.ok(w.document.querySelector('.browser-editor').getAttribute('aria-label').includes('ui-discovered'));
+      assert.ok(w.document.querySelector(`[data-workspace-context="${projectId}"]`));
+      w.document.getElementById('editor-back').click();
+      assert.equal(w.document.getElementById('terminal-viewport'), viewport);
+      assert.equal(w.document.querySelector('.browser-editor'), null);
+    } finally {
+      w.fetch = originalFetch;
+      w.document.querySelector('.nav-item[data-view="projects"]').click();
+      await sleep(300);
+    }
+    assert.deepEqual(errors, []);
+  });
+
   test('retired project management scripts and navigation are absent', () => {
     for (const name of ['CitadelProjectHub', 'CitadelMissions', 'CitadelKnowledge']) assert.equal(w[name], undefined);
     assert.equal(w.document.querySelectorAll('.nav-item[data-view="project-hub"], .nav-item[data-view="work"], .nav-item[data-view="docs"], .nav-item[data-view="learning"]').length, 0);

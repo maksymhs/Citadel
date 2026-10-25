@@ -61,6 +61,24 @@ function createEditorService({ dataDir = DATA_DIR, spawnImpl = spawn, execFileIm
     if (!found) throw new Error('Project not found.');
     return { ...found, path: validateSafePath(found.path) };
   }
+  function ensureDarkDefaults() {
+    const userDir = path.join(root, 'user-data', 'User');
+    fs.mkdirSync(userDir, { recursive: true, mode: 0o700 });
+    if (fs.realpathSync(userDir) !== userDir) return;
+    const file = path.join(userDir, 'settings.json');
+    let settings = {};
+    const exists = fs.existsSync(file);
+    if (exists) {
+      if (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()) return;
+      // Leave commented/hand-written JSONC alone rather than stripping comments
+      // or accidentally replacing an existing preference.
+      try { settings = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return; }
+      if (!settings || typeof settings !== 'object' || Array.isArray(settings) || Object.hasOwn(settings, 'workbench.colorTheme')) return;
+    }
+    settings['workbench.colorTheme'] = 'Default Dark Modern';
+    if (!Object.hasOwn(settings, 'window.autoDetectColorScheme')) settings['window.autoDetectColorScheme'] = false;
+    fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600, flag: exists ? 'w' : 'wx' });
+  }
   function touch() {
     clearTimeout(idle);
     idle = setTimeout(() => { if (!sockets) close().catch(() => {}); else touch(); }, 15 * 60000);
@@ -73,6 +91,7 @@ function createEditorService({ dataDir = DATA_DIR, spawnImpl = spawn, execFileIm
     if (!installed()) throw new Error('Install the browser editor first.');
     starting = (async () => {
       prepareRoot();
+      ensureDarkDefaults();
       if (runtime || processGroup) await close();
       const reservation = net.createServer();
       await new Promise((resolve, reject) => { reservation.once('error', reject); reservation.listen(0, '127.0.0.1', resolve); });

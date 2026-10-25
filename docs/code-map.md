@@ -176,7 +176,7 @@ Each screen is a `render…View` function in `public/js/`; `app.js` is the shell
 | `showImportProjectModal` | `public/js/app.js:1786` |
 | `showCloneProjectModal` | `public/js/app.js:1819` |
 | `renderWorkspaceView` | `public/js/app.js:2367` |
-| `renderSettingsView` | `public/js/app.js:3059` |
+| `renderSettingsView` | `public/js/app.js:3061` |
 | `renderDeploymentsView` | `public/js/deployments.js:19` |
 | `showPublishDomainModal` | `public/js/deployments.js:99` |
 | `renderDockerView` | `public/js/deployments.js:134` |

@@ -2,7 +2,8 @@
 
 From **Projects → More actions → Open VS Code in browser**, Citadel opens an
 optional [code-server](https://github.com/coder/code-server) editor inside the
-same browser. No desktop VS Code installation or SSH configuration is required.
+same browser. You can also click **VS Code** directly in a project terminal
+toolbar. No desktop VS Code installation or SSH configuration is required.
 The **Back to Citadel** button remains above the editor and restores the panel
 exactly where you left it.
 
@@ -14,7 +15,11 @@ extraction and while the IDE is running. It is optional and is not installed by
 Citadel's installer. It needs `tar`, network access to GitHub and sufficient disk
 space. No sudo, system service, desktop handler or public port is configured.
 
-After installation, the project action starts one shared editor process on
+New editor profiles use **Default Dark Modern** with automatic system-theme
+switching off. Existing explicit theme choices and commented JSONC settings
+files are preserved.
+
+After installation, either project action starts one shared editor process on
 demand and opens the selected registered folder. VS Code workspace trust prompts
 still apply. User settings, extensions and editor state persist under
 `DATA_DIR/editor`; this data is not removed by stopping the editor.

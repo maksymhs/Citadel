@@ -95,12 +95,18 @@ http.createServer(async (req, res) => {
     await assert.rejects(s.open('nonexistent'), /Project not found/);
     const opened = await s.open(project.id);
     assert.ok(opened.url.startsWith(`/editor/${project.id}/?folder=`));
+    const settingsFile = path.join(instance, 'editor', 'user-data', 'User', 'settings.json');
+    assert.equal(JSON.parse(fs.readFileSync(settingsFile))['workbench.colorTheme'], 'Default Dark Modern');
     const target = s.target(project.id);
     assert.equal((await fetch(`http://127.0.0.1:${target.port}`)).status, 401);
     assert.equal((await fetch(`http://127.0.0.1:${target.port}`, { headers: { cookie: target.cookie } })).status, 200);
     await s.open(project.id);
     assert.equal(s.target(project.id).port, target.port, 'one shared editor process');
     assert.ok(!JSON.stringify(s.status()).includes(target.cookie));
+    await s.close();
+    fs.writeFileSync(settingsFile, JSON.stringify({ 'workbench.colorTheme': 'Default Light Modern', 'editor.fontSize': 16 }));
+    await s.open(project.id);
+    assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)), { 'workbench.colorTheme': 'Default Light Modern', 'editor.fontSize': 16 });
   } finally { await s.close(); }
   assert.equal(s.status().running, false);
   const escaping = editor.createEditorService({ dataDir: instance, getProject: () => ({ id: 'bad', path: os.tmpdir() }) });
