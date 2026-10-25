@@ -150,4 +150,18 @@ describe('In-place database upgrade (older install → current schema)', () => {
     cleanDb(testDb);
   });
 
+  test('migration 016 scopes historical events and creates the trace index idempotently', () => {
+    const { initDatabase, runMigrations, closeDatabase } = require('../server/database/db');
+    const db = initDatabase(testDb);
+    db.prepare("INSERT INTO projects (id, name, slug, path, created_at, updated_at) VALUES ('scope', 'Scope', 'scope', '/scope', 'now', 'now')").run();
+    db.prepare("INSERT INTO tasks (id, cmd, project_path, created_at, updated_at) VALUES ('old-task', 'true', '/scope', 'now', 'now')").run();
+    db.prepare("INSERT INTO events (ts, level, category, task_id) VALUES ('now', 'info', 'task', 'old-task')").run();
+    db.prepare("INSERT INTO events (ts, level, category, details) VALUES ('now', 'info', 'docs', '{\"projectId\":\"scope\"}')").run();
+    db.prepare("DELETE FROM schema_migrations WHERE name = '016_project_event_trace'").run();
+    runMigrations(db); runMigrations(db);
+    assert.ok(db.prepare('SELECT project_id FROM events').all().every((event) => event.project_id === 'scope'));
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_events_project'").get());
+    closeDatabase(); cleanDb(testDb);
+  });
+
 });

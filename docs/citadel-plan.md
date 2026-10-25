@@ -27,3 +27,12 @@ checks remain tracked below.
 A hosted editor or more autonomous machinery should follow evidence from the
 contribution exercise. No second queue, scheduler, database or external service
 is introduced by this work.
+
+## Project management redesign (working branch)
+
+- [x] Consolidate Work, Docs and Learning navigation into one optional Project hub.
+- [x] Show project tasks, priorities, Markdown, confirmed context and a code graph.
+- [x] Add project-scoped traces with cursors, filters, pause/resume and stale status.
+- [x] Include terminal lifecycle events without collecting keystrokes/transcripts.
+- [x] Test the integrated view and regenerate isolated demo screenshots.
+- [ ] Review and publish this redesign separately from v0.44.0.

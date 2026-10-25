@@ -41,7 +41,7 @@ Citadel provides **logical separation** between projects: each project has its o
 
 ## Autonomous work and memory boundaries
 
-Work, Docs and Learning are administrator-only and can be disabled as the
+Project hub and its task/document/context endpoints are administrator-only and can be disabled as the
 `missions` module. Mission plans are untrusted model output: the server accepts
 only roles, earlier-task indices, installed agents and bounded acceptance
 criteria, never commands, binaries or paths. One autonomous agent may run at a
@@ -62,3 +62,11 @@ format heuristic, not proof that arbitrary text contains no secret. Project
 discovery only lists bounded immediate directories and never executes code or
 follows directory symlinks. Opening VS Code is an explicit desktop action using
 the operator's existing SSH configuration.
+
+Project hub snapshot, trace and code-graph routes require the optional module and
+an administrator session. Journal rows persist their project scope, independently
+of task retention, and cursor queries use a project/event index. Traces redact
+nested credential fields and matching text formats, including historical rows.
+No raw PTY output or keystrokes are copied into this journal. The graph scanner
+uses canonical paths, ignores symlinks and vendor directories, bounds file reads
+and traversal, and executes no project code.

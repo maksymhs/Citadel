@@ -26,4 +26,17 @@ function scrub(value, max = DEFAULT_MAX) {
   return text.trim().slice(0, max);
 }
 
-module.exports = { scrub };
+/** Keep structured trace details usable while scrubbing nested credential fields. */
+function scrubDetails(value, depth = 0) {
+  if (depth > 6) return '[truncated]';
+  if (typeof value === 'string') return scrub(value, 4000);
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => scrubDetails(item, depth + 1));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).slice(0, 100).map(([key, item]) => [
+      key, /password|passwd|token|secret|auth|cookie|key/i.test(key) ? '[REDACTED]' : scrubDetails(item, depth + 1),
+    ]));
+  }
+  return value;
+}
+
+module.exports = { scrub, scrubDetails };

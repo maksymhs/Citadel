@@ -909,12 +909,13 @@ function createMission({ goal, projectId, plan, plannerAgent, createdBy, title }
   return getMission(id);
 }
 
-function listMissions({ status, limit = 50 } = {}) {
+function listMissions({ status, projectId, limit = 50 } = {}) {
   const capped = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
-  const db = getDatabase();
-  const rows = status
-    ? db.prepare('SELECT * FROM missions WHERE status = ? ORDER BY created_at DESC LIMIT ?').all(String(status), capped)
-    : db.prepare('SELECT * FROM missions ORDER BY created_at DESC LIMIT ?').all(capped);
+  const where = [], params = [];
+  if (status) { where.push('status = ?'); params.push(String(status)); }
+  if (projectId) { where.push('project_id = ?'); params.push(String(projectId)); }
+  const rows = getDatabase().prepare(`SELECT * FROM missions ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+    ORDER BY created_at DESC LIMIT ?`).all(...params, capped);
   return rows.map((row) => toPublicMission(row));
 }
 

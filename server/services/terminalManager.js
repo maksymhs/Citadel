@@ -349,6 +349,10 @@ class TerminalManager {
       throw err;
     }
 
+    require('./logService').record({ category: 'terminal', projectId, action: 'terminal_session_created',
+      message: agentId ? 'Agent terminal opened.' : 'Project terminal opened.',
+      details: { sessionId, agentId } });
+
     return {
       sessionId,
       projectId,
@@ -475,7 +479,8 @@ class TerminalManager {
       this.activePtySessions.delete(sessionId);
 
       // If tmux was NOT used or tmux session is gone, mark session closed in DB
-      if (!useTmux || !this.hasTmuxSession(tmuxSessionName)) {
+      const persistent = useTmux && this.hasTmuxSession(tmuxSessionName);
+      if (!persistent) {
         try {
           const db = getDatabase();
           db.prepare("UPDATE term_sessions SET status = 'closed' WHERE id = ?").run(sessionId);
@@ -483,6 +488,14 @@ class TerminalManager {
           // Ignore DB error during shutdown
         }
       }
+
+      try {
+        getDatabase();
+        require('./logService').record({ category: 'terminal', projectId,
+          action: persistent ? 'terminal_detached' : 'terminal_session_closed',
+          message: persistent ? 'Terminal detached; persistent session remains available.' : 'Terminal process finished.',
+          details: { sessionId, exitCode, signal } });
+      } catch { /* The database may already be closed during shutdown. */ }
 
       // Notify clients
       for (const ws of sessionData.clients) {

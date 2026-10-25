@@ -55,6 +55,7 @@
   let lastKey = '';
   let projectFilter = '';
   let statusFilter = '';
+  let embeddedRefresh = null;
 
   function init(ctx) {
     const missing = REQUIRED.filter((k) => ctx[k] === undefined);
@@ -147,6 +148,7 @@
   // --- Rendering -----------------------------------------------------------
 
   async function renderMissionsView() {
+    embeddedRefresh = null;
     const content = document.getElementById('main-content');
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
@@ -221,6 +223,7 @@
   }
 
   function paint() {
+    if (embeddedRefresh) { embeddedRefresh(); return; }
     const content = document.getElementById('main-content');
     if (!content) return;
     lastKey = JSON.stringify({ m: missions, d: detail });
@@ -513,7 +516,7 @@
           <span>try ${task.attempt || 0}/${task.maxAttempts || 0}</span>
           ${task.autonomous ? '<span>autonomous</span>' : ''}
         </div>
-        <p>${escapeHtml(task.description || 'No description.')}</p>
+        <p>${escapeHtml(task.description || detail.mission.goal || 'No description.')}</p>
         <h4>Acceptance criteria</h4>${acceptance}
         <h4>Dependencies</h4>${deps.length ? `<p>${escapeHtml(deps.join(', '))}</p>` : '<p class="ms-hint">None.</p>'}
         <h4>References</h4>${refs}
@@ -528,6 +531,7 @@
         <div class="ms-note-actions">
           <button class="btn btn-secondary btn-sm" id="ms-correction-save">Save correction</button>
           ${['review', 'done', 'failed'].includes(task.status) ? '<button class="btn btn-secondary btn-sm" id="ms-review-accept">Accept result</button><button class="btn btn-danger btn-sm" id="ms-review-reject">Reject result</button>' : ''}
+          ${['queued', 'blocked', 'quota', 'running', 'review'].includes(task.status) ? '<button class="btn btn-danger btn-sm" id="ms-stop-task">Cancel task</button>' : ''}
           ${task.status === 'failed' ? '<button class="btn btn-secondary btn-sm" id="ms-retry-task">Retry task</button>' : ''}
         </div>
       </div>`,
@@ -567,6 +571,16 @@
         }
       };
     }
+    const stop = document.getElementById('ms-stop-task');
+    if (stop) stop.onclick = async () => {
+      try {
+        await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`, { method: 'POST' });
+        await Promise.all([loadMissions(), loadDetail()]);
+        document.getElementById('modal-cancel-btn').click();
+        paint();
+        showToast('Task cancellation requested.', 'info');
+      } catch (err) { showToast(err.message, 'error'); }
+    };
     const save = document.getElementById('ms-correction-save');
     if (save) {
       save.onclick = async () => {
@@ -815,5 +829,12 @@
     init,
     renderMissionsView,
     stopPolling,
+    inspectTask(data, taskId, onChange) {
+      stopPolling();
+      detail = data;
+      selectedId = data.mission.id;
+      embeddedRefresh = onChange;
+      openTaskDetail(taskId);
+    },
   };
 })();

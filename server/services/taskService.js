@@ -304,11 +304,15 @@ function notifyMission(task) {
   }
 }
 
-function listTasks({ status, node, missionId, autonomous, limit = 100 } = {}) {
+function listTasks({ status, node, missionId, projectId, autonomous, limit = 100 } = {}) {
   const where = [];
   const params = [];
   if (status) { where.push('status = ?'); params.push(status); }
   if (missionId) { where.push('mission_id = ?'); params.push(missionId); }
+  if (projectId) {
+    where.push('(mission_id IN (SELECT id FROM missions WHERE project_id = ?) OR project_path = (SELECT path FROM projects WHERE id = ?))');
+    params.push(projectId, projectId);
+  }
   if (autonomous !== undefined) { where.push('autonomous = ?'); params.push(autonomous ? 1 : 0); }
   if (node) { where.push('node = ?'); params.push(node); }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';

@@ -10,6 +10,7 @@
  * (never during tests) via startSampler().
  */
 const os = require('node:os');
+const { scrub, scrubDetails } = require('../security/redact');
 const { getDatabase } = require('../database/db');
 const nodeService = require('./nodeService');
 
@@ -32,12 +33,7 @@ function safeParse(value, fallback = null) {
 
 function redact(details) {
   if (details === null || details === undefined) return null;
-  if (typeof details !== 'object') return String(details);
-  const clean = { ...details };
-  for (const key of Object.keys(clean)) {
-    if (/password|token|secret|auth|cookie|key/i.test(key)) clean[key] = '[REDACTED]';
-  }
-  return JSON.stringify(clean);
+  return JSON.stringify(scrubDetails(details));
 }
 
 function toPublicEvent(row) {
@@ -48,6 +44,7 @@ function toPublicEvent(row) {
     category: row.category,
     node: row.node,
     taskId: row.task_id,
+    projectId: row.project_id || null,
     action: row.action,
     message: row.message,
     details: safeParse(row.details),
@@ -75,20 +72,27 @@ function toPublicSample(row) {
  * Append one event to the trace. Never throws (observability must not break
  * the action it records).
  */
-function record({ level = 'info', category = 'system', node = null, taskId = null, action = null, message = null, details = null } = {}) {
+function record({ level = 'info', category = 'system', node = null, taskId = null, projectId = null, action = null, message = null, details = null } = {}) {
   try {
     const lvl = LEVELS.has(level) ? level : 'info';
-    getDatabase().prepare(`
-      INSERT INTO events (ts, level, category, node, task_id, action, message, details)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    const db = getDatabase();
+    let scope = projectId || (details && typeof details === 'object' ? details.projectId : null);
+    if (!scope && taskId) scope = db.prepare(`SELECT COALESCE(m.project_id, p.id) AS project_id FROM tasks t
+      LEFT JOIN missions m ON m.id = t.mission_id LEFT JOIN projects p ON p.path = t.project_path
+      WHERE t.id = ?`).get(taskId)?.project_id;
+    if (!scope && details && details.missionId) scope = db.prepare('SELECT project_id FROM missions WHERE id = ?').get(String(details.missionId))?.project_id;
+    db.prepare(`
+      INSERT INTO events (ts, level, category, node, task_id, project_id, action, message, details)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       new Date().toISOString(),
       lvl,
       String(category),
       node ? String(node) : null,
       taskId ? String(taskId) : null,
+      scope ? String(scope) : null,
       action ? String(action) : null,
-      message ? String(message) : null,
+      message ? scrub(message, 4000) : null,
       redact(details)
     );
   } catch (err) {

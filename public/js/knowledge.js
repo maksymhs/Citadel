@@ -543,6 +543,7 @@
   window.CitadelKnowledge = {
     init,
     renderDocsView,
+    renderMarkdown,
     renderLearningView,
     projectName,
   };

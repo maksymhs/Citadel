@@ -1,22 +1,64 @@
-# Work, Docs and Learning (autonomous agents)
+# Project hub: tasks, documentation, code and execution traces
 
-A mission gives one goal to a small team of CLI agents. It is deliberately a thin
-layer over the [task mesh](task-mesh.md): every subtask is a normal row in
-`tasks`, so claims, leases, retries, cancellation, result capture and
-reconciliation are unchanged. The mission adds the parts a queue does not have:
-roles, a validated dependency DAG, an acceptance review, a shared workspace and a
-board/wiki.
+Open **Project hub** in the sidebar and choose a registered project. This is one
+optional module with one management view: priorities, pending/running/completed
+tasks, project Markdown, confirmed decisions, a code graph and execution traces.
+Enable or disable it in **Settings → Modules**. Its existing internal module ID
+remains `missions`, preserving installation preferences and data. Old persisted
+Work, Docs and Learning view IDs redirect to Project hub.
 
-Open **Work**, **Docs** and **Learning** in the sidebar (one module, `missions`,
-enabled by default; every route is administrator-only). The autonomous loop is
-deliberately small and built on the task mesh: no second queue, no second
-scheduler and no database besides SQLite.
+- **+ Task** queues work with instructions, an installed CLI agent and acceptance
+  criteria. **Open terminal** opens the project's persistent workspace for any
+  tool. A connected sentinel executes queued work; the hub explains when no
+  worker is connected or the daily budget has stopped autonomous claims.
+- **Work** has Next, In progress, Review and Finished columns. Raise/lower pending
+  priorities; inspect a card for evidence, accept/reject, retry, cancel or record
+  a correction. Running tasks are not silently interrupted by reprioritisation.
+- **Documentation** lists Markdown inside the checkout. Read, create and edit
+  pages with optimistic concurrency checks. Agents' Markdown appears here when
+  the list refreshes; confirmed corrections appear as project context.
+- **Code graph → Scan code** builds a bounded static file graph on demand. The
+  overview and file inspector show relative imports and reverse dependencies.
+- **Execution trace** shows real journal events, with task and warning/error
+  filters, expandable scrubbed details and pause/resume. Pausing the trace does
+  not pause work. Workspace and trace reads refresh every four seconds while
+  this view is visible; leaving it stops polling. Failed refreshes show stale or
+  disconnected status instead of claiming to be live.
 
-| View | What it is |
-| --- | --- |
-| **Work** | Missions (mini-Jira): goal, validated task DAG, roles/acceptance criteria, board, acceptance review and workspace. |
-| **Docs** | Mini-Confluence: Markdown pages inside each project checkout, metadata in SQLite, Git pending indicator. |
-| **Learning** | Structured project/global memory of failures, resolutions and explicit user corrections. |
+![Project hub demo](img/project-hub-dark.png)
+
+The screenshot uses an isolated demo with simulated work, not production data.
+
+## Trace and graph limits
+
+Traces are scoped by a persisted `events.project_id` and indexed by project and
+monotonic event ID. The first read returns up to 100 recent events; subsequent
+reads use a cursor so a burst is paged without losing intermediate events. The
+browser retains at most 300 events. Historical rows are backfilled where project
+identity can be recovered from existing task/mission references; unresolvable
+rows remain in Activity. Terminal lifecycle events record open, process exit or
+persistent-session detachment. Keystrokes, raw terminal transcripts and private
+model reasoning are not collected. Nested credential fields and matching secret
+formats are scrubbed before recording and again when historical traces are read.
+
+The code graph currently supports JS/TS relative imports, including CommonJS and
+local index files. It is a static approximation, not a call graph: aliases,
+external packages, dynamic expressions and other languages are not resolved.
+Scanning does not execute project code or follow symlinks. It skips hidden and
+vendor/build directories; limits are 250 files, 3,000 directory entries, 128 KiB
+per source file, depth eight, 1,000 edges and a roughly three-second traversal.
+The result states when limits apply and counts oversized files skipped. Results
+are cached for 30 seconds in a bounded in-memory cache; Scan code refreshes it.
+No watcher, background graph process, dependency or extra database is added.
+
+## Existing mission API
+
+A mission gives one goal to CLI agents over the [task mesh](task-mesh.md).
+Claims, leases, retries, cancellation and reconciliation still use `tasks`.
+The mission API retains roles, dependency plans, workspace files and versioned
+plans. Project hub creates a single-task plan for simple directed work; advanced
+multi-task plans and projectless legacy missions remain available through the
+existing API. Documentation and memory endpoints remain compatible.
 
 ## What a mission contains
 
@@ -44,9 +86,9 @@ scheduler and no database besides SQLite.
 1. **Let an agent plan.** The mission enqueues a `planner` task. The planner
    writes `plan.json` (or prints a fenced JSON block) and the server validates it
    before enqueuing a single subtask. A rejected plan leaves the mission in
-   **Review** with the reason and an **Import plan** button.
-2. **Paste a plan.** Choose “Paste a plan” in the create dialog (or import one
-   later). The same validation runs server-side.
+   **Review** with the reason; import a replacement through the plan endpoint.
+2. **Supply a plan.** Send `plan` to `POST /api/missions`, or import one through
+   `POST /api/missions/:id/plan`. The same validation runs server-side.
 
 ```json
 {"tasks": [
@@ -78,14 +120,14 @@ the same project, which keeps two writers out of one checkout.
 
 ## Board, priority and cancellation
 
-- Columns: Blocked, Waiting quota, Ready, In progress, Cancelling, Needs review,
-  Done, Failed, Cancelled.
-- **↑ / ↓** on a queued or blocked card reorders the mission backlog
-  (`POST /api/missions/:id/prioritize`). Running tasks cannot be reprioritised.
-- **Cancel mission** cascades to queued, blocked and running tasks. Running
-  agents are asked to terminate and confirm, like any task-mesh cancellation.
-- Handoffs, the goal, the plan and `decisions.md` are readable in the **Wiki**
-  tab; notes appended there are visible to later agents through the workspace.
+- Columns: Next (queued/blocked/quota), In progress (running/cancelling), Review
+  (awaiting acceptance/failed), Finished (done/cancelled).
+- **↑ / ↓** changes a queued or blocked task's priority through
+  `POST /api/missions/:id/prioritize`. Running tasks cannot be reprioritised.
+- **Cancel task** requests cancellation through the task protocol. The mission
+  cancellation endpoint still cascades to its unfinished tasks.
+- Workspace files (handoffs, goal, plan and decisions) remain accessible through
+  the mission file API. The hub's Documentation panel reads project Markdown.
 
 ## Acceptance review
 
@@ -114,7 +156,7 @@ owns the decision.
 Autonomous work is bounded by `CITADEL_AUTONOMOUS_DAILY_BUDGET` (default 50,
 `0` pauses autonomy). The counter is the number of autonomous attempts started
 today, local time; it is a budget proxy because no paid provider is integrated.
-When it is exhausted, new autonomous attempts are not claimed, the Work view
+When it is exhausted, new autonomous attempts are not claimed, the project summary
 shows the counter, and manual queue work and persistent terminals keep running.
 It resets at local midnight.
 
@@ -152,7 +194,7 @@ GET  /api/missions/:id/file?path=  goal.md, plan.json, decisions.md or handoff/*
   headless targets.
 
 
-## Work: autonomous loop and states
+## Autonomous loop and states
 
 The loop is: pick a ready mission → retrieve its docs and applicable lessons →
 plan (or reuse a valid plan) → claim one eligible task → run one agent → collect

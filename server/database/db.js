@@ -429,6 +429,22 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: '016_project_event_trace',
+    up: (db) => {
+      if (!columnExists(db, 'events', 'project_id')) db.exec('ALTER TABLE events ADD COLUMN project_id TEXT');
+      db.exec(`
+        UPDATE events SET project_id = COALESCE(
+          json_extract(CASE WHEN json_valid(details) THEN details ELSE '{}' END, '$.projectId'),
+          (SELECT project_id FROM missions WHERE id = json_extract(CASE WHEN json_valid(events.details) THEN events.details ELSE '{}' END, '$.missionId')),
+          (SELECT COALESCE(m.project_id, p.id) FROM tasks t
+            LEFT JOIN missions m ON m.id = t.mission_id
+            LEFT JOIN projects p ON p.path = t.project_path WHERE t.id = events.task_id)
+        ) WHERE project_id IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, id);
+      `);
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -810,6 +826,7 @@ function initDatabase(customPath = null) {
       category TEXT NOT NULL,
       node TEXT,
       task_id TEXT,
+      project_id TEXT,
       action TEXT,
       message TEXT,
       details TEXT

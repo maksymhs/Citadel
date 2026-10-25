@@ -36,6 +36,7 @@ const fleetRoutes = require('./routes/fleetRoutes');
 const monitorRoutes = require('./routes/monitorRoutes');
 const taskRoutes = require('./routes/taskRoutes');
 const missionRoutes = require('./routes/missionRoutes');
+const projectHubRoutes = require('./routes/projectHubRoutes');
 const learningRoutes = require('./routes/learningRoutes');
 const docRoutes = require('./routes/docRoutes');
 const logRoutes = require('./routes/logRoutes');
@@ -173,6 +174,7 @@ async function buildServer(options = {}) {
   await fastify.register(monitorRoutes);
   await fastify.register(taskRoutes);
   await fastify.register(missionRoutes);
+  await fastify.register(projectHubRoutes);
   await fastify.register(learningRoutes);
   await fastify.register(docRoutes);
   await fastify.register(logRoutes);

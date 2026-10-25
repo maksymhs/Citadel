@@ -71,3 +71,8 @@
 - **Context**: Project discovery and editing should not add a resident watcher, a second service, editor authentication or a large idle memory cost before real usage demonstrates the need.
 - **Decision**: Scan bounded immediate directories when Projects opens or refreshes, show read-only import suggestions, and prepare explicit local/SSH links to desktop VS Code. Keep SSH credentials in the operator's existing client configuration.
 - **Consequences**: No new dependency, process or listening port. Folders still require explicit import and the editor requires desktop VS Code; an embedded web editor remains a separate product decision after a real contribution exercise.
+
+## ADR-014: One optional project hub with a scoped execution journal
+- **Context**: Separate Work, Docs and Learning navigation split one project's work into unrelated screens and obscured what agents and terminals were doing.
+- **Decision**: Keep the existing `missions` module preference and service APIs, expose one Project hub view, and combine tasks/priorities, Markdown, confirmed context, an on-demand static JS/TS graph and execution traces. Persist project scope on existing event rows and index `(project_id, id)` for cursor reads. Record lifecycle events, not PTY transcripts or private model reasoning. Stop polling when the view is hidden or left.
+- **Consequences**: No extra queue, scheduler, database, runtime dependency or graph daemon. Task deletion does not erase trace scope. Historical events without a recoverable project remain in Activity. Graphs are bounded file-import approximations, and projectless legacy missions remain available through the existing APIs. Existing review, cancellation, redaction and module guards continue to apply.

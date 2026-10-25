@@ -78,9 +78,7 @@
     { module: 'proxy', view: 'proxy', label: 'Proxy & Domains', icon: 'globe-icon' },
     { module: 'docker', view: 'docker', label: 'Docker', icon: 'docker-icon' },
     { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
-    { module: 'missions', view: 'work', label: 'Work', icon: 'missions' },
-    { module: 'missions', view: 'docs', label: 'Docs', icon: 'docs' },
-    { module: 'missions', view: 'learning', label: 'Learning', icon: 'learning' },
+    { module: 'missions', view: 'project-hub', label: 'Project hub', icon: 'missions' },
   ];
   const KNOWN_VIEWS = [
     ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity',
@@ -91,7 +89,7 @@
     repos: 'projects', terminal: 'workspace', logs: 'activity',
     plugins: 'settings', modules: 'settings', deployments: 'proxy',
     system: 'settings', machines: 'dashboard', machine: 'dashboard', processes: 'dashboard', terminals: 'dashboard',
-    missions: 'work',
+    missions: 'project-hub', work: 'project-hub', docs: 'project-hub', learning: 'project-hub',
   };
 
   // Default dashboard widget order. Widgets whose module is disabled/unavailable
@@ -1162,6 +1160,7 @@
     state.currentView = view;
     updateBackButton(view);
     saveUiState({ currentView: view });
+    if (from === 'project-hub' && view !== 'project-hub' && window.CitadelProjectHub) window.CitadelProjectHub.stop();
     if (['missions', 'work'].includes(from) && !['missions', 'work'].includes(view) && window.CitadelMissions) {
       window.CitadelMissions.stopPolling();
     }
@@ -1205,15 +1204,9 @@
     } else if (view === 'fleet') {
       titleEl.textContent = 'Fleet — Remote Hosts';
       renderFleetView();
-    } else if (view === 'missions' || view === 'work') {
-      titleEl.textContent = 'Work — autonomous missions';
-      renderMissionsView();
-    } else if (view === 'docs') {
-      titleEl.textContent = 'Docs — project knowledge';
-      window.CitadelKnowledge.renderDocsView();
-    } else if (view === 'learning') {
-      titleEl.textContent = 'Learning — project memory';
-      window.CitadelKnowledge.renderLearningView();
+    } else if (view === 'project-hub') {
+      titleEl.textContent = 'Project hub';
+      window.CitadelProjectHub.render();
     }
   }
 
@@ -3023,7 +3016,6 @@
 
   // --- Fleet (fleet.js) ---
   function renderFleetView(...args) { return window.CitadelFleet.renderFleetView(...args); }
-  function renderMissionsView(...args) { return window.CitadelMissions.renderMissionsView(...args); }
   function refreshDashboardFleet(...args) { return window.CitadelFleet.refreshDashboardFleet(...args); }
   function fleetUpdateAll(...args) { return window.CitadelFleet.fleetUpdateAll(...args); }
 
@@ -3915,6 +3907,7 @@
   // above is defined. They never reach into this file's scope.
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
+  window.CitadelProjectHub.init({ api, escapeHtml, openModal, showToast, state, openProject: openWorkspace, loadProjects, saveUiState });
   window.CitadelMissions.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelKnowledge.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });

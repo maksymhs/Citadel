@@ -29,6 +29,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   let server;
   let dom;
   let w;
+  let authCookie, managedProjectId;
 
   before(async () => {
     fs.mkdirSync(path.join(data, 'projects', 'ui-discovered'), { recursive: true });
@@ -40,6 +41,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         PORT: String(port), HOST: '127.0.0.1', NODE_ENV: 'test', HOME: data,
         DATA_DIR: data, DATABASE_PATH: path.join(data, 'citadel.db'),
         PROJECTS_DIR: path.join(data, 'projects'), LOGS_DIR: path.join(data, 'logs'),
+        CITADEL_MISSIONS_DIR: path.join(data, 'missions'),
         CITADEL_SELF_UPDATE: '0', CITADEL_REQUIRE_SETUP_CODE: '0',
       },
       stdio: 'ignore',
@@ -55,14 +57,27 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     });
     assert.equal(setup.status, 200, 'first-run setup should succeed on an empty data directory');
     const cookie = setup.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+    authCookie = cookie;
+    const createdProject = await fetch(`${base}/api/projects`, {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ name: 'Managed smoke' }),
+    });
+    assert.equal(createdProject.status, 200);
+    managedProjectId = (await createdProject.json()).project.id;
+    const repo = path.join(data, 'projects', 'managed-smoke');
+    fs.mkdirSync(path.join(repo, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'docs', 'overview.md'), '# Project overview\n\nSmoke documentation.');
+    fs.writeFileSync(path.join(repo, 'first.js'), "require('./second');");
+    fs.writeFileSync(path.join(repo, 'second.js'), 'module.exports = 1;');
     const mission = await fetch(`${base}/api/missions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify({
         goal: 'Render the work board smoke mission',
         title: 'Work smoke',
+        projectId: managedProjectId,
         plan: { tasks: [
-          { title: 'Inspect the shell', role: 'analyst' },
+          { title: 'Inspect the shell', role: 'analyst', acceptance: ['Brief is reviewed'] },
           { title: 'Render the room', role: 'frontend', deps: [0] },
         ] },
       }),
@@ -101,7 +116,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('every feature script registers and the app shell renders', () => {
-    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelMissions', 'CitadelKnowledge', 'CitadelProjectTools']) {
+    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelMissions', 'CitadelKnowledge', 'CitadelProjectTools', 'CitadelProjectHub']) {
       assert.equal(typeof w[name], 'object', `window.${name} is missing`);
     }
     assert.ok(w.document.querySelector('.nav-item'), 'the sidebar should render after sign-in');
@@ -142,7 +157,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('main screens open without script errors', async () => {
-    for (const view of ['files', 'settings', 'projects', 'dashboard', 'work', 'docs', 'learning']) {
+    for (const view of ['files', 'settings', 'projects', 'dashboard', 'project-hub']) {
       const link = w.document.querySelector(`.nav-item[data-view="${view}"]`);
       assert.ok(link, `nav item ${view} should exist`);
       link.click();
@@ -174,17 +189,64 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
-  test('the mission board renders every subtask and has no office tab', async () => {
-    await w.CitadelMissions.renderMissionsView();
-    await sleep(700);
-    const mission = w.document.querySelector('.ms-mission');
-    assert.ok(mission, 'the smoke mission should be listed');
-    mission.click();
-    await sleep(700);
-    assert.ok(w.document.querySelector('.ms-board'), 'the board should render');
-    assert.equal(w.document.querySelectorAll('.ms-card').length, 2, 'two subtasks should get two cards');
-    assert.equal(w.document.querySelector('[data-action="tab"][data-tab="office"]'), null, 'the office tab must not exist');
+  test('one project hub connects the board, docs, graph and live trace with review', async () => {
+    w.document.querySelector('.nav-item[data-view="project-hub"]').click();
+    await sleep(800);
+    assert.equal(w.document.querySelectorAll('.nav-item[data-view="work"], .nav-item[data-view="docs"], .nav-item[data-view="learning"]').length, 0);
+    assert.ok(w.document.getElementById('ph-shell'));
+    assert.equal(w.document.querySelectorAll('.ph-task').length, 2);
+    assert.ok(w.document.querySelector('.ph-doc-link').textContent.includes('Project overview'));
+    assert.ok(w.document.querySelectorAll('.ph-event').length >= 2, 'real enqueue events appear in the trace');
+    w.document.querySelector('[data-ph="priority"]').click();
+    await sleep(500);
+    assert.match(w.document.getElementById('ph-trace-list').textContent, /reordered/);
+    w.document.querySelector('[data-ph="graph"]').click();
+    await sleep(500);
+    assert.match(w.document.getElementById('ph-graph').textContent, /2 files/);
+    w.document.querySelector('[data-ph="graph-node"]').click();
+    assert.ok(w.document.querySelector('.ph-node-graph svg'));
+    w.document.getElementById('modal-close-btn').click();
+    w.document.querySelector('[data-ph="doc"]').click();
+    await sleep(350);
+    assert.match(w.document.querySelector('.ph-doc-modal').textContent, /Smoke documentation/);
+    w.document.getElementById('modal-close-btn').click();
+
+    const claim = await fetch(`${base}/api/tasks/claim`, { method: 'POST', headers: { 'content-type': 'application/json', cookie: authCookie }, body: JSON.stringify({ node: 'ui-worker' }) });
+    assert.equal(claim.status, 200);
+    const task = (await claim.json()).task;
+    const done = await fetch(`${base}/api/tasks/${task.id}/result`, { method: 'POST', headers: { 'content-type': 'application/json', cookie: authCookie }, body: JSON.stringify({ status: 'done', claimToken: task.claimToken, result: 'Brief ready.' }) });
+    assert.equal(done.status, 200);
+    w.document.querySelector('[data-ph="refresh"]').click();
+    await sleep(500);
+    assert.equal(w.document.querySelectorAll('[data-ph-column="review"] .ph-task').length, 1);
+    w.document.querySelector(`[data-ph="task"][data-id="${task.id}"]`).click();
+    await sleep(350);
+    w.document.getElementById('ms-review-accept').click();
+    await sleep(600);
+    assert.ok(w.document.getElementById('ph-shell'), 'accepting a task keeps the unified view');
+    assert.equal(w.document.querySelectorAll('[data-ph-column="done"] .ph-task').length, 1);
+    const pause = w.document.querySelector('[data-ph="pause"]');
+    pause.click();
+    assert.match(w.document.getElementById('ph-trace-state').textContent, /Paused/);
+    pause.click();
+    await sleep(300);
+    assert.match(w.document.getElementById('ph-trace-state').textContent, /Live/);
     assert.deepEqual(errors, []);
+  });
+
+  test('leaving the project hub stops its background polling', async () => {
+    let requests = 0;
+    const original = w.fetch;
+    w.fetch = (url, options) => {
+      if (/\/(hub|trace)(\?|$)/.test(String(url))) requests++;
+      return original(url, options);
+    };
+    try {
+      w.document.querySelector('.nav-item[data-view="files"]').click();
+      const count = requests;
+      await sleep(4500);
+      assert.equal(requests, count, 'hidden project views must not keep polling');
+    } finally { w.fetch = original; }
   });
 
   test('screens reached from other screens render through their entry points', async () => {
