@@ -31,6 +31,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   let w;
 
   before(async () => {
+    fs.mkdirSync(path.join(data, 'projects', 'ui-discovered'), { recursive: true });
     // Every path points into the temp directory: the test must never touch a real install.
     server = spawn('node', ['server/index.js'], {
       cwd: ROOT,
@@ -58,8 +59,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify({
-        goal: 'Render the office smoke mission',
-        title: 'Office smoke',
+        goal: 'Render the work board smoke mission',
+        title: 'Work smoke',
         plan: { tasks: [
           { title: 'Inspect the shell', role: 'analyst' },
           { title: 'Render the room', role: 'frontend', deps: [0] },
@@ -100,7 +101,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('every feature script registers and the app shell renders', () => {
-    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelMissions', 'CitadelKnowledge']) {
+    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelMissions', 'CitadelKnowledge', 'CitadelProjectTools']) {
       assert.equal(typeof w[name], 'object', `window.${name} is missing`);
     }
     assert.ok(w.document.querySelector('.nav-item'), 'the sidebar should render after sign-in');
@@ -118,16 +119,38 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
-  test('the mission office renders a desk for every subtask', async () => {
+  test('project discovery imports a folder and VS Code links encode paths safely', async () => {
+    w.document.querySelector('.nav-item[data-view="projects"]').click();
+    await sleep(800);
+    const importButton = w.document.querySelector('[data-discover-index]');
+    assert.ok(importButton, 'the projects directory is scanned when opening Projects');
+    importButton.click();
+    await sleep(800);
+    assert.ok(w.document.querySelector('.proj-name').textContent.includes('ui-discovered'));
+    assert.equal(w.document.querySelector('[data-discover-index]'), null, 'imported folder is not suggested twice');
+    assert.equal(w.CitadelProjectTools.editorUrl('/tmp/a # b'), 'vscode://file/tmp/a%20%23%20b/');
+    assert.throws(() => w.CitadelProjectTools.editorUrl('/tmp/project', 'host/path'), /SSH config/);
+    w.CitadelProjectTools.showEditor({ name: 'Project', path: '/srv/a # b' });
+    const host = w.document.getElementById('editor-ssh-host');
+    host.value = 'my-vps';
+    host.dispatchEvent(new w.Event('input'));
+    const link = w.document.getElementById('editor-open-link');
+    assert.equal(link.hidden, false);
+    assert.equal(link.getAttribute('href'), 'vscode://vscode-remote/ssh-remote+my-vps/srv/a%20%23%20b/');
+    w.document.getElementById('modal-close-btn').click();
+    assert.deepEqual(errors, []);
+  });
+
+  test('the mission board renders every subtask and has no office tab', async () => {
     await w.CitadelMissions.renderMissionsView();
     await sleep(700);
-    const officeTab = w.document.querySelector('[data-action="tab"][data-tab="office"]');
-    assert.ok(officeTab, 'the Office tab should exist');
-    officeTab.click();
-    await sleep(400);
-    assert.ok(w.document.querySelector('.ms-office'), 'the office should render');
-    assert.equal(w.document.querySelectorAll('.ms-desk').length, 2, 'two subtasks should get two desks');
-    assert.equal(w.document.querySelectorAll('.ms-bubble').length, 2, 'each desk should show a status bubble');
+    const mission = w.document.querySelector('.ms-mission');
+    assert.ok(mission, 'the smoke mission should be listed');
+    mission.click();
+    await sleep(700);
+    assert.ok(w.document.querySelector('.ms-board'), 'the board should render');
+    assert.equal(w.document.querySelectorAll('.ms-card').length, 2, 'two subtasks should get two cards');
+    assert.equal(w.document.querySelector('[data-action="tab"][data-tab="office"]'), null, 'the office tab must not exist');
     assert.deepEqual(errors, []);
   });
 

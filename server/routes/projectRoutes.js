@@ -36,6 +36,9 @@ async function projectRoutes(fastify) {
     };
   });
 
+  // Read-only suggestions; importing still uses the explicit audited endpoint.
+  fastify.get('/api/projects/discover', async () => projectService.discoverProjects());
+
   // Get project by ID or slug
   fastify.get('/api/projects/:id', async (request, reply) => {
     const project = projectService.getProject(request.params.id);

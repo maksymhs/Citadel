@@ -29,6 +29,42 @@ class ProjectService {
     }));
   }
 
+  /** Discover immediate folders without importing, following links or running code. */
+  async discoverProjects() {
+    const db = getDatabase();
+    const known = new Set([
+      ...db.prepare('SELECT path FROM projects').all(),
+      ...db.prepare('SELECT path FROM project_repos').all(),
+    ].map((row) => {
+      try { return fs.realpathSync(row.path); } catch { return path.resolve(row.path); }
+    }));
+    const directories = [];
+    let root;
+    try { root = await fs.promises.realpath(PROJECTS_DIR); } catch (err) {
+      if (err.code === 'ENOENT') return { directories, truncated: false };
+      throw err;
+    }
+    let scanned = 0;
+    let truncated = false;
+    // Bound both work and response size; no resident watcher or recursive walk.
+    const dir = await fs.promises.opendir(root);
+    for await (const entry of dir) {
+      if (++scanned > 500) { truncated = true; break; }
+      if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      const candidate = path.join(root, entry.name);
+      try {
+        const stat = await fs.promises.lstat(candidate);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+        const real = await fs.promises.realpath(candidate);
+        if (path.dirname(real) !== root || known.has(real)) continue;
+        directories.push({ name: entry.name, path: real });
+      } catch { /* A folder can disappear during a scan. */ }
+      if (directories.length >= 100) { truncated = true; break; }
+    }
+    directories.sort((a, b) => a.name.localeCompare(b.name));
+    return { directories, truncated };
+  }
+
   /**
    * Get a single project by ID or slug
    */

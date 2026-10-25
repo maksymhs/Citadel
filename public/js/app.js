@@ -1436,10 +1436,12 @@
   function renderProjectsActions() {
     const actions = document.getElementById('top-bar-actions');
     actions.innerHTML = `
+      <button class="btn btn-secondary btn-sm" id="proj-refresh-btn">Refresh</button>
       <button class="btn btn-secondary btn-sm" id="proj-creds-btn" title="Git providers and your remote repositories">Git providers</button>
       <button class="btn btn-secondary btn-sm" id="proj-import-btn" title="Register an existing folder as a project">Import folder</button>
       <button class="btn btn-primary btn-sm" id="proj-create-btn">+ New project</button>
     `;
+    document.getElementById('proj-refresh-btn').onclick = renderProjectsView;
     document.getElementById('proj-create-btn').onclick = showCreateProjectModal;
     document.getElementById('proj-import-btn').onclick = showImportProjectModal;
     document.getElementById('proj-creds-btn').onclick = () => renderReposView();
@@ -1466,6 +1468,7 @@
       `;
       document.getElementById('empty-create-btn').onclick = showCreateProjectModal;
       document.getElementById('empty-clone-btn').onclick = showCloneProjectModal;
+      window.CitadelProjectTools.mountDiscovery(content);
       return;
     }
 
@@ -1543,6 +1546,7 @@
         const name = btn.getAttribute('data-project-name');
         const project = state.projects.find((p) => p.id === id);
         openContextMenu(btn, [
+          { label: 'Open in VS Code…', onSelect: () => window.CitadelProjectTools.showEditor(project) },
           { label: 'Associate a folder…', onSelect: () => showAssociateRepoModal(project) },
           { label: 'Clone a repository here…', onSelect: () => showCloneRepoModal(project) },
           { sep: true },
@@ -1550,6 +1554,7 @@
         ]);
       };
     });
+    window.CitadelProjectTools.mountDiscovery(content);
   }
 
   function showDeleteProjectModal(id, name) {
@@ -3908,6 +3913,7 @@
   window.CitadelMissions.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelKnowledge.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
+  window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state });
   window.CitadelRepos.init({ api, escapeHtml, loadProjects, openModal, renderProjectsView, showToast });
   window.CitadelFiles.init({ api, escapeHtml, formatBytes, hostApiPath, openContextMenu, openModal, showToast, state });
   window.CitadelPairing.init({ api, escapeHtml, loadHosts, openModal, refreshHostStatus, renderSidebarNav, showToast, state, switchHost });
