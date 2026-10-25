@@ -24,6 +24,9 @@ async function terminalRoutes(fastify) {
   // Create new terminal session
   fastify.post('/api/terminals', async (request, reply) => {
     const { projectId, repoId, name, cwd, cols, rows } = request.body || {};
+    if (projectId && require('../services/gatewayService').status().enabled && request.user.role !== 'admin') {
+      return reply.status(403).send({ error: 'Administrator privileges are required for gateway-enabled project terminals.' });
+    }
 
     // Any ad-hoc cwd supplied by the client must stay inside the managed projects tree.
     // When projectId is given, the project's own (admin-approved) path is used instead.

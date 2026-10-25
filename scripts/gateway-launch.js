@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Starts one Claude Code process with scoped gateway settings; no credentials in argv. */
+/** Starts Claude Code or a project shell with scoped gateway settings; no credentials in argv. */
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 
@@ -15,11 +15,14 @@ function gatewayEnvironment(base, settings) {
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
 }
 function main() {
-  const [file, binary, ...args] = process.argv.slice(2);
+  const input = process.argv.slice(2);
+  const shellMode = input[0] === '--shell';
+  const [file, binary, ...args] = shellMode ? input.slice(1) : input;
   try {
     const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!binary || !settings.token || !/^http:\/\/127\.0\.0\.1:\d+$/.test(settings.baseUrl)) throw new Error();
-    const child = spawn(binary, ['--model', 'opusplan', ...args], { stdio: 'inherit', env: gatewayEnvironment(process.env, settings) });
+    if (shellMode) console.error(`[Citadel] AI Gateway active for this project terminal: planning ${settings.planningModel}, execution ${settings.executionModel}.`);
+    const child = spawn(binary, shellMode ? args : ['--model', 'opusplan', ...args], { stdio: 'inherit', env: gatewayEnvironment(process.env, settings) });
     child.on('error', () => { console.error('Could not launch Claude Code through AI Gateway.'); process.exitCode = 1; });
     child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
     for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => child.kill(signal));

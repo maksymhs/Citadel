@@ -35,7 +35,7 @@
         ${gateway.login?.state === 'starting' ? '<p role="status">Requesting a device code…</p>' : ''}
         ${gateway.login?.state === 'failed' ? '<p class="settings-warn">Login failed or expired. Connect ChatGPT again to obtain a fresh code.</p>' : ''}
         <form id="gateway-form" style="margin-top:18px;">
-          <label class="settings-field"><span><input type="checkbox" id="gateway-enabled" ${c.enabled ? 'checked' : ''} ${!gateway.connected || working ? 'disabled' : ''}> Use gateway for new Claude Code sessions</span></label>
+          <label class="settings-field"><span><input type="checkbox" id="gateway-enabled" ${c.enabled ? 'checked' : ''} ${!gateway.connected || working ? 'disabled' : ''}> Use gateway for Claude Code in new project terminals</span></label>
           <label class="settings-field">Planning model<input class="form-input" id="gateway-planning" list="gateway-models" value="${esc(c.planningModel)}" required maxlength="160" ${disabled}></label>
           <label class="settings-field">Execution model<input class="form-input" id="gateway-execution" list="gateway-models" value="${esc(c.executionModel)}" required maxlength="160" ${disabled}></label>
           <label class="settings-field">Small/background model<input class="form-input" id="gateway-small" list="gateway-models" value="${esc(c.smallModel)}" required maxlength="160" ${disabled}></label>
@@ -47,11 +47,12 @@
             <button class="btn btn-secondary btn-sm" type="button" id="gateway-refresh" ${disabled}>Refresh status / models</button>
           </div>
         </form>
-        <p class="settings-hero-status">Launch Claude Code from Projects after saving. Planning uses the planning model; execution uses the execution model. Model availability depends on your account. Test model sends a small request using your allowance.</p>
+        <p class="settings-hero-status">Enabling this switch saves immediately. Open a new project terminal, then run claude. Existing terminals and running Claude processes keep their previous connection. Planning uses the planning model; execution uses the execution model. Model availability depends on your account. Test model sends a small request using your allowance.</p>
         <p class="settings-hero-status">The gateway listens only on this machine. Disabling it stops the gateway and interrupts sessions using it. Existing native sessions keep their configuration. Automatic quota fallback is not enabled yet.</p>`;
       body.querySelector('#gateway-install').onclick = () => action('/install', 'POST', null, 'Gateway component installed.');
       body.querySelector('#gateway-login').onclick = () => action('/login', 'POST');
       body.querySelector('#gateway-disconnect')?.addEventListener('click', () => action('/login', 'DELETE', null, 'ChatGPT disconnected.'));
+      body.querySelector('#gateway-enabled').onchange = () => action('', 'PUT', draft(), 'Gateway setting applied. Open a new project terminal before running claude.');
       body.querySelector('#gateway-form').onsubmit = e => { e.preventDefault(); action('', 'PUT', draft(), 'Gateway settings saved.'); };
       body.querySelector('#gateway-test').onclick = () => action('/test', 'POST', null, 'Model connection succeeded.');
       body.querySelector('#gateway-refresh').onclick = async () => {

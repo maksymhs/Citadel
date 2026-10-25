@@ -398,6 +398,17 @@ class TerminalManager {
       LC_ALL: 'en_US.UTF-8',
     };
 
+    if (projectId && !command) {
+      const gateway = require('./gatewayService').launchOptions();
+      if (gateway) {
+        // Run the shell through the same scoped environment as agent launches.
+        // A tmux server may predate this client, so client env alone is not enough.
+        const shell = process.env.SHELL || '/bin/bash';
+        command = gateway.command;
+        args = [gateway.args[0], '--shell', gateway.args[1], shell, '-l'];
+      }
+    }
+
     if (useTmux) {
       this._ensureTmuxUpdateEnvironment();
       file = this.getTmuxPath();

@@ -21,20 +21,25 @@ availability are not guaranteed by Citadel or the model providers.
    `gpt-6.1-sol`, `gpt-6-luna` and `gpt-6-luna`; these are preferences, not a claim
    that your plan grants access. Enable **Use gateway for new Claude Code
    sessions** and click **Save**. The gateway must start successfully before
-   activation is saved. Change port 8317 while disabled if it is already in use.
+   activation is saved. Enabling/disabling the checkbox saves immediately; use
+   **Save** for later model edits. Change port 8317 while disabled if it is already in use.
 4. Click **Refresh status / models** for available model IDs. Update preferences
    and save as needed. **Test model** sends a small request using the saved
    execution model and your account allowance; it reports success or a bounded
    error without returning generated text or provider response bodies.
-5. From **Projects**, launch **Claude Code** in the usual way. New Claude
-   sessions use `opusplan`: planning maps to the planning model and execution to
+5. Open a **new project terminal** and type `claude`, or launch Claude using
+   Citadel’s agent action. The terminal prints **AI Gateway active** with the
+   configured models. New Claude sessions use `opusplan`: planning maps to the planning model and execution to
    the execution model. Small/background requests use the small model alias.
 
-Only Claude sessions launched from Citadel's project agent action use the
-integration. Typing `claude` in an existing terminal, other agents and task mesh
-headless jobs retain their existing setup. Model settings apply to new sessions;
-restart a Claude session after changing them. No shell profile or existing CLI
-login cache is edited. The gateway is local to each Citadel machine.
+New project terminal shells inherit the gateway's Anthropic-compatible endpoint
+and model aliases. `claude` typed in those shells uses that connection. Other
+commands started in the same shell also inherit those environment variables.
+System terminals and task-mesh headless jobs retain their existing setup.
+Existing terminal shells and running Claude processes are not changed: after
+activation, exit Claude and close/reopen the project terminal before trying
+again. Model changes apply to new shells/sessions. No shell profile or existing
+CLI login cache is edited. The gateway is local to each Citadel machine.
 
 ## Disable, restart and disconnect
 

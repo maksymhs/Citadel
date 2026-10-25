@@ -61,7 +61,7 @@ backend binds only to loopback, with server-side authentication; browser session
 credentials are filtered at the proxy. It runs as the Citadel user and is not a
 project sandbox. Stopping it terminates its editor process group.
 
-The optional [AI Gateway](ai-gateway.md) requires administrator setup, binds to
+The optional [AI Gateway](ai-gateway.md) requires administrator setup and access to gateway-enabled project terminals, binds to
 loopback and uses a separate ChatGPT login. Persistent credentials are encrypted;
 the external proxy needs private temporary plaintext files while running (Linux
 uses `/dev/shm` where available). Clean shutdown removes those files; abrupt

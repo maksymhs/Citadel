@@ -66,6 +66,13 @@ test('gateway routes require administrator access and never reveal stored values
     for (const [method, url] of [['GET', ''], ['PUT', ''], ['POST', '/install'], ['POST', '/login'], ['DELETE', '/login'], ['GET', '/models'], ['POST', '/test']]) {
       assert.equal((await app.inject({ method, url: `/api/settings/gateway${url}`, cookies, ...(method === 'PUT' ? { payload: { enabled: true } } : {}) })).statusCode, 403);
     }
+    const gateway = require('../server/services/gatewayService');
+    const originalStatus = gateway.status;
+    gateway.status = () => ({ enabled: true });
+    try {
+      assert.equal((await app.inject({ method: 'POST', url: '/api/terminals', cookies, payload: { projectId: 'fixture' } })).statusCode, 403);
+      assert.equal((await app.inject({ method: 'POST', url: '/api/agents/launch', cookies, payload: { projectId: 'fixture', agentId: 'claude' } })).statusCode, 403);
+    } finally { gateway.status = originalStatus; }
   } finally { getDatabase().prepare("UPDATE users SET role = 'admin'").run(); }
   const result = await app.inject({ url: '/api/settings/gateway', cookies });
   assert.equal(result.statusCode, 200);
@@ -197,5 +204,43 @@ test('agent launch routes Claude through scoped wrapper and keeps native mode av
     assert.equal(launches[1].command, undefined);
   } finally {
     registry.getAgent = original.getAgent; terminals.createSession = original.createSession; gateway.launchOptions = original.launchOptions;
+  }
+});
+
+test('typing claude in a project shell receives gateway settings, including through tmux', async () => {
+  const { dir, service: s } = fresh(); fakeBinary(dir);
+  await s.loginStart(); await until(() => s.status().connected);
+  await s.save({ enabled: true, port: await port(), planningModel: 'fixture-plan', executionModel: 'fixture-run', smallModel: 'fixture-small' });
+  const gateway = require('../server/services/gatewayService');
+  const terminals = require('../server/services/terminalManager');
+  const projects = require('../server/services/projectService');
+  const project = projects.createProject({ name: 'Typed Claude gateway' });
+  const fixtureBin = path.join(dir, 'fixture-bin'); fs.mkdirSync(fixtureBin);
+  const report = path.join(dir, 'claude-report.json');
+  fs.writeFileSync(path.join(fixtureBin, 'claude'), `#!/usr/bin/env node
+require('node:fs').writeFileSync(${JSON.stringify(report)}, JSON.stringify({ base: process.env.ANTHROPIC_BASE_URL, plan: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL, run: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL, model: process.env.ANTHROPIC_MODEL, credentialPresent: Boolean(process.env.ANTHROPIC_AUTH_TOKEN) }));
+`, { mode: 0o700 });
+  const fixtureShell = path.join(fixtureBin, 'test-shell');
+  fs.writeFileSync(fixtureShell, '#!/bin/sh\nexec /bin/bash --noprofile --norc -i\n', { mode: 0o700 });
+  const original = { launch: gateway.launchOptions, shell: process.env.SHELL, home: process.env.HOME };
+  let session;
+  try {
+    gateway.launchOptions = () => s.launchOptions();
+    process.env.SHELL = fixtureShell; process.env.HOME = dir;
+    session = terminals.createSession({ projectId: project.id, name: 'Gateway regression shell' });
+    const active = terminals.activePtySessions.get(session.sessionId);
+    await until(() => active.buffer.includes('AI Gateway active for this project terminal'));
+    // Only the fixture binary is invoked; never call a host's logged-in CLI.
+    const quoted = `'${fixtureBin.replace(/'/g, "'\\''")}'`;
+    active.ptyProcess.write(`export PATH=${quoted}:"$PATH"; claude\r`);
+    await until(() => fs.existsSync(report));
+    assert.deepEqual(JSON.parse(fs.readFileSync(report)), { base: `http://127.0.0.1:${s.status().port}`, plan: 'fixture-plan', run: 'fixture-run', model: 'opusplan', credentialPresent: true });
+    assert.ok(!active.buffer.includes(JSON.parse(fs.readFileSync(s.launchOptions().args[1])).token));
+  } finally {
+    if (session) terminals.killSession(session.sessionId);
+    gateway.launchOptions = original.launch;
+    if (original.shell === undefined) delete process.env.SHELL; else process.env.SHELL = original.shell;
+    if (original.home === undefined) delete process.env.HOME; else process.env.HOME = original.home;
+    await s.disconnect();
   }
 });

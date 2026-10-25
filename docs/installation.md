@@ -128,7 +128,8 @@ checks on a real Mac or a macOS VM; Linux trial checks need no host installation
 
 Open **Settings → AI Gateway** as an administrator to install the local component,
 connect ChatGPT by device login, choose planning/execution models and enable it
-for new Claude Code sessions launched from Projects. It binds only to loopback,
+for Claude Code in new project terminals (including typing `claude`).
+Exit Claude and reopen an existing project terminal after activation. It binds only to loopback,
 requires no sudo and remains off by default. This experimental integration does
 not enable automatic quota fallback. See [setup and limitations](ai-gateway.md).
 
