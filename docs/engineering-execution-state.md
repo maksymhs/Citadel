@@ -323,3 +323,14 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Known gap: the VPS's missing managed Codex daemon package is a separate upstream
   installation failure. These CLI lifecycle changes do not reconstruct it. No
   release, push or production deployment was performed.
+
+## 116. Release v0.43.0
+- Ships isolated, validated CLI-agent installations and administrator-only
+  reinstall/update and managed-launcher removal from Machines → Tools.
+- Codex activation checks the code-mode companion; the panel warns about missing
+  separate daemon files. Removal retains downloaded releases and user credentials;
+  this release does not reconstruct the VPS's missing app-server daemon package.
+- Versions and asset cache-busters updated. Validation before release: 19 focused
+  agent tests passed, real Codex CLI/companion install and launcher removal passed,
+  UI lifecycle/admin smoke passed, lint passed; full suite 494 tests, 492 passed,
+  1 skipped, 1 pre-existing sentinel-process zombie-reaping failure on this host.
