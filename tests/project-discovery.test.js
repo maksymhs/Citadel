@@ -8,7 +8,6 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-discovery-'));
 Object.assign(process.env, {
   DATA_DIR: root, DATABASE_PATH: path.join(root, 'db.sqlite'),
   PROJECTS_DIR: path.join(root, 'projects'), LOGS_DIR: path.join(root, 'logs'),
-  CITADEL_MISSIONS_DIR: path.join(root, 'missions'),
 });
 const { buildServer } = require('../server/index');
 const { closeDatabase } = require('../server/database/db');

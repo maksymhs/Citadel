@@ -179,17 +179,6 @@ const MODULES = [
     capabilities: ['fleet:manage'],
   },
   {
-    id: 'missions',
-    name: 'Project hub',
-    description: 'Direct project work with tasks, Markdown, a code graph and live execution traces.',
-    core: false,
-    defaultEnabled: true,
-    requires: { modules: [], services: [] },
-    views: [{ id: 'project-hub', title: 'Project hub' }],
-    widgets: [],
-    capabilities: ['missions:create', 'missions:cancel', 'docs:write', 'learning:manage'],
-  },
-  {
     id: 'metrics',
     name: 'Advanced Metrics',
     description: 'Historical resource samples, charts and metric export.',

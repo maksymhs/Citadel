@@ -445,6 +445,21 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: '017_retire_project_hub',
+    up: (db) => {
+      const now = new Date().toISOString();
+      // Keep historical rows and Markdown on disk. Retire only Hub work so a
+      // standalone sentinel cannot accidentally resume it after the UI is gone.
+      db.prepare(`UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL,
+        finished_at = COALESCE(finished_at, ?), updated_at = ?
+        WHERE (autonomous = 1 OR mission_id IS NOT NULL)
+          AND status IN ('queued', 'blocked', 'quota', 'review')`).run(now, now);
+      db.prepare(`UPDATE tasks SET status = 'cancelling', updated_at = ?
+        WHERE (autonomous = 1 OR mission_id IS NOT NULL) AND status = 'running'`).run(now);
+      db.prepare("DELETE FROM app_config WHERE key = 'module.missions.enabled'").run();
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -685,6 +700,7 @@ function initDatabase(customPath = null) {
       finished_at TEXT
     );
 
+    -- Retired Hub schema retained for ordered upgrades and historical data.
     -- A mission groups agent tasks into a validated DAG. The tasks table keeps
     -- its own lifecycle; this row is the durable project/goal and the workspace
     -- where handoffs and notes live.

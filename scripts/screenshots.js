@@ -29,7 +29,6 @@ const data = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-demo-'));
 if (!data.startsWith(os.tmpdir())) throw new Error('refusing to run outside a temp directory');
 Object.assign(process.env, {
   DATA_DIR: data,
-  CITADEL_MISSIONS_DIR: path.join(data, 'missions'),
   DATABASE_PATH: path.join(data, 'citadel.db'),
   PROJECTS_DIR: path.join(data, 'projects'),
   LOGS_DIR: path.join(data, 'logs'),
@@ -98,38 +97,6 @@ async function seedProjects(app, cookie) {
   }
 }
 
-function seedProjectHub() {
-  const projects = require('../server/services/projectService');
-  const docs = require('../server/services/docService');
-  const missions = require('../server/services/missionService');
-  const tasks = require('../server/services/taskService');
-  const registry = require('../server/services/agentRegistry');
-  const project = projects.getProject('acme-api');
-  const original = registry.listAgents;
-  registry.listAgents = (options) => original.call(registry, options).map((agent) => ['claude', 'opencode', 'codex'].includes(agent.id) ? { ...agent, installed: true, path: process.execPath } : agent);
-  try {
-    docs.createDoc({ projectId: project.id, path: 'overview.md', content: '# Acme API\n\nProject architecture, work in progress and verified decisions.\n\nSee [[architecture]] and [[runbook]].' });
-    docs.createDoc({ projectId: project.id, path: 'architecture.md', content: '# Architecture\n\nThe API delegates work to the queue and stores evidence in Markdown.' });
-    docs.createDoc({ projectId: project.id, path: 'runbook.md', content: '# Runbook\n\nRun checks before accepting a task. Keep operational traces linked to their project.' });
-    fs.writeFileSync(path.join(project.path, 'api.ts'), "import { claim } from './queue';\nimport { evidence } from './docs';\n");
-    fs.writeFileSync(path.join(project.path, 'queue.ts'), "import { evidence } from './docs';\nexport const claim = () => evidence;\n");
-    fs.writeFileSync(path.join(project.path, 'docs.ts'), "export const evidence = 'Markdown';\n");
-    missions.createMission({ projectId: project.id, goal: 'Make the next API release observable and easy to review.', title: 'Release readiness', plan: { tasks: [
-      { title: 'Map the API and its dependencies', role: 'analyst' },
-      { title: 'Document the recovery procedure', role: 'docs', acceptance: ['The runbook is verified'] },
-      { title: 'Add structured request tracing', role: 'backend', acceptance: ['Trace events are scoped to the project'] },
-      { title: 'Verify error recovery', role: 'qa' },
-      { title: 'Review the final diff', role: 'reviewer' },
-    ] } });
-    for (let i = 0; i < 2; i++) {
-      const task = tasks.claimTask('demo-worker');
-      tasks.completeTask(task.id, { status: 'done', claimToken: task.claimToken, result: i ? 'Runbook updated in docs/runbook.md; ready for acceptance.' : 'API dependencies mapped. See docs/architecture.md.' });
-    }
-    tasks.claimTask('demo-worker');
-    tasks.heartbeat({ node: 'demo-worker', capacity: 1, active: 1 });
-  } finally { registry.listAgents = original; }
-}
-
 async function startDemo() {
   const fakes = {};
   for (const key of ['mac', 'nas', 'pi']) {
@@ -155,7 +122,6 @@ async function startDemo() {
   await app.inject({ method: 'PUT', url: '/api/settings/connect', headers: { cookie }, payload: { publicUrl: 'https://vps.example.com' } });
 
   await seedProjects(app, cookie);
-  seedProjectHub();
 
   // 24 h of history, one sample every 5 minutes, with a short outage and a sleeping laptop.
   const db = require('../server/database/db').getDatabase();
@@ -233,16 +199,6 @@ async function takeScenes(demo) {
 
   await retry('dashboard-dark');
   await retry('dashboard-light', { theme: 'light' });
-  await retry('project-hub-dark', { width: 1600, height: 1080, steps: async (page) => {
-    await page.click('.nav-item[data-view="project-hub"]');
-    await page.waitForSelector('#ph-project');
-    const project = await page.$eval('#ph-project', (select) => [...select.options].find((option) => option.textContent === 'acme-api').value);
-    await page.select('#ph-project', project);
-    await page.waitForSelector('.ph-task');
-    await page.click('[data-ph="graph"]');
-    await page.waitForSelector('[data-ph="graph-node"]');
-    await sleep(600);
-  } });
   await browser.close();
 }
 

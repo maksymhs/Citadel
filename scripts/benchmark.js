@@ -16,13 +16,12 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-bench-'));
 Object.assign(process.env, {
   DATA_DIR: root, DATABASE_PATH: path.join(root, 'citadel.db'),
   PROJECTS_DIR: path.join(root, 'projects'), LOGS_DIR: path.join(root, 'logs'),
-  CITADEL_MISSIONS_DIR: path.join(root, 'missions'), PLUGINS_DIR: path.join(root, 'plugins'),
   CITADEL_SELF_UPDATE: '0', NODE_ENV: 'test',
 });
 const { buildServer } = require('../server/index');
 const { getDatabase, closeDatabase } = require('../server/database/db');
 const projects = require('../server/services/projectService');
-const docs = require('../server/services/docService');
+const tasks = require('../server/services/taskService');
 const round = (n) => Math.round(n * 100) / 100;
 const memory = () => Object.fromEntries(Object.entries(process.memoryUsage()).map(([k, v]) => [k, round(v / 1024 / 1024)]));
 
@@ -37,8 +36,8 @@ async function main() {
     for (let i = 0; i < 20; i++) projects.createProject({ name: `Project ${i}` });
     fs.mkdirSync(path.join(root, 'projects', 'unregistered'));
     const project = projects.listProjects()[0];
-    docs.createDoc({ projectId: project.id, relPath: 'baseline.md', content: '# Baseline\n\nSee [[architecture]].\n' });
-    const urls = ['/api/projects', '/api/projects/discover', `/api/docs/file?projectId=${project.id}&path=baseline.md`, '/api/missions'];
+    tasks.enqueue({ projectId: project.id, title: 'Benchmark queue entry', cmd: process.execPath, args: ['--version'] });
+    const urls = ['/api/projects', '/api/projects/discover', '/api/tasks', '/api/logs/events'];
     for (const url of urls) {
       const res = await app.inject({ url, cookies });
       if (res.statusCode !== 200) throw new Error(`Warmup failed: ${url} (${res.statusCode})`);

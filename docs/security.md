@@ -39,34 +39,24 @@ Citadel provides **logical separation** between projects: each project has its o
 - **No absolute security guarantee**: Citadel reduces the exposure surface through `HttpOnly`/`SameSite=Strict` cookies, origin validation, rate limiting, security headers and structured process execution, but it does not replace a security review specific to each deployment.
 
 
-## Autonomous work and memory boundaries
+## Task queue and activity boundaries
 
-Project hub and its task/document/context endpoints are administrator-only and can be disabled as the
-`missions` module. Mission plans are untrusted model output: the server accepts
-only roles, earlier-task indices, installed agents and bounded acceptance
-criteria, never commands, binaries or paths. One autonomous agent may run at a
-time across the instance; manual queue work and persistent terminals are not
-serialised by that guard, and `CITADEL_AUTONOMOUS_DAILY_BUDGET` bounds how many
-autonomous attempts start per day. Learning content is advisory and redacted
-before storage; mission goals, notes, review notes and prompts pass through the
-same redaction, and a document whose body looks like a credential is refused.
-Only an explicit operator promotion makes a lesson global, and no lesson can
-change a security policy. Rejected task results, acceptance decisions and global
-promotions are written to the audit log. See [missions](missions.md).
+Task orchestration endpoints require an administrator session; workers use scoped
+node tokens for heartbeat, claim and result reporting. Retired autonomous work is
+excluded from claims, and migration 017 cancels pending work and requests running
+work to stop without discarding its execution identity. Historical metadata and
+user Markdown are retained; removed Project hub APIs and scripts are not served.
 
-Session activity timestamps update at most once per minute to avoid writes on
-every polling request. Expiry is still checked on every request and never
-extended by this optimisation. Work redaction handles quoted values, JSON keys,
+Session activity timestamps update at most once per minute. Expiry is still
+checked on every request. Shared redaction handles quoted values, JSON keys,
 Basic/Bearer authorization, credential URLs and private-key blocks; it is a
-format heuristic, not proof that arbitrary text contains no secret. Project
-discovery only lists bounded immediate directories and never executes code or
-follows directory symlinks. Opening VS Code is an explicit desktop action using
-the operator's existing SSH configuration.
+format heuristic, not proof that arbitrary text contains no secret. Activity
+redacts nested credential fields, including historical rows. No raw PTY output
+or keystrokes are copied into this journal.
 
-Project hub snapshot, trace and code-graph routes require the optional module and
-an administrator session. Journal rows persist their project scope, independently
-of task retention, and cursor queries use a project/event index. Traces redact
-nested credential fields and matching text formats, including historical rows.
-No raw PTY output or keystrokes are copied into this journal. The graph scanner
-uses canonical paths, ignores symlinks and vendor directories, bounds file reads
-and traversal, and executes no project code.
+Project discovery lists bounded immediate directories and never executes code
+or follows directory symlinks. Opening VS Code is an explicit desktop action
+using the operator's existing SSH configuration.
+
+The [gateway trial](gateway-trial.md) uses isolated configuration and credentials.
+It is not a production service and does not import existing CLI OAuth caches.

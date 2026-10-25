@@ -46,6 +46,8 @@ const TOOLS = [
         agent: { type: 'string', enum: ['claude', 'codex', 'opencode'], description: 'Run a headless CLI agent instead of a raw cmd.' },
         prompt: { type: 'string', description: 'Prompt for the agent (required when "agent" is set).' },
         projectPath: { type: 'string', description: 'Working directory on the executing node.' },
+        projectId: { type: 'string', description: 'Registered project id; Citadel resolves its working directory.' },
+        title: { type: 'string', description: 'Optional human-readable task label.' },
         priority: { type: 'integer', description: 'Higher runs first (default 0).' },
         node: { type: 'string', description: 'Pin the task to one node; omit for any node.' },
       },

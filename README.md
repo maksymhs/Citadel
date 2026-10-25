@@ -80,7 +80,7 @@ Online/offline, CPU, memory, disk, latency and 24 h / 7 d availability for every
 <td valign="top">
 
 ### 🧩 Distributed task mesh
-A pull-based work queue so one orchestrator agent can split work across nodes, with a dependency-free **MCP server**. See [task mesh](docs/task-mesh.md). Give a whole team one goal with roles, dependencies and acceptance criteria that need a human accept/reject before they count as done, keep project Markdown and confirmed decisions together, inspect a code graph and follow execution traces in [Project hub](docs/missions.md).
+A pull-based work queue so one orchestrator agent can split work across nodes, with a dependency-free **MCP server**. See [task mesh](docs/task-mesh.md).
 
 </td>
 <td valign="top">
@@ -208,7 +208,6 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 | [Security & limitations](docs/security.md) | Security layers and what Citadel does **not** protect against |
 | [Remote access](docs/remote-access.md) | QR pairing, Cloudflare tunnels, own domain |
 | [Task mesh](docs/task-mesh.md) | Parallel work across paired nodes |
-| [Project hub](docs/missions.md) | One optional project view: tasks and priorities, Markdown, a code graph and live execution traces |
 | [Feature map](docs/features.md) | Which files make up each feature, with their tests and guide |
 | [Code map](docs/code-map.md) | Every source file with its purpose, and where each screen lives |
 | [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) | How it is built and why |

@@ -77,10 +77,8 @@ function record({ level = 'info', category = 'system', node = null, taskId = nul
     const lvl = LEVELS.has(level) ? level : 'info';
     const db = getDatabase();
     let scope = projectId || (details && typeof details === 'object' ? details.projectId : null);
-    if (!scope && taskId) scope = db.prepare(`SELECT COALESCE(m.project_id, p.id) AS project_id FROM tasks t
-      LEFT JOIN missions m ON m.id = t.mission_id LEFT JOIN projects p ON p.path = t.project_path
-      WHERE t.id = ?`).get(taskId)?.project_id;
-    if (!scope && details && details.missionId) scope = db.prepare('SELECT project_id FROM missions WHERE id = ?').get(String(details.missionId))?.project_id;
+    if (!scope && taskId) scope = db.prepare(`SELECT p.id AS project_id FROM tasks t
+      JOIN projects p ON p.path = t.project_path WHERE t.id = ?`).get(taskId)?.project_id;
     db.prepare(`
       INSERT INTO events (ts, level, category, node, task_id, project_id, action, message, details)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

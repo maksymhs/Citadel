@@ -52,7 +52,7 @@ describe('AI Agent Registry & Launcher Tests', () => {
     }
   });
 
-  test('mission detection skips probes while normal detection requires a working CLI', () => {
+  test('headless task detection skips probes while normal detection requires a working CLI', () => {
     const find = agentRegistry.findBinary;
     const version = agentRegistry.getBinaryVersion;
     let probes = 0;
@@ -60,7 +60,7 @@ describe('AI Agent Registry & Launcher Tests', () => {
     agentRegistry.getBinaryVersion = () => { probes++; return null; };
     try {
       const quick = agentRegistry.listAgents({ versions: false });
-      assert.equal(probes, 0, 'mission planning must not execute version commands per subtask');
+      assert.equal(probes, 0, 'task dispatch must not execute version commands per subtask');
       assert.ok(quick.every((agent) => agent.detected && agent.installed && agent.version === null));
       assert.ok(quick.every((agent) => typeof agent.managed === 'boolean'));
       const full = agentRegistry.listAgents();

@@ -48,23 +48,6 @@ const DATABASE_PATH = resolveFromRoot(process.env.DATABASE_PATH, path.join(DATA_
 const PROJECTS_DIR = resolveFromRoot(process.env.PROJECTS_DIR, path.join(DATA_DIR, 'projects'));
 const LOGS_DIR = resolveFromRoot(process.env.LOGS_DIR, path.join(DATA_DIR, 'logs'));
 const PLUGINS_DIR = resolveFromRoot(process.env.PLUGINS_DIR, 'plugins');
-// Agent mission workspaces (goal, plan, handoffs, notes). Runtime data, never
-// part of the project checkout, so an agent cannot dirty a repository with it.
-const MISSIONS_DIR = resolveFromRoot(process.env.CITADEL_MISSIONS_DIR, path.join(DATA_DIR, 'missions'));
-// Project-relative directory that holds Markdown docs. Existing repositories
-// may already use `docs/`; it is never overwritten, only extended.
-const DOCS_SUBDIR = String(process.env.CITADEL_DOCS_SUBDIR || 'docs').trim();
-// Hard ceiling on autonomous attempts started per local day. It is a budget
-// proxy (no paid provider is integrated), `0` pauses autonomous work, and it
-// never serialises manual queue tasks or persistent terminals.
-const AUTONOMOUS_DAILY_BUDGET = (() => {
-  const raw = process.env.CITADEL_AUTONOMOUS_DAILY_BUDGET;
-  if (raw === undefined || String(raw).trim() === '') return 50;
-  const value = parseInt(raw, 10);
-  if (!Number.isFinite(value)) return 50;
-  return Math.min(Math.max(value, 0), 10000);
-})();
-
 // Allowed origins for CORS and WebSocket handshake
 const allowedOriginsEnv = process.env.ALLOWED_ORIGINS || `http://localhost:${PORT},http://127.0.0.1:${PORT}`;
 const ALLOWED_ORIGINS = allowedOriginsEnv.split(',').map((o) => o.trim()).filter(Boolean);
@@ -197,7 +180,7 @@ const CADDY_ADMIN_API = process.env.CADDY_ADMIN_API || 'http://127.0.0.1:2019';
 const DOCKER_SOCKET = process.env.DOCKER_SOCKET || (os.platform() === 'win32' ? '//./pipe/docker_engine' : '/var/run/docker.sock');
 
 // Ensure necessary persistent directories exist
-for (const dir of [DATA_DIR, PROJECTS_DIR, LOGS_DIR, PLUGINS_DIR, MISSIONS_DIR]) {
+for (const dir of [DATA_DIR, PROJECTS_DIR, LOGS_DIR, PLUGINS_DIR]) {
   if (!fs.existsSync(dir)) {
     try {
       fs.mkdirSync(dir, { recursive: true });
@@ -221,9 +204,6 @@ module.exports = {
   PROJECTS_DIR,
   LOGS_DIR,
   PLUGINS_DIR,
-  MISSIONS_DIR,
-  DOCS_SUBDIR,
-  AUTONOMOUS_DAILY_BUDGET,
   ALLOWED_ORIGINS,
   SESSION_TTL_DAYS,
   SESSION_SECRET,

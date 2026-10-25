@@ -1,38 +1,22 @@
 # Citadel working plan
 
-Progress for v0.45.0, 2026-10-25. External contribution and platform
-checks remain tracked below.
+Keep Citadel focused on projects, persistent terminals, machines and existing
+CLI agents. Project hub and its internal planning/docs/learning/graph machinery
+have been retired; historical user data remains available on disk.
 
-- [x] Repair review/retry, per-attempt budgets, plan transactions, Markdown links
-  and credential redaction, with regression coverage.
-- [x] Prepare the Linux Docker trial: postinstall inputs, non-root runtime,
-  persistent data and configurable loopback port (3001 by default).
-- [ ] Build and run that image on a machine with Docker socket access. This host
-  cannot do so with the current account. Docker does not simulate macOS.
-- [x] Discover project folders automatically when opening Projects; keep import
-  explicit and scans bounded, without a background watcher.
-- [x] Prepare local/SSH desktop VS Code links from project actions.
-- [ ] Exercise those links with a real desktop VS Code and an SSH connection.
-- [x] Simplify runtime costs: unchanged Docs reads and stable failure refreshes
-  avoid writes; session activity writes are limited to once per minute.
-- [x] Add and run an isolated core API benchmark. See
-  [measurements and limits](performance-baseline.md).
-- [ ] Measure the complete service with live terminals, agents and a browser.
-- [x] Prepare the current Citadel fixes as a local open source contribution
-  candidate and document a [contribution workflow](contribution-workflow.md).
-- [ ] Choose an external issue, use Citadel for the full contribution and have
-  the operator review the patch before publication.
-- [ ] Validate macOS behaviour on an actual Mac or macOS VM.
-
-A hosted editor or more autonomous machinery should follow evidence from the
-contribution exercise. No second queue, scheduler, database or external service
-is introduced by this work.
-
-## Project management redesign (v0.45.0)
-
-- [x] Consolidate Work, Docs and Learning navigation into one optional Project hub.
-- [x] Show project tasks, priorities, Markdown, confirmed context and a code graph.
-- [x] Add project-scoped traces with cursors, filters, pause/resume and stale status.
-- [x] Include terminal lifecycle events without collecting keystrokes/transcripts.
-- [x] Test the integrated view and regenerate isolated demo screenshots.
-- [x] Prepare the reviewed redesign for release as v0.45.0.
+- [x] Remove Project hub UI, APIs, services and automatic work claims.
+- [x] Keep the task mesh, native Claude/Codex/OpenCode adapters and activity journal.
+- [x] Prove Claude Code tool/context translation and injected-429 fallback through
+  an isolated, existing gateway. See [gateway trial](gateway-trial.md).
+- [ ] Validate a real ChatGPT-authenticated provider session through that gateway.
+- [ ] After validation, add opt-in Settings for endpoint, model aliases, explicit
+  fallback order and connection test. Keep native CLI mode available.
+- [ ] Assess Telegram using existing notification support first; add private-chat
+  allowlists and narrow actions before arbitrary terminal control.
+- [ ] Build/run the Docker trial where socket access exists. Linux containers do
+  not simulate macOS; test macOS on a real Mac or macOS VM.
+- [ ] Exercise local/SSH VS Code links on a desktop.
+- [ ] Measure full-service idle cost, live terminals/agents and browser polling;
+  use the [core baseline](performance-baseline.md) for repeatable comparisons.
+- [ ] Use Citadel for one external open source contribution before adding further
+  orchestration features. Have the operator review publication.

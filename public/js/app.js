@@ -78,7 +78,6 @@
     { module: 'proxy', view: 'proxy', label: 'Proxy & Domains', icon: 'globe-icon' },
     { module: 'docker', view: 'docker', label: 'Docker', icon: 'docker-icon' },
     { module: 'fleet', view: 'fleet', label: 'Fleet', icon: 'cloud-icon' },
-    { module: 'missions', view: 'project-hub', label: 'Project hub', icon: 'missions' },
   ];
   const KNOWN_VIEWS = [
     ...PRIMARY_VIEWS, ...CORE_NAV.map((n) => n.view), 'settings', 'activity',
@@ -89,7 +88,7 @@
     repos: 'projects', terminal: 'workspace', logs: 'activity',
     plugins: 'settings', modules: 'settings', deployments: 'proxy',
     system: 'settings', machines: 'dashboard', machine: 'dashboard', processes: 'dashboard', terminals: 'dashboard',
-    missions: 'project-hub', work: 'project-hub', docs: 'project-hub', learning: 'project-hub',
+    'project-hub': 'projects', missions: 'projects', work: 'projects', docs: 'projects', learning: 'projects',
   };
 
   // Default dashboard widget order. Widgets whose module is disabled/unavailable
@@ -167,9 +166,6 @@
     proxy: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
     docker: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>',
     fleet: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.003 0 003 15z"/>',
-    missions: '<rect x="3" y="4" width="5" height="16" rx="1" stroke-width="2"/><rect x="10" y="4" width="5" height="10" rx="1" stroke-width="2"/><rect x="17" y="4" width="4" height="13" rx="1" stroke-width="2"/>',
-    docs: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 3h10a2 2 0 012 2v14l-4-2-4 2-4-2-2 1V5a2 2 0 012-2z"/><path stroke-linecap="round" stroke-width="2" d="M9 8h6M9 12h6"/>',
-    learning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3l8 4-8 4-8-4 8-4z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9v5c0 2 3 4 6 4s6-2 6-4V9M20 11v5"/>',
   };
 
   function navItemHtml(view, label, iconKey, badgeHtml = '') {
@@ -1160,10 +1156,7 @@
     state.currentView = view;
     updateBackButton(view);
     saveUiState({ currentView: view });
-    if (from === 'project-hub' && view !== 'project-hub' && window.CitadelProjectHub) window.CitadelProjectHub.stop();
-    if (['missions', 'work'].includes(from) && !['missions', 'work'].includes(view) && window.CitadelMissions) {
-      window.CitadelMissions.stopPolling();
-    }
+
     if (state.dashboardTimer) {
       clearInterval(state.dashboardTimer);
       state.dashboardTimer = null;
@@ -1204,9 +1197,7 @@
     } else if (view === 'fleet') {
       titleEl.textContent = 'Fleet — Remote Hosts';
       renderFleetView();
-    } else if (view === 'project-hub') {
-      titleEl.textContent = 'Project hub';
-      window.CitadelProjectHub.render();
+
     }
   }
 
@@ -3907,9 +3898,6 @@
   // above is defined. They never reach into this file's scope.
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
-  window.CitadelProjectHub.init({ api, escapeHtml, openModal, showToast, state, openProject: openWorkspace, loadProjects, saveUiState });
-  window.CitadelMissions.init({ api, escapeHtml, openModal, showToast, state });
-  window.CitadelKnowledge.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
   window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state });
   window.CitadelRepos.init({ api, escapeHtml, loadProjects, openModal, renderProjectsView, showToast });

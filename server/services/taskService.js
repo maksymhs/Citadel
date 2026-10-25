@@ -15,9 +15,7 @@
  * newer attempt's outcome or finish after expiry.
  */
 const crypto = require('node:crypto');
-const { scrub } = require('../security/redact');
 const { getDatabase } = require('../database/db');
-const { AUTONOMOUS_DAILY_BUDGET } = require('../config');
 const logService = require('./logService');
 
 const LEASE_MS = parseInt(process.env.CITADEL_TASK_LEASE_MS, 10) || 90000;
@@ -61,23 +59,6 @@ function toPublicTask(row, { includeClaimToken = false } = {}) {
     title: row.title || null,
     agent: row.agent || null,
     prompt: row.prompt || null,
-    missionId: row.mission_id || null,
-    role: row.role || null,
-    deps: parseJson(row.deps, []),
-    stage: row.stage || 0,
-    handoffRef: row.handoff_ref || null,
-    exclusive: Boolean(row.exclusive),
-    acceptance: parseJson(row.acceptance, []),
-    refs: parseJson(row.refs, []),
-    autonomous: Boolean(row.autonomous),
-    blockedReason: row.blocked_reason || null,
-    retryAt: row.retry_at || null,
-    reviewNote: row.review_note || null,
-    reviewedAt: row.reviewed_at || null,
-    reviewedBy: row.reviewed_by || null,
-    failureKind: row.failure_kind || null,
-    docsLinked: Boolean(row.docs_linked),
-    quotaCount: row.quota_count || 0,
     attempt: row.attempt || 0,
     maxAttempts: row.max_attempts || DEFAULT_MAX_ATTEMPTS,
     workerProtocol: row.worker_protocol || 1,
@@ -97,35 +78,6 @@ function toPublicTask(row, { includeClaimToken = false } = {}) {
   // worker that just claimed the task, never in list/get responses.
   if (includeClaimToken) task.claimToken = row.claim_token || null;
   return task;
-}
-
-/**
- * A successful autonomous task with explicit acceptance criteria is not done
- * until an operator accepts the result. Tasks without criteria keep the normal
- * completion path, so the autonomous loop stays useful on routine work.
- */
-function successStatus(row) {
-  if (!row || !row.autonomous) return 'done';
-  return parseJson(row.acceptance, []).length ? 'review' : 'done';
-}
-
-function localDay() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
-/** Attempts started today against the configured autonomous daily budget. */
-function autonomousBudgetStatus(db = getDatabase()) {
-  const day = localDay();
-  const used = db.prepare('SELECT attempts FROM autonomous_daily_usage WHERE day = ?').get(day)?.attempts || 0;
-  const limit = AUTONOMOUS_DAILY_BUDGET;
-  return {
-    day,
-    limit,
-    used,
-    remaining: limit === 0 ? 0 : Math.max(limit - used, 0),
-    exhausted: limit === 0 || used >= limit,
-  };
 }
 
 function tokensMatch(expected, provided) {
@@ -168,38 +120,19 @@ function resolveAgentCommand(agent, prompt) {
   const build = AGENT_HEADLESS[agent];
   if (!build) throw new Error(`Agent "${agent}" has no headless command mapping.`);
   const agentRegistry = require('./agentRegistry');
-  // Version probing is expensive and irrelevant to execution: only the binary
-  // path and installed flag are used here.
   const info = agentRegistry.getAgent(agent, { versions: false });
   if (!info) throw new Error(`Agent "${agent}" not found in the registry.`);
   if (!info.installed || !info.path) throw new Error(`Agent "${info.name}" is not installed on this host.`);
   return { cmd: info.path, args: build(String(prompt)) };
 }
 
-function enqueue({
-  cmd,
-  args,
-  projectPath,
-  priority,
-  node,
-  agent,
-  prompt,
-  maxAttempts,
-  title,
-  missionId,
-  role,
-  deps,
-  stage,
-  handoffRef,
-  exclusive,
-  status,
-  acceptance,
-  refs,
-  autonomous,
-  blockedReason,
-  retryAt,
-} = {}) {
-  if (autonomous && typeof prompt === 'string') prompt = scrub(prompt, 64000);
+function enqueue({ cmd, args, projectPath, projectId, priority, node, agent, prompt, maxAttempts, title, missionId, autonomous } = {}) {
+  if (missionId || autonomous) throw new Error('Project hub automation was removed; enqueue a regular task instead.');
+  if (projectId) {
+    const project = require('./projectService').getProject(String(projectId));
+    if (!project) throw new Error('Project not found.');
+    projectPath = project.path;
+  }
   let cleanCmd = String(cmd || '').trim();
   let cleanArgs = Array.isArray(args) ? args.map((a) => String(a)) : [];
   let agentId = null;
@@ -207,18 +140,6 @@ function enqueue({
   const cleanMaxAttempts = Number.isFinite(maxAttempts)
     ? Math.min(Math.max(Math.trunc(maxAttempts), 1), MAX_MAX_ATTEMPTS)
     : DEFAULT_MAX_ATTEMPTS;
-  // Mission subtasks may start blocked until their dependencies are done.
-  const initialStatus = ['blocked', 'quota'].includes(status) ? status : 'queued';
-  const cleanDeps = Array.isArray(deps)
-    ? deps.map((d) => String(d)).filter(Boolean)
-    : [];
-  const cleanTitle = title ? String(title).trim().slice(0, 200) : null;
-  const cleanAcceptance = Array.isArray(acceptance)
-    ? acceptance.map((a) => String(a).trim()).filter(Boolean).slice(0, 20)
-    : [];
-  const cleanRefs = Array.isArray(refs)
-    ? refs.map((r) => String(r).trim()).filter(Boolean).slice(0, 50)
-    : [];
 
   if (agent) {
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -237,15 +158,10 @@ function enqueue({
   const now = new Date().toISOString();
 
   getDatabase().prepare(`
-    INSERT INTO tasks (
-      id, status, node, project_path, cmd, args, priority, agent, prompt,
-      max_attempts, title, mission_id, role, deps, stage, handoff_ref, exclusive,
-      acceptance, refs, autonomous, blocked_reason, retry_at, created_at, updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, status, node, project_path, cmd, args, priority, agent, prompt, max_attempts, title, created_at, updated_at)
+    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
-    initialStatus,
     node ? String(node) : null,
     projectPath ? String(projectPath) : null,
     cleanCmd,
@@ -254,18 +170,7 @@ function enqueue({
     agentId,
     promptText,
     cleanMaxAttempts,
-    cleanTitle,
-    missionId ? String(missionId) : null,
-    role ? String(role) : null,
-    JSON.stringify(cleanDeps),
-    Number.isFinite(stage) ? Math.trunc(stage) : 0,
-    handoffRef ? String(handoffRef) : null,
-    exclusive ? 1 : 0,
-    JSON.stringify(cleanAcceptance),
-    JSON.stringify(cleanRefs),
-    autonomous ? 1 : 0,
-    blockedReason ? String(blockedReason) : null,
-    retryAt ? String(retryAt) : null,
+    title ? String(title).trim().slice(0, 200) : null,
     now,
     now
   );
@@ -282,39 +187,12 @@ function enqueue({
   return getTask(id);
 }
 
-/**
- * Let the mission layer react to a terminal task (release dependants, ingest a
- * planner plan, refresh mission status). Kept outside the task transaction on
- * purpose: plan ingestion can enqueue more work and probe agent binaries, which
- * must never hold the task write lock. A missed notification is recovered when
- * the mission is read, because refreshMission() is idempotent.
- */
-function notifyMission(task) {
-  if (!task || !task.missionId) return;
-  try {
-    require('./missionService').onTaskChanged(task.missionId);
-  } catch (err) {
-    logService.record({
-      level: 'warn',
-      category: 'task',
-      taskId: task.id,
-      action: 'mission_notify_failed',
-      message: `Mission refresh after task change failed: ${err.message}`,
-    });
-  }
-}
-
-function listTasks({ status, node, missionId, projectId, autonomous, limit = 100 } = {}) {
+function listTasks({ status, node, projectId, limit = 100 } = {}) {
   const where = [];
   const params = [];
   if (status) { where.push('status = ?'); params.push(status); }
-  if (missionId) { where.push('mission_id = ?'); params.push(missionId); }
-  if (projectId) {
-    where.push('(mission_id IN (SELECT id FROM missions WHERE project_id = ?) OR project_path = (SELECT path FROM projects WHERE id = ?))');
-    params.push(projectId, projectId);
-  }
-  if (autonomous !== undefined) { where.push('autonomous = ?'); params.push(autonomous ? 1 : 0); }
   if (node) { where.push('node = ?'); params.push(node); }
+  if (projectId) { where.push('project_path = (SELECT path FROM projects WHERE id = ?)'); params.push(String(projectId)); }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const capped = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
 
@@ -491,38 +369,13 @@ function claimTask(node, { protocol } = {}) {
   const tx = db.transaction(() => {
     const now = new Date().toISOString();
     const reclaim = reclaimExpired(db, now);
-    const budgetAllowsAutonomous = !autonomousBudgetStatus(db).exhausted;
 
-    // An exclusive mission task is only claimable when no other exclusive task
-    // is running in the same project. This keeps front/back agents from writing
-    // the same checkout at once without adding a second scheduler. Tasks with
-    // no project (plain queue work) are not serialised.
     const candidate = db.prepare(`
-      SELECT * FROM tasks AS t
-      WHERE t.status = 'queued' AND (t.node IS NULL OR t.node = ?)
-        AND (
-          t.exclusive = 0 OR t.project_path IS NULL OR NOT EXISTS (
-            SELECT 1 FROM tasks AS running
-            WHERE running.exclusive = 1
-              AND running.project_path IS t.project_path
-              AND running.status IN ('running', 'cancelling')
-          )
-        )
-        -- Autonomous work is strictly one attempt at a time across the whole
-        -- instance. Manual queue work is untouched: the guard only looks at
-        -- rows explicitly created by the mission loop.
-        AND (
-          t.autonomous = 0 OR (
-            ? = 1 AND NOT EXISTS (
-              SELECT 1 FROM tasks AS auto
-              WHERE auto.autonomous = 1
-                AND auto.status IN ('running', 'cancelling')
-            )
-          )
-        )
-      ORDER BY t.priority DESC, t.created_at ASC
+      SELECT * FROM tasks
+      WHERE status = 'queued' AND autonomous = 0 AND mission_id IS NULL AND (node IS NULL OR node = ?)
+      ORDER BY priority DESC, created_at ASC
       LIMIT 1
-    `).get(cleanNode, budgetAllowsAutonomous ? 1 : 0);
+    `).get(cleanNode);
     if (!candidate) return { row: null, reclaim };
 
     const leaseUntil = new Date(Date.now() + LEASE_MS).toISOString();
@@ -537,10 +390,6 @@ function claimTask(node, { protocol } = {}) {
     `).run(cleanNode, now, leaseUntil, claimToken, workerProtocol, now, candidate.id);
 
     if (res.changes !== 1) return { row: null, reclaim };
-    if (candidate.autonomous) {
-      db.prepare(`INSERT INTO autonomous_daily_usage (day, attempts) VALUES (?, 1)
-        ON CONFLICT(day) DO UPDATE SET attempts = attempts + 1`).run(localDay());
-    }
     return { row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(candidate.id), reclaim };
   });
 
@@ -633,18 +482,14 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
       };
     }
 
-    const finalStatus = isCancelReport
-      ? 'cancelled'
-      : (status === 'done' ? successStatus(row) : 'failed');
+    const finalStatus = isCancelReport ? 'cancelled' : (status === 'done' ? 'done' : 'failed');
     const cleanResult = result === undefined || result === null
       ? null
-      : (row.autonomous ? scrub(result, MAX_RESULT_CHARS) : String(result).slice(0, MAX_RESULT_CHARS));
+      : String(result).slice(0, MAX_RESULT_CHARS);
     const res = db.prepare(`
       UPDATE tasks
       SET status = ?, exit_code = ?, result_ref = ?, error = ?, result = ?,
           lease_until = NULL, claim_token = NULL, reconcile_state = 'terminated',
-          reviewed_at = NULL, reviewed_by = NULL, failure_kind = NULL,
-          blocked_reason = NULL, retry_at = NULL, docs_linked = 0,
           finished_at = ?, updated_at = ?
       WHERE id = ? AND claim_token = ? AND status = ?
         AND lease_until >= ?
@@ -652,7 +497,7 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
       finalStatus,
       Number.isFinite(exitCode) ? Math.trunc(exitCode) : null,
       resultRef ? String(resultRef) : null,
-      error ? (row.autonomous ? scrub(error, MAX_RESULT_CHARS) : String(error)) : null,
+      error ? String(error) : null,
       cleanResult,
       now,
       now,
@@ -715,77 +560,40 @@ function completeTask(id, { status, exitCode, resultRef, error, result, claimTok
     node: task.node,
     action: finalStatus === 'cancelled'
       ? 'task_cancel_confirmed'
-      : (finalStatus === 'failed'
-        ? 'task_failed'
-        : (finalStatus === 'review' ? 'task_awaiting_review' : 'task_completed')),
+      : (finalStatus === 'failed' ? 'task_failed' : 'task_completed'),
     message: finalStatus === 'cancelled'
       ? 'Worker confirmed termination of the cancelled task.'
       : (finalStatus === 'failed'
-        ? `Task failed (exit ${task.exitCode ?? 'n/a'}): ${task.error || 'unknown error'}`
-        : (finalStatus === 'review'
-          ? 'Task finished; acceptance criteria must be reviewed before it counts as done.'
-          : 'Task completed.')),
+        ? `Task failed (exit ${task.exitCode ?? 'n/a'}): ${error || 'unknown error'}`
+        : 'Task completed.'),
     details: { exitCode: task.exitCode, resultRef: task.resultRef, attempt: task.attempt },
   });
-  notifyMission(task);
   return task;
 }
 
-/**
- * Put a failed task back in the queue without inventing a new attempt budget.
- * Used after an acceptance rejection: the existing evidence and learning stay,
- * while result/error/lease state is cleared so the next claim starts clean.
- * A task whose dependencies are not done waits as `blocked` instead.
- */
+/** Retry a failed plain queue task while retaining its existing attempt limit. */
 function retryTask(id) {
   const db = getDatabase();
-  const tx = db.transaction(() => {
-    const now = new Date().toISOString();
-    const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-    if (!row) throw new Error('Task not found.');
-    if (row.status !== 'failed') throw new Error('Only a failed task can be retried.');
-    if ((row.attempt || 0) >= (row.max_attempts || DEFAULT_MAX_ATTEMPTS)) {
-      throw new Error('No attempts remain for this task; revise the plan or enqueue a new task.');
-    }
-    const deps = parseJson(row.deps, []);
-    const depsDone = deps.every((dep) => {
-      const parent = db.prepare('SELECT status FROM tasks WHERE id = ?').get(dep);
-      return parent && parent.status === 'done';
-    });
-    const status = depsDone ? 'queued' : 'blocked';
-    const res = db.prepare(`
-      UPDATE tasks
-      SET status = ?, error = NULL, result = NULL, result_ref = NULL, exit_code = NULL,
-          claim_token = NULL, lease_until = NULL, reconcile_state = NULL,
-          exec_id = NULL, exec_pid = NULL, exec_pgid = NULL,
-          exec_started_at = NULL, exec_reported_at = NULL,
-          failure_kind = NULL, blocked_reason = NULL, retry_at = NULL,
-          reviewed_at = NULL, reviewed_by = NULL, docs_linked = 0,
-          learning_recorded = 0, finished_at = NULL, updated_at = ?
-      WHERE id = ? AND status = 'failed'
-    `).run(status, now, id);
-    if (res.changes !== 1) throw new Error('The task changed while it was being retried; reload and try again.');
-    return { row: db.prepare('SELECT * FROM tasks WHERE id = ?').get(id), status };
-  });
-  const { row, status } = tx();
+  const row = db.transaction(() => {
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+    if (!task || task.status !== 'failed') throw new Error('Only a failed task can be retried.');
+    if (task.autonomous || task.mission_id) throw new Error('Retired Project hub work cannot be restarted.');
+    if (task.attempt >= task.max_attempts) throw new Error('No attempts remain for this task.');
+    db.prepare(`UPDATE tasks SET status = 'queued', error = NULL, result = NULL, result_ref = NULL,
+      exit_code = NULL, claim_token = NULL, lease_until = NULL, reconcile_state = NULL,
+      exec_id = NULL, exec_pid = NULL, exec_pgid = NULL, exec_started_at = NULL,
+      exec_reported_at = NULL, finished_at = NULL, updated_at = ? WHERE id = ? AND status = 'failed'`)
+      .run(new Date().toISOString(), id);
+    return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  })();
   const task = toPublicTask(row);
-  logService.record({
-    level: 'info',
-    category: 'task',
-    taskId: id,
-    node: task.node,
-    action: 'task_retried',
-    message: status === 'queued'
-      ? 'Failed task requeued for another attempt.'
-      : 'Failed task retried; it waits for its dependencies.',
-    details: { attempt: task.attempt, maxAttempts: task.maxAttempts },
-  });
-  notifyMission(task);
+  logService.record({ category: 'task', taskId: id, node: task.node, action: 'task_retried',
+    message: 'Failed task requeued for another attempt.', details: { attempt: task.attempt, maxAttempts: task.maxAttempts } });
   return task;
 }
 
 /**
- * Request cancellation of a queued, blocked or running task.
+ * Request cancellation of a queued or running task.
  *
  * Idempotent: cancelling an already `cancelling`/`cancelled` task returns its
  * current state instead of failing, so retries and concurrent HTTP requests are
@@ -812,16 +620,15 @@ function cancelTask(id) {
     if (row.status === 'cancelling' || row.status === 'cancelled') {
       return { row, idempotent: true };
     }
-    if (!['queued', 'blocked', 'quota', 'running', 'review'].includes(row.status)) {
+    if (!['queued', 'running'].includes(row.status)) {
       throw new Error('Task not found or already finished.');
     }
 
-    if (['queued', 'blocked', 'quota', 'review'].includes(row.status)) {
+    if (row.status === 'queued') {
       db.prepare(`
-        UPDATE tasks SET status = 'cancelled', claim_token = NULL, lease_until = NULL,
-                         reviewed_at = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?
-        WHERE id = ? AND status = ?
-      `).run(now, now, now, id, row.status);
+        UPDATE tasks SET status = 'cancelled', finished_at = ?, updated_at = ?
+        WHERE id = ? AND status = 'queued'
+      `).run(now, now, id);
     } else {
       const hasExecutionEvidence = Number.isInteger(row.exec_pid)
         || (row.worker_protocol || 1) >= WORKER_PROTOCOL_JOURNAL;
@@ -857,7 +664,6 @@ function cancelTask(id) {
         ? 'Cancellation requested; waiting for the worker to confirm termination.'
         : 'Task cancelled.'),
   });
-  notifyMission(task);
   return task;
 }
 
@@ -884,9 +690,7 @@ function cancelTask(id) {
  * caller falls back to node-wide renewal so live tasks are not requeued under a
  * running process, and logs a one-time warning.
  */
-// `review` has no live execution either: the process ended and only the
-// operator decision remains, so it is terminal for reconcile/heartbeat purposes.
-const TERMINAL_STATUSES = new Set(['done', 'failed', 'cancelled', 'review']);
+const TERMINAL_STATUSES = new Set(['done', 'failed', 'cancelled']);
 
 /**
  * Reconcile the stored attempt with the local execution that the owning node
@@ -997,14 +801,12 @@ function reconcileTask(id, { claimToken, execId, state, exitCode, signal, expect
     }
 
     if (Number.isFinite(exitCode)) {
-      const finalStatus = exitCode === 0 ? successStatus(row) : 'failed';
+      const finalStatus = exitCode === 0 ? 'done' : 'failed';
       const finalError = exitCode === 0 ? null
         : (signal ? `Execution terminated by signal ${signal}.` : `Execution exited with code ${exitCode}.`);
       db.prepare(`
         UPDATE tasks SET status = ?, exit_code = ?, error = ?, claim_token = NULL,
                          lease_until = NULL, reconcile_state = 'terminated',
-                         reviewed_at = NULL, reviewed_by = NULL, failure_kind = NULL,
-                         blocked_reason = NULL, retry_at = NULL, docs_linked = 0,
                          finished_at = ?, updated_at = ?
         WHERE id = ? AND claim_token = ? AND status = 'running'
       `).run(finalStatus, Math.trunc(exitCode), finalError, now, now, id, claimToken);
@@ -1302,7 +1104,7 @@ function heartbeat({ node, url, tags, capacity, active, load, running } = {}) {
       if (!row) continue;
       const tokenMismatch = entry.claimToken && !tokensMatch(row.claim_token, entry.claimToken);
       const execMismatch = entry.execId && row.exec_id && entry.execId !== row.exec_id;
-      const notCurrent = ['queued', 'done', 'failed', 'cancelled', 'review'].includes(row.status);
+      const notCurrent = ['queued', 'done', 'failed', 'cancelled'].includes(row.status);
       if (tokenMismatch || execMismatch || notCurrent) {
         abandon.push({ id: row.id, execId: entry.execId || row.exec_id || null });
       }
@@ -1336,15 +1138,13 @@ function listNodes() {
 
 module.exports = {
   LEASE_MS,
-  AGENT_HEADLESS,
   enqueue,
   listTasks,
   getTask,
   claimTask,
-  autonomousBudgetStatus,
   completeTask,
-  retryTask,
   cancelTask,
+  retryTask,
   reconcileTask,
   heartbeat,
   listNodes,

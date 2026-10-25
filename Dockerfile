@@ -43,7 +43,6 @@ ENV NODE_ENV=production \
     DATABASE_PATH=/data/citadel.db \
     PROJECTS_DIR=/data/projects \
     LOGS_DIR=/data/logs \
-    CITADEL_MISSIONS_DIR=/data/missions \
     CITADEL_SELF_UPDATE=0
 
 RUN mkdir -p /data && chown -R node:node /data /app

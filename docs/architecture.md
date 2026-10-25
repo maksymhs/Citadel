@@ -97,15 +97,9 @@ Beside the database, `DATA_DIR` holds `secret.key` (AES-256-GCM key, mode 0600, 
 | `doctor`, `repair`, maintenance | [operations.md](operations.md) |
 | What changed and how it was verified | [engineering-execution-state.md](engineering-execution-state.md) |
 
-## Project hub
+## Retired project management
 
-The optional `missions` module now exposes one Project hub navigation entry.
-`project-hub.js` combines task snapshots, project Markdown, confirmed memory,
-on-demand file graphs and execution events. Existing mission/task APIs remain
-authoritative for mutations. `projectHubService` scopes snapshots and trace reads;
-`events.project_id` (migration 016) survives task retention and is indexed with
-monotonic IDs for cursor paging. `logService` derives scope from task/mission
-references when callers omit it. Terminal lifecycle events share that journal;
-PTY output stays in the existing terminal transport. `codeGraphService` performs
-bounded static JS/TS import scans on demand with a short bounded cache. The view
-polls while visible and releases timers/requests when navigating away.
+Project hub and its mission, document, learning and graph APIs have been removed.
+Migration 017 retires pending automation and requests cancellation of running
+automation. Historical database records and user Markdown remain untouched.
+The task mesh, native CLI adapters and terminal lifecycle journal remain core.

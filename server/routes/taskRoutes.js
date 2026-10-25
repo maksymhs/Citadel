@@ -31,6 +31,13 @@ function constantTimeEqual(provided, expected) {
   return crypto.timingSafeEqual(a, b);
 }
 
+/** Remote execution control is an administrator capability. */
+async function requireOrchestrator(request, reply) {
+  await requireAuth(request, reply);
+  if (reply.sent) return reply;
+  if (request.user.role !== 'admin') return reply.status(403).send({ error: 'Administrator privileges are required.' });
+}
+
 /**
  * Resolve a worker credential to the node identity it may act as:
  * `{ nodeId }` for a per-node token, `{ nodeId: null }` for the legacy shared
@@ -58,7 +65,7 @@ async function requireWorkerAuth(request, reply) {
     request.nodeIdentity = identity.nodeId;
     return;
   }
-  return requireAuth(request, reply);
+  return requireOrchestrator(request, reply);
 }
 
 /**
@@ -94,7 +101,7 @@ function audit(request, action, taskId, details) {
 }
 
 async function taskRoutes(fastify) {
-  fastify.post('/api/tasks', { preHandler: requireAuth }, async (request, reply) => {
+  fastify.post('/api/tasks', { preHandler: requireOrchestrator }, async (request, reply) => {
     try {
       const task = taskService.enqueue(request.body || {});
       audit(request, 'task_enqueued', task.id, { cmd: task.cmd, node: task.node });
@@ -104,7 +111,7 @@ async function taskRoutes(fastify) {
     }
   });
 
-  fastify.get('/api/tasks', { preHandler: requireAuth }, async (request) => ({
+  fastify.get('/api/tasks', { preHandler: requireOrchestrator }, async (request) => ({
     tasks: taskService.listTasks(request.query || {}),
   }));
 
@@ -122,7 +129,7 @@ async function taskRoutes(fastify) {
     }
   });
 
-  fastify.get('/api/tasks/:id', { preHandler: requireAuth }, async (request, reply) => {
+  fastify.get('/api/tasks/:id', { preHandler: requireOrchestrator }, async (request, reply) => {
     const task = taskService.getTask(request.params.id);
     if (!task) return reply.status(404).send({ error: 'Task not found.' });
     return { task };
@@ -134,9 +141,7 @@ async function taskRoutes(fastify) {
       // sessions and the legacy shared token are not constrained.
       const expectedNode = request.nodeAuth ? request.nodeIdentity : null;
       const task = taskService.completeTask(request.params.id, { ...(request.body || {}), expectedNode });
-      const resultAction = task.status === 'done'
-        ? 'task_completed'
-        : (task.status === 'review' ? 'task_awaiting_review' : 'task_failed');
+      const resultAction = task.status === 'done' ? 'task_completed' : (task.status === 'cancelled' ? 'task_cancelled' : 'task_failed');
       audit(request, resultAction, task.id, {
         exitCode: task.exitCode,
         resultRef: task.resultRef,
@@ -174,7 +179,7 @@ async function taskRoutes(fastify) {
     }
   });
 
-  fastify.post('/api/tasks/:id/retry', { preHandler: requireAuth }, async (request, reply) => {
+  fastify.post('/api/tasks/:id/retry', { preHandler: requireOrchestrator }, async (request, reply) => {
     try {
       const task = taskService.retryTask(request.params.id);
       audit(request, 'task_retried', task.id, { status: task.status, attempt: task.attempt });
@@ -184,7 +189,7 @@ async function taskRoutes(fastify) {
     }
   });
 
-  fastify.post('/api/tasks/:id/cancel', { preHandler: requireAuth }, async (request, reply) => {
+  fastify.post('/api/tasks/:id/cancel', { preHandler: requireOrchestrator }, async (request, reply) => {
     try {
       const task = taskService.cancelTask(request.params.id);
       audit(request, 'task_cancelled', task.id, { node: task.node });
@@ -204,7 +209,7 @@ async function taskRoutes(fastify) {
     }
   });
 
-  fastify.get('/api/nodes', { preHandler: requireAuth }, async () => ({ nodes: taskService.listNodes() }));
+  fastify.get('/api/nodes', { preHandler: requireOrchestrator }, async () => ({ nodes: taskService.listNodes() }));
 }
 
 module.exports = taskRoutes;
