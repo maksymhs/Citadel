@@ -229,3 +229,30 @@ Scan a QR from your phone, pair several Citadel machines and expose the panel gl
 ## Git credentials for terminals
 
 The installer also registers a git credential helper (`/usr/local/bin/citadel-git-credential`) system-wide. It lets plain `git fetch/pull/push` inside project terminals reuse the provider tokens you stored in **Repositories**, decrypting them on demand — tokens are never written to disk in clear text. It only resolves credentials for hosts that have a configured provider (GitHub/GitLab).
+
+## Managing AI CLI agents from the panel
+
+In **Machines → Tools**, administrators can install, reinstall/update, or remove a
+Citadel-managed agent. These actions open a terminal as the service account;
+installation success is reported only after the downloaded executable passes its
+version check. Codex must also include a working `codex-code-mode-host`.
+
+New installations use isolated releases below
+`$CITADEL_AGENTS_DIR/packages/<binary>/release-*`, with an atomically replaced
+launcher in `$CITADEL_AGENTS_DIR/bin`. If the shared root is unavailable, the
+installer uses `~/.citadel/agents` for the service account only. Existing PATH and
+older shared installations remain detectable. Reinstall/update downloads the
+vendor's current default version; it does not promise a version increase.
+Restart agent sessions after activation.
+
+**Remove** removes only the managed launcher. Downloaded releases (including
+failed attempts) remain on disk for recovery and to avoid breaking processes that
+still use their companion executables. This does not reclaim their disk space.
+Other installations in PATH may still be detected afterwards. Citadel does not
+remove external installations, user credentials, sessions, or `~/.codex` data.
+Reinstall an older agent through the panel to create a managed installation before
+using Remove. Do not delete retained releases while agents or daemons use them.
+
+The installer changes sharing permissions only within the newly downloaded
+release, never recursively on existing agent directories. Linux and macOS use the
+same lifecycle helper; no change to the host/system installers is required.

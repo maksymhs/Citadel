@@ -216,6 +216,10 @@ npm run dev     # development server (or: npm start)
 
 Then open <http://127.0.0.1:3000>.
 
+Administrators can install, reinstall/update and remove managed AI CLI launchers
+from **Machines → Tools**. Releases are retained for active sessions; see
+[agent management](docs/installation.md#managing-ai-cli-agents-from-the-panel).
+
 Contributing, with a human or an AI agent? [AGENTS.md](AGENTS.md) explains how the project is organised, how to make common changes, which docs to update and how releases work.
 
 See also [CONTRIBUTING.md](CONTRIBUTING.md), the [security policy](SECURITY.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Questions and ideas are welcome in [Discussions](https://github.com/maksymhs/Citadel/discussions).

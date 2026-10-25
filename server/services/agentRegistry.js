@@ -36,74 +36,21 @@ function isExecutable(file) {
 
 class AgentRegistry {
   constructor() {
-    // Install commands run with HOME pointed at the shared agents directory
-    // (see buildInstallCommand), so "$HOME" below means AGENTS_DIR.
-    this.builtinAgents = [
-      {
-        id: 'opencode',
-        name: 'OpenCode',
-        binaryName: 'opencode',
-        description: 'Open-source interactive coding agent for developers',
-        defaultArgs: [],
-        versionArg: '--version',
-        installCommand: 'curl -fsSL https://opencode.ai/install | bash',
-      },
-      {
-        id: 'claude',
-        name: 'Claude Code',
-        binaryName: 'claude',
-        description: "Anthropic's CLI coding and engineering agent",
-        defaultArgs: [],
-        versionArg: '--version',
-        installCommand: 'curl -fsSL https://claude.ai/install.sh | bash',
-      },
-      {
-        id: 'codex',
-        name: 'Codex CLI',
-        binaryName: 'codex',
-        description: 'CLI tool for code assistance and generation',
-        defaultArgs: [],
-        versionArg: '--version',
-        // A user prefix: the global npm prefix (/usr) is read-only for the
-        // service user and inside the systemd sandbox.
-        installCommand: 'npm install -g --prefix "$HOME/.local" @openai/codex',
-      },
-      {
-        id: 'antigravity',
-        name: 'Antigravity CLI',
-        binaryName: 'agy',
-        description: "Google's Antigravity terminal coding agent",
-        defaultArgs: [],
-        versionArg: '--version',
-        installCommand: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-      },
-      {
-        id: 'kilocode',
-        name: 'Kilo Code CLI',
-        binaryName: 'kilo',
-        description: 'Open-source agentic coding CLI from Kilo Code',
-        defaultArgs: [],
-        versionArg: '--version',
-        installCommand: 'npm install -g --prefix "$HOME/.local" @kilocode/cli',
-      },
-      {
-        id: 'qwen',
-        name: 'Qwen Code',
-        binaryName: 'qwen',
-        description: "Alibaba's open-source terminal coding agent",
-        defaultArgs: [],
-        versionArg: '--version',
-        installCommand: 'npm install -g --prefix "$HOME/.local" @qwen-code/qwen-code',
-      },
-    ];
+    // Official installers run in a fresh release HOME through agentLifecycle.
+    this.builtinAgents = require('./agentCatalogue');
   }
 
   /**
    * Search for binary across PATH and typical installation directories
    */
   findBinary(binaryName, customPath = null) {
-    if (customPath && fs.existsSync(customPath)) {
+    if (customPath && isExecutable(customPath)) {
       return customPath;
+    }
+
+    // Prefer an explicitly managed activation over an older PATH installation.
+    for (const root of [AGENTS_DIR, path.join(os.homedir(), '.citadel/agents')]) {
+      if (require('./agentLifecycle').isManaged(binaryName, root)) return path.join(root, 'bin', binaryName);
     }
 
     // Try `which` first
@@ -111,7 +58,7 @@ class AgentRegistry {
       const res = spawnSync('which', [binaryName], { encoding: 'utf8' });
       if (res.status === 0 && res.stdout) {
         const found = res.stdout.trim().split('\n')[0];
-        if (fs.existsSync(found)) {
+        if (isExecutable(found)) {
           return found;
         }
       }
@@ -199,8 +146,10 @@ class AgentRegistry {
 
     return allDefs.map((def) => {
       const resolvedPath = this.findBinary(def.binaryName, def.customPath);
-      const installed = Boolean(resolvedPath);
-      const version = installed ? this.getBinaryVersion(resolvedPath, def.versionArg) : null;
+      const version = resolvedPath ? this.getBinaryVersion(resolvedPath, def.versionArg) : null;
+      const installed = Boolean(version);
+      const managed = [AGENTS_DIR, path.join(os.homedir(), '.citadel/agents')]
+        .some((root) => require('./agentLifecycle').isManaged(def.binaryName, root));
 
       return {
         id: def.id,
@@ -208,6 +157,9 @@ class AgentRegistry {
         binaryName: def.binaryName,
         description: def.description,
         installed,
+        managed,
+        detected: Boolean(resolvedPath),
+        warning: def.id === 'codex' ? require('./agentLifecycle').codexDaemonWarning(os.homedir()) : null,
         path: resolvedPath,
         version,
         defaultArgs: def.defaultArgs || [],
@@ -279,93 +231,48 @@ class AgentRegistry {
     };
   }
 
-  /**
-   * Build the fixed shell script that installs one agent for every user.
-   * Pure (no side effects) so it can be unit-tested. The only interpolated
-   * values are the server-controlled AGENTS_DIR, the agent's display name
-   * (quoted) and the validated binary name.
-   *
-   * It always runs as the service user, which owns AGENTS_DIR (prepared by
-   * install.sh), so no sudo is involved: the systemd unit sets
-   * NoNewPrivileges and the service account has no sudo rights anyway.
-   *
-   *  1. Point HOME at the shared, world-readable AGENTS_DIR (falling back to
-   *     ~/.citadel/agents when it is not writable) inside a subshell, so the
-   *     official installer's per-user drops land there and the override never
-   *     leaks into the interactive shell left open afterwards.
-   *  2. Put the target bin directories on PATH so installers that verify PATH
-   *     (Claude Code, Antigravity) do not stop to ask for shell-profile edits.
-   *  3. Fail loudly when the download/installer fails (pipefail) or produces
-   *     no binary, relax permissions and link the binary into AGENTS_DIR/bin,
-   *     which every Citadel terminal and /etc/profile.d puts on PATH.
-   */
-  buildInstallCommand(agent) {
-    const bin = String(agent.binaryName || '');
-    if (!/^[A-Za-z0-9._-]+$/.test(bin)) {
+  /** Build a quoted invocation of the fixed, isolated lifecycle helper. */
+  buildInstallCommand(agent, action = 'install') {
+    if (!/^[A-Za-z0-9._-]+$/.test(String(agent.binaryName || '')) || ['.', '..'].includes(agent.binaryName)) {
       throw new Error(`Invalid binary name for agent "${agent.name}".`);
     }
-
-    const sources = AGENT_BIN_SUBDIRS.filter((sub) => sub !== 'bin').map((sub) => `"$AG/${sub}/${bin}"`).join(' ');
-    return [
-      '(',
-      'set -o pipefail',
-      `NAME=${shellQuote(agent.name)}`,
-      `AG=${shellQuote(AGENTS_DIR)}`,
-      'SCOPE="every user"',
-      'mkdir -p "$AG" 2>/dev/null',
-      'if [ ! -w "$AG" ]; then',
-      '  echo "[Citadel] $AG is not writable by $(id -un); installing under ~/.citadel/agents (only this account will see it)."',
-      '  echo "[Citadel] Re-run the Citadel installer to share agents with every user."',
-      '  SCOPE="this account only"',
-      '  AG="$HOME/.citadel/agents"',
-      '  mkdir -p "$AG" || exit 1',
-      'fi',
-      'export HOME="$AG"',
-      'unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_BIN_HOME',
-      `export PATH="${AGENT_BIN_SUBDIRS.map((sub) => `$AG/${sub}`).join(':')}:$PATH"`,
-      'cd "$AG" || exit 1',
-      'echo "[Citadel] Installing $NAME into $AG ..."',
-      `${agent.installCommand} || { status=$?; echo "[Citadel] $NAME installer failed (exit $status)."; exit 1; }`,
-      'chmod -R a+rX "$AG" 2>/dev/null',
-      'mkdir -p "$AG/bin"',
-      'found=""',
-      `for b in ${sources}; do`,
-      `  if [ -x "$b" ]; then ln -sfn "$b" "$AG/bin/${bin}"; found="$b"; break; fi`,
-      'done',
-      `[ -n "$found" ] || { echo "[Citadel] $NAME installer finished but no '${bin}' binary was found under $AG."; exit 1; }`,
-      `echo "[Citadel] $NAME installed for $SCOPE: $AG/bin/${bin}"`,
-      ')',
-      'echo',
-      'echo "[Citadel] Reload the panel to refresh the agent status."',
-    ].join('\n');
+    const helper = path.resolve(__dirname, '../../scripts/manage-agent.js');
+    // Only fixed catalogue entries may reach an installer or removal command.
+    const builtin = this.builtinAgents.find((a) => a.id === agent.id);
+    if (!builtin || !['install', 'reinstall', 'remove'].includes(action)) {
+      throw new Error('Unknown agent or action.');
+    }
+    return [process.execPath, helper, action, builtin.id].map(shellQuote).join(' ');
   }
 
   /**
-   * Install a CLI agent by running its official one-line installer inside a
+   * Manage a built-in CLI agent through the isolated lifecycle helper in a
    * fresh System Terminal session, so the user can watch the output live. The
    * command is a fixed server-side string (never user input), so there is no
    * shell-injection surface. It runs as the service user (not the privileged
    * System Terminal user) so the result lands in the shared AGENTS_DIR that
    * the service owns, then leaves a shell open to inspect the outcome.
    */
-  installAgent({ agentId }) {
+  installAgent({ agentId, action = 'install' }) {
     const agent = this.getAgent(agentId);
     if (!agent) {
       throw new Error(`Agent "${agentId}" not found in registry.`);
     }
-    if (agent.installed) {
+    if (action === 'install' && agent.installed) {
       throw new Error(`Agent "${agent.name}" is already installed.`);
     }
     if (!agent.installCommand) {
       throw new Error(`No automatic installer is available for "${agent.name}".`);
     }
 
+    const script = this.buildInstallCommand(agent, action);
+    if (action === 'remove' && !agent.managed) throw new Error('Only installations managed by Citadel can be removed.');
     const session = terminalManager.createSession({
       projectId: null,
-      name: `Install ${agent.name}`,
+      name: `${action} ${agent.name}`,
       agentId: null,
       command: '/bin/bash',
-      args: ['-lc', `${this.buildInstallCommand(agent)}\nexec /bin/bash -l`],
+      args: ['-lc', `${script}\nexec /bin/bash -l`],
     });
 
     return {

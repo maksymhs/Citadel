@@ -302,3 +302,24 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Known gaps: the workflow itself has never run (it can only run on GitHub); the first tag
   pushed after this is its real test. The changelog must be committed before the tag is
   pushed, otherwise the Release gets a generic note.
+
+## 115. Isolated AI CLI lifecycle and Codex companion validation
+- Added administrator-only install/reinstall/update and managed-launcher removal
+  through the Machines Tools screen and both existing install APIs. Commands are
+  selected from a fixed catalogue and run as the service account without sudo.
+- Each attempt uses a new release HOME. Verify the executable/version and, for
+  Codex, its code-mode host before atomically activating the launcher. Failed
+  attempts leave the old launcher intact. Preserve old releases, credentials and
+  separately managed daemon files; apply sharing permissions only to new payloads.
+- Removal deactivates only Citadel's managed launcher and does not reclaim release
+  storage. Legacy/external installations are not deleted and may remain in PATH.
+  Warn when Codex daemon state exists but managed daemon executables are absent.
+- Validation: 19 focused agent tests passed; real npm Codex install validated both
+  CLI and companion, then launcher removal retained its payload. Browser smoke
+  includes lifecycle dispatch/admin controls; dashboard screenshots regenerated
+  with Chromium. Lint passed. Full suite: 494 tests, 492 passed, 1 skipped, 1 failed
+  at sentinel-process.test.js:149, reproducing the pre-change container zombie
+  reaping limitation (PID 1 is tail). No real macOS host was tested.
+- Known gap: the VPS's missing managed Codex daemon package is a separate upstream
+  installation failure. These CLI lifecycle changes do not reconstruct it. No
+  release, push or production deployment was performed.

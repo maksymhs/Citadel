@@ -44,3 +44,15 @@
 - **Context**: An operator can lose panel access because of a failed unit, a bad route, DNS or Wi-Fi. Requiring the web UI, Internet access or a new daemon to diagnose that state creates a circular dependency. At the same time, a generic "fix my network" command that edits configuration or executes arbitrary privileged commands is too risky for a recovery tool.
 - **Decision**: Reuse the existing Node.js runtime and CLI (`scripts/citadel` + `scripts/doctor.js`) with a capability-driven, read-only collector library (`scripts/diagnostics.js`). Report unsupported or missing tools as skipped. Limit mutations to an allow-list: restart an observed failed unit or `citadel.service`, `rfkill unblock wifi`, and activate a saved NetworkManager profile. Validate inputs, explain impact, confirm (with an SSH-specific `--confirm-remote`), execute without a shell, and verify the result. Keep `--json` stdout machine-readable and never accept Wi-Fi passwords in argv, logs or JSON.
 - **Consequences**: Diagnosis works on a machine whose panel, DNS, route or Wi-Fi is broken, and on a VPS without Wi-Fi. No new daemon, dependency, database or privileged helper is required. Some recovery remains intentionally unsupported (editing Netplan/NetworkManager config, arbitrary commands, automatic rollback); Wi-Fi changes require NetworkManager, and an unverifiable change is reported as unverified rather than successful. Operators retain console/IPMI as the fallback.
+
+## ADR-010: Isolated agent releases with retained payloads
+- **Decision:** install each CLI into a new release directory, validate it, and
+  atomically switch a managed launcher. Restrict lifecycle actions to admins and
+  the fixed catalogue. Remove only the launcher; retain downloaded releases.
+- **Reason:** updating or deleting an in-use package can strand running processes
+  when they later spawn companion executables. Sharing permissions must never be
+  applied recursively to an existing tree containing user state or credentials.
+- **Trade-off:** failed attempts and old releases consume disk space. Removal
+  deactivates Citadel's launcher rather than reclaiming package storage; other
+  PATH installations can remain visible. Automatic garbage collection and repair
+  of externally managed Codex daemon packages are outside this change.

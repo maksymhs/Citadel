@@ -28,6 +28,9 @@ function detectAgents() {
       name: agent.name,
       available: agent.installed,
       version: agent.version,
+      managed: agent.managed,
+      detected: agent.detected,
+      warning: agent.warning,
     }));
 }
 
@@ -35,10 +38,10 @@ function detectAgents() {
  * Start the shared, all-users install of a built-in agent in a terminal
  * session. Returns `{ session, agent }`.
  */
-function installAgent(id) {
+function installAgent(id, action = 'install') {
   const agent = getAgent(id);
   if (!agent) throw new Error('Unknown tool.');
-  return agentRegistry.installAgent({ agentId: agent.id });
+  return agentRegistry.installAgent({ agentId: agent.id, action });
 }
 
 module.exports = { getAgent, detectAgents, installAgent };

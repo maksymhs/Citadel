@@ -122,13 +122,13 @@ async function systemRoutes(fastify) {
     }
 
     try {
-      const { session } = agentInstallService.installAgent(agent.id);
+      const { session } = agentInstallService.installAgent(agent.id, request.body.action || 'install');
       auditService.logAction({
         userId: request.user.id,
         action: 'integration_install_started',
         targetType: 'integration',
         targetId: agent.id,
-        details: { tool: agent.id, terminal: session.sessionId },
+        details: { tool: agent.id, action: request.body.action || 'install', terminal: session.sessionId },
         ip: request.ip,
       });
       return { session };

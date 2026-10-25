@@ -7,7 +7,7 @@ Which files make up each feature. Start here when a task is phrased in product t
 | Sign-in, sessions, first-run setup code | `authRoutes` → `security/auth.js`, `security/setupCode.js` | `app.js` (`renderSetupView`, `renderLoginView`) | `auth`, `setup-code`, `security`, `hardening` | [security](security.md) |
 | Projects and Git repositories | `projectRoutes`, `gitRoutes` → `projectService`, `gitService`, `gitCredentialsService` | `app.js` (`renderProjectsView`), `repos.js` | `projects`, `project-repos`, `git`, `gitcred` | [installation](installation.md) |
 | Persistent terminals | `terminalRoutes`, `wsTerminal` → `terminalManager` | `app.js` (`renderWorkspaceView`, terminal tabs) | `terminal` | [architecture §7](architecture.md) |
-| AI agents (launch, one-click install) | `agentRoutes` → `agentRegistry`, `agentInstallService` | `app.js` | `agents`, `agent-install` | [architecture §7](architecture.md) |
+| AI agents (launch, install, reinstall/update, remove) | `agentRoutes` → `agentRegistry`, `agentInstallService`, `agentLifecycle`, `agentCatalogue` | `app.js`, `monitor.js` | `agents`, `agent-install`, `agent-lifecycle` | [architecture §7](architecture.md) |
 | Credential vault, `citadel-creds` | `secretRoutes` → `secretStore`, `secretSyncService`, `security/secrets.js`; CLI `scripts/citadel-creds.js` | `app.js` (Settings) | `secrets`, `secret-sync`, `gitcred` | [security](security.md) |
 | Files explorer | `fileRoutes` → `fileService`; `scripts/fsAgent.js` (privileged ops) | `files.js` | `files`, `ui-smoke` | [installation](installation.md) |
 | Disk usage and quick cleanup | `fileRoutes` (`/api/files/cleanup`) → `fileService`, `scripts/fsAgent.js` | `disk-cleanup.js` | `files` | [installation](installation.md) |

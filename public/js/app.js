@@ -1318,20 +1318,25 @@
 
   // Launch an agent's official install one-liner in a System Terminal session
   // on the given machine (switching to it first, because the terminal opens there).
-  async function installAgentOn(hostId, tool, name) {
-    if (!window.confirm(`Install ${name} now? It runs in a System Terminal session.`)) return;
+  async function installAgentOn(hostId, tool, name, action = 'install') {
+    const label = { install: 'Install', reinstall: 'Reinstall / update', remove: 'Remove' }[action];
+    if (!label) return;
+    const detail = action === 'remove'
+      ? 'Remove the managed launcher? Downloaded releases are retained for running sessions and recovery. Other installations may still be available. Your credentials and daemon data are preserved.'
+      : 'A fresh installation will be validated before activation. Restart agent sessions afterwards. A separate Codex daemon is not repaired by this action.';
+    if (!window.confirm(`${label} ${name}? ${detail}`)) return;
     if (hostId !== state.activeHostId) {
       await switchHost(hostId);
       if (state.activeHostId !== hostId) return;
     }
     try {
-      const res = await api('/api/system/integrations/install', { method: 'POST', body: { tool } });
+      const res = await api('/api/system/integrations/install', { method: 'POST', body: { tool, action } });
       const sessionId = res.session?.sessionId;
       if (sessionId) {
         state.activeSysTerminalId = sessionId;
         saveUiState({ activeSysTerminalId: sessionId });
       }
-      showToast(`${name} install started in the System Terminal.`, 'success');
+      showToast(`${name}: ${label.toLowerCase()} started in the System Terminal.`, 'success');
       state.workspaceContext = 'system';
       saveUiState({ workspaceContext: 'system' });
       navigateTo('workspace');

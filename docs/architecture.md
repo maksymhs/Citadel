@@ -64,7 +64,7 @@ Some APIs always stay local (`LOCAL_ONLY_API` in `app.js`: auth, pairing, host l
 
 ## 7. Terminals and agents
 
-Each terminal is a `tmux` session `citadel_<project_slug>_<id>`; `node-pty` runs `tmux new-session -A` in the project directory, so closing the browser or restarting the panel does not kill processes and reconnecting reattaches (`terminalManager.js`, `wsTerminal.js`). Without `tmux` it falls back to a direct PTY and says so. `agentRegistry.js` detects AI CLI tools on safe paths and `PATH`; each argument is individually quoted before it is written to the PTY, so browser-supplied arguments cannot inject commands. `agentInstallService.js` installs missing agents once, for every user, into `CITADEL_AGENTS_DIR`.
+Each terminal is a `tmux` session `citadel_<project_slug>_<id>`; `node-pty` runs `tmux new-session -A` in the project directory, so closing the browser or restarting the panel does not kill processes and reconnecting reattaches (`terminalManager.js`, `wsTerminal.js`). Without `tmux` it falls back to a direct PTY and says so. `agentRegistry.js` detects AI CLI tools on safe paths and `PATH`; each argument is individually quoted before it is written to the PTY, so browser-supplied arguments cannot inject commands. `agentInstallService.js` delegates administrator-only install/reinstall/remove actions to the fixed `agentCatalogue.js` and isolated `agentLifecycle.js` helper. New releases under `CITADEL_AGENTS_DIR/packages/<binary>` are validated before an atomic launcher switch; the service-account fallback is `~/.citadel/agents`. Removal unlinks only the managed launcher and retains releases for running processes. Existing user configuration and separate Codex daemon packages are never deleted.
 
 ## 8. Reachability
 

@@ -513,9 +513,11 @@
             <div class="mon-rows">
               ${(integ.agents || []).map((a) => `<div class="mon-row">
                 <span class="status-dot ${a.available ? 'ok' : 'off'}"></span>
-                <div class="mon-row-main"><strong>${esc(a.name)}</strong>${a.version ? `<span class="mon-muted">${esc(a.version)}</span>` : ''}</div>
+                <div class="mon-row-main"><strong>${esc(a.name)}</strong>${a.version ? `<span class="mon-muted">${esc(a.version)}</span>` : a.detected ? '<span class="mon-muted">Executable found; version check failed</span>' : ''}${a.warning ? `<span class="mon-muted">${esc(a.warning)}</span>` : ''}</div>
                 ${a.available ? '<span class="badge badge-success">Installed</span>'
     : `<button class="btn btn-secondary btn-sm" data-mon-install="${esc(a.id)}" data-name="${esc(a.name)}" ${ctx.isAdmin ? '' : 'disabled'}>Install</button>`}
+                ${a.available || a.detected ? `<button class="btn btn-secondary btn-sm" data-mon-install="${esc(a.id)}" data-name="${esc(a.name)}" data-action="reinstall" ${ctx.isAdmin ? '' : 'disabled'}>Reinstall / update</button>` : ''}
+                ${a.managed ? `<button class="btn btn-secondary btn-sm" data-mon-install="${esc(a.id)}" data-name="${esc(a.name)}" data-action="remove" ${ctx.isAdmin ? '' : 'disabled'}>Remove</button>` : ''}
               </div>`).join('')}
             </div>
           </div>
@@ -523,7 +525,7 @@
             ${groupHtml || '<div class="mon-muted">No common tools detected.</div>'}
           </div>`;
         body.querySelectorAll('[data-mon-install]').forEach((b) => {
-          b.onclick = () => ctx.installAgent(host.id, b.getAttribute('data-mon-install'), b.getAttribute('data-name'));
+          b.onclick = () => ctx.installAgent(host.id, b.getAttribute('data-mon-install'), b.getAttribute('data-name'), b.getAttribute('data-action') || 'install');
         });
       } catch (err) { fail(err); }
     }
