@@ -43,17 +43,28 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const c = JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--config') + 1]));
+let authStatus = 'wait';
 if (process.argv.includes('--codex-device-login')) {
   console.log('Codex device URL: https://auth.openai.com/codex/device');
   console.log('Codex device code: FIXTURE-CODE');
-  setTimeout(() => { fs.writeFileSync(path.join(c.oauth['auth-dir'], 'codex-fixture.json'), JSON.stringify({ access_token: 'fixture-provider-secret' })); }, 200);
+  setTimeout(() => { fs.writeFileSync(path.join(c.oauth['auth-dir'], 'codex-fixture.json'), JSON.stringify({ type: 'codex', access_token: 'fixture-provider-secret' })); }, 200);
 } else {
   http.createServer(async (req, res) => {
     let raw = ''; for await (const part of req) raw += part;
+    if (req.url.startsWith('/v8/management/')) {
+      if (req.headers.authorization !== 'Bearer ' + c.management['secret-key']) { res.writeHead(401); res.end(); return; }
+      res.setHeader('content-type','application/json');
+      if (req.url.startsWith('/v8/management/oauth/auth-url')) res.end(JSON.stringify({ url: 'https://claude.ai/oauth/authorize?state=fixture-state&redirect_uri=http%3A%2F%2Flocalhost%3A54545%2Fcallback', state: 'fixture-state' }));
+      else if (req.url === '/v8/management/oauth/callback') {
+        fs.writeFileSync(path.join(c.oauth['auth-dir'], 'claude-fixture.json'), JSON.stringify({ type: 'claude', access_token: 'fixture-claude-secret' }));
+        authStatus = 'ok'; res.end(JSON.stringify({ status: 'ok' }));
+      } else res.end(JSON.stringify({ status: authStatus }));
+      return;
+    }
     if (req.headers.authorization !== 'Bearer ' + c.access['api-keys'][0]) { res.writeHead(401); res.end(); return; }
     res.setHeader('content-type','application/json');
     if (req.url === '/v1/models') res.end(JSON.stringify({ data: [{ id: 'fixture-model' }] }));
-    else res.end(JSON.stringify({ type: 'message', content: [{ type: 'text', text: 'OK' }] }));
+    else res.end(JSON.stringify({ type: 'message', model: 'fixture-model', content: [{ type: 'text', text: 'OK' }] }));
   }).listen(c.server.port, c.server.host);
 }
 `, { mode: 0o700 });
@@ -63,7 +74,7 @@ test('gateway routes require administrator access and never reveal stored values
   assert.equal((await app.inject({ url: '/api/settings/gateway' })).statusCode, 401);
   getDatabase().prepare("UPDATE users SET role = 'viewer'").run();
   try {
-    for (const [method, url] of [['GET', ''], ['PUT', ''], ['POST', '/install'], ['POST', '/login'], ['DELETE', '/login'], ['GET', '/models'], ['POST', '/test']]) {
+    for (const [method, url] of [['GET', ''], ['PUT', ''], ['POST', '/install'], ['POST', '/login'], ['DELETE', '/login'], ['GET', '/models'], ['POST', '/test'], ['POST', '/callback']]) {
       assert.equal((await app.inject({ method, url: `/api/settings/gateway${url}`, cookies, ...(method === 'PUT' ? { payload: { enabled: true } } : {}) })).statusCode, 403);
     }
     const gateway = require('../server/services/gatewayService');
@@ -105,16 +116,20 @@ test('managed lifecycle keeps credentials encrypted, scopes launcher settings an
   const runtimeConfig = JSON.parse(fs.readFileSync(path.join(path.dirname(launchConfig), 'config.json')));
   assert.equal(runtimeConfig.server.host, '127.0.0.1');
   assert.equal(runtimeConfig.server['commercial-mode'], true);
-  assert.equal(runtimeConfig.management['secret-key'], '');
+  assert.ok(runtimeConfig.management['secret-key']);
+  assert.equal(runtimeConfig.management['allow-remote'], false);
+  assert.equal(runtimeConfig.oauth['model-alias'].codex[1].alias, 'citadel-execution');
+  assert.equal(runtimeConfig.routing['session-affinity'], true);
+  assert.equal(runtimeConfig.routing['session-affinity-rebind-on'], 'quota');
   assert.equal(runtimeConfig.management['disable-control-panel'], true);
   assert.deepEqual(await s.models(), ['fixture-model']);
-  assert.deepEqual(await s.testConnection(), { ok: true, model: 'fixture-model' });
+  assert.deepEqual(await s.testConnection(), { ok: true, model: 'fixture-model', mode: 'chatgpt' });
   const env = gatewayEnvironment({ ANTHROPIC_API_KEY: 'old-key', CLAUDE_CODE_OAUTH_TOKEN: 'old-token', CLAUDE_CODE_USE_BEDROCK: '1', KEEP: 'yes' }, settings);
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
   assert.equal(env.CLAUDE_CODE_USE_BEDROCK, undefined);
-  assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'fixture-plan');
-  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'fixture-model');
+  assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'citadel-planning');
+  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'citadel-execution');
   assert.equal(env.KEEP, 'yes');
   assert.ok(!getDatabase().prepare("SELECT value FROM app_config WHERE key = 'ai.gateway'").get().value.includes(settings.token));
   await assert.rejects(s.save({ enabled: true, planningModel: 'bad\nmodel' }), /Invalid model/);
@@ -234,7 +249,7 @@ require('node:fs').writeFileSync(${JSON.stringify(report)}, JSON.stringify({ bas
     const quoted = `'${fixtureBin.replace(/'/g, "'\\''")}'`;
     active.ptyProcess.write(`export PATH=${quoted}:"$PATH"; claude\r`);
     await until(() => fs.existsSync(report));
-    assert.deepEqual(JSON.parse(fs.readFileSync(report)), { base: `http://127.0.0.1:${s.status().port}`, plan: 'fixture-plan', run: 'fixture-run', model: 'opusplan', credentialPresent: true });
+    assert.deepEqual(JSON.parse(fs.readFileSync(report)), { base: `http://127.0.0.1:${s.status().port}`, plan: 'citadel-planning', run: 'citadel-execution', model: 'opusplan', credentialPresent: true });
     assert.ok(!active.buffer.includes(JSON.parse(fs.readFileSync(s.launchOptions().args[1])).token));
   } finally {
     if (session) terminals.killSession(session.sessionId);
@@ -243,4 +258,47 @@ require('node:fs').writeFileSync(${JSON.stringify(report)}, JSON.stringify({ bas
     if (original.home === undefined) delete process.env.HOME; else process.env.HOME = original.home;
     await s.disconnect();
   }
+});
+
+test('separate Claude authorization validates callbacks and hot policy changes preserve launch aliases', async () => {
+  const { dir, service: s } = fresh(); fakeBinary(dir);
+  await s.loginStart(); await until(() => s.status().connected);
+  await assert.rejects(s.save({ enabled: true, mode: 'auto' }), /Connect Claude/);
+  assert.equal(s.status().mode, 'chatgpt', 'invalid mode activation must not be persisted');
+  await s.save({ enabled: false, port: await port() });
+  await s.loginStart('claude');
+  assert.equal(s.status().login.state, 'waiting_callback');
+  assert.equal(s.status().login.provider, 'claude');
+  assert.ok(!JSON.stringify(s.status()).includes('fixture-claude-secret'));
+  await assert.rejects(s.callback('https://attacker.example/callback?state=fixture-state&code=fake'), /Callback does not match/);
+  await assert.rejects(s.callback('http://localhost:54545/callback?state=wrong&code=fake'), /Callback does not match/);
+  await assert.rejects(s.callback(null), /Paste the complete/);
+  await s.callback('http://localhost:54545/callback?state=fixture-state&code=fixture-code');
+  await s.refreshLogin();
+  assert.deepEqual(s.status().connections, { codex: true, claude: true });
+  assert.equal(s.status().running, false, 'a setup-only proxy stops after authorization');
+  assert.equal(s.status().login.state, 'connected');
+  await s.save({ enabled: true, mode: 'auto', port: await port() });
+  const settingsFile = s.launchOptions().args[1];
+  const configFile = path.join(path.dirname(settingsFile), 'config.json');
+  let proxy = JSON.parse(fs.readFileSync(configFile));
+  assert.equal(proxy.oauth['model-alias'].claude[1].alias, 'citadel-execution');
+  assert.equal(proxy.oauth['model-alias'].codex[1].alias, 'citadel-execution');
+  assert.equal(proxy.oauth['request-scoped-errors'].claude.find(r => r.status === 403).action, 'stop');
+  const authDir = proxy.oauth['auth-dir'];
+  assert.equal(JSON.parse(fs.readFileSync(path.join(authDir, 'claude-fixture.json'))).priority, 100);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(authDir, 'codex-fixture.json'))).priority, 50);
+  const encrypted = getDatabase().prepare("SELECT value FROM app_config WHERE key = 'ai.gateway.credentials'").get().value;
+  assert.ok(!encrypted.includes('fixture-claude-secret'));
+  const before = gatewayEnvironment({}, JSON.parse(fs.readFileSync(settingsFile)));
+  await s.save({ enabled: true, mode: 'claude', claudeExecutionModel: 'claude-fixture-updated' });
+  assert.equal(s.launchOptions().args[1], settingsFile, 'no restart or new launch file for hot mode switch');
+  proxy = JSON.parse(fs.readFileSync(configFile));
+  assert.equal(proxy.oauth['model-alias'].codex, undefined);
+  assert.equal(proxy.oauth['model-alias'].claude[1].name, 'claude-fixture-updated');
+  const after = gatewayEnvironment({}, JSON.parse(fs.readFileSync(settingsFile)));
+  assert.equal(before.ANTHROPIC_DEFAULT_SONNET_MODEL, after.ANTHROPIC_DEFAULT_SONNET_MODEL);
+  assert.equal(after.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '200000');
+  assert.ok(!JSON.stringify(s.status()).includes(proxy.management['secret-key']));
+  await s.disconnect();
 });

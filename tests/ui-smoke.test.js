@@ -151,11 +151,51 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.equal(w.document.getElementById('gateway-enabled').disabled, true);
     assert.equal(w.document.getElementById('gateway-planning').value, 'gpt-6.1-sol');
     assert.equal(w.document.getElementById('gateway-execution').value, 'gpt-6-luna');
-    assert.match(w.document.getElementById('gateway-body').textContent, /Automatic quota fallback is not enabled/);
+    assert.equal(w.document.getElementById('gateway-mode').value, 'chatgpt');
+    assert.equal(w.document.getElementById('gateway-context').value, '200000');
+    assert.ok(w.document.getElementById('gateway-login-claude'));
+    assert.match(w.document.getElementById('gateway-body').textContent, /Auto requires both providers/);
     w.document.querySelector('.nav-item[data-view="projects"]').click();
     await sleep(300);
     assert.equal(w.document.getElementById('gateway-body'), null);
     assert.deepEqual(errors, []);
+  });
+
+  test('Gateway authorizes Claude through a private callback and saves Auto mode', async () => {
+    const isolated = new JSDOM('<div id="gateway-body"></div>', { runScripts: 'dangerously' });
+    const win = isolated.window;
+    try {
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/settings-gateway.js'), 'utf8'));
+      const calls = [], notices = [];
+      let gateway = { installed: true, supported: true, running: true, connected: true, enabled: true, port: 8317, version: 'fixture', mode: 'chatgpt', contextTokens: 200000,
+        planningModel: 'gpt-plan', executionModel: 'gpt-run', smallModel: 'gpt-small', claudePlanningModel: 'claude-plan', claudeExecutionModel: 'claude-run', claudeSmallModel: 'claude-small', connections: { codex: true, claude: false } };
+      await win.CitadelGatewaySettings.init({ escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), showToast: msg => notices.push(msg),
+        api: async (url, opts = {}) => {
+          calls.push({ url, ...opts });
+          if (url.endsWith('/models')) return { models: ['gpt-run', 'claude-run'] };
+          if (url.endsWith('/login') && opts.method === 'POST') gateway = { ...gateway, login: { provider: 'claude', state: 'waiting_callback', url: 'https://claude.ai/oauth/authorize?state=fixture' } };
+          if (url.endsWith('/callback')) gateway = { ...gateway, login: { provider: 'claude', state: 'connected' }, connections: { codex: true, claude: true } };
+          if (opts.method === 'PUT') gateway = { ...gateway, ...opts.body };
+          if (url.endsWith('/test')) return { ok: true, model: 'actual-fixture-model' };
+          return { gateway };
+        } });
+      win.document.getElementById('gateway-login-claude').click(); await sleep(30);
+      assert.equal(calls.find(call => call.method === 'POST').body.provider, 'claude');
+      const callback = 'http://localhost:54545/callback?state=fixture&code=private-fixture-code';
+      win.document.getElementById('gateway-callback').value = callback;
+      win.document.getElementById('gateway-refresh').click(); await sleep(30);
+      assert.equal(win.document.getElementById('gateway-callback').value, callback, 'status polling must preserve callback input');
+      win.document.getElementById('gateway-submit-callback').click(); await sleep(30);
+      assert.equal(calls.find(call => call.url.endsWith('/callback')).body.redirectUrl, callback);
+      assert.equal(win.document.getElementById('gateway-callback'), null);
+      assert.ok(!win.document.body.textContent.includes('private-fixture-code'));
+      win.document.getElementById('gateway-mode').value = 'auto';
+      win.document.getElementById('gateway-form').dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true })); await sleep(30);
+      assert.equal(calls.find(call => call.method === 'PUT').body.mode, 'auto');
+      win.document.getElementById('gateway-test').click(); await sleep(30);
+      assert.ok(notices.some(message => message.includes('actual-fixture-model')));
+      assert.ok(calls.every(call => !call.url.includes('private-fixture-code')));
+    } finally { win.CitadelGatewaySettings.dispose(); isolated.window.close(); }
   });
 
   test('project discovery imports a folder and browser editor offers a Citadel return action', async () => {

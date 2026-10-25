@@ -44,7 +44,7 @@ Self-hosted, lightweight and secure. Runs on a VPS, a Mac or a spare laptop.
 <td width="50%" valign="top">
 
 ### 🤖 AI agent launcher
-Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries. Missing agents install with one click, once for every user. Optionally connect ChatGPT and select Claude Code models in **Settings → AI Gateway** ([experimental setup](docs/ai-gateway.md)).
+Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries. Missing agents install with one click, once for every user. Optionally connect Claude and ChatGPT, select models and use hot **Claude / ChatGPT / Auto** routing in **Settings → AI Gateway** ([experimental setup](docs/ai-gateway.md)).
 
 </td>
 </tr>

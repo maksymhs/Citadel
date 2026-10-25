@@ -1,96 +1,127 @@
 # AI Gateway for Claude Code
 
-Open **Settings → AI Gateway** as an administrator on the machine where Claude
-Code runs. This optional integration uses pinned
-[CLIProxyAPI v8.0.43](https://github.com/router-for-me/CLIProxyAPI/releases/tag/v8.0.43)
-to connect Claude Code to models available through your ChatGPT account.
-It is experimental: third-party protocol translation and account/model
-availability are not guaranteed by Citadel or the model providers.
+Open **Settings → AI Gateway** as an administrator. This optional integration
+runs pinned CLIProxyAPI 8.0.43 locally and routes Claude Code to your explicitly
+connected Claude and/or ChatGPT accounts. It is experimental: availability,
+subscription entitlement and third-party protocol compatibility must be checked
+with your accounts. It does not import existing CLI login caches.
 
-## Activate
+## Connect accounts
 
-1. Click **Install local gateway**. Citadel downloads the platform binary from
-   that release, verifies its SHA-256 against the release checksums, and installs
-   only the executable under `DATA_DIR/gateway`. Linux and macOS x64/arm64 are
-   supported; `tar` is required. No sudo or system service is installed.
-2. Click **Connect ChatGPT**. Open the displayed OpenAI device-login link and
-   enter the one-time code. Complete authorization in your own browser. If
-   requested, enable device login in ChatGPT security settings. Wait for
-   **ChatGPT connected**. Expired or failed logins can be started again.
-3. Choose planning, execution and small/background models. Defaults are
-   `gpt-6.1-sol`, `gpt-6-luna` and `gpt-6-luna`; these are preferences, not a claim
-   that your plan grants access. Enable **Use gateway for new Claude Code
-   sessions** and click **Save**. The gateway must start successfully before
-   activation is saved. Enabling/disabling the checkbox saves immediately; use
-   **Save** for later model edits. Change port 8317 while disabled if it is already in use.
-4. Click **Refresh status / models** for available model IDs. Update preferences
-   and save as needed. **Test model** sends a small request using the saved
-   execution model and your account allowance; it reports success or a bounded
-   error without returning generated text or provider response bodies.
-5. Open a **new project terminal** and type `claude`, or launch Claude using
-   Citadel’s agent action. The terminal prints **AI Gateway active** with the
-   configured models. New Claude sessions use `opusplan`: planning maps to the planning model and execution to
-   the execution model. Small/background requests use the small model alias.
+1. Click **Install local gateway**. Citadel downloads the pinned platform binary
+   and verifies its SHA-256, then installs only the executable under
+   `DATA_DIR/gateway`. Linux/macOS x64/arm64 and `tar` are supported. No sudo or
+   system service is installed.
+2. **Connect ChatGPT** starts a device login. Open the OpenAI link, enter the
+   one-time code and authorize in your browser. Enable device login in ChatGPT
+   security settings if requested. Wait for **ChatGPT connected**.
+3. **Connect Claude** shows a Claude authorization link. After approving it, your
+   browser may fail to open the localhost callback address. Copy that complete
+   address from the browser address bar into **Claude callback URL**, then click
+   **Finish Claude connection**. Wait for **Claude connected**. Submit this URL
+   only in Citadel, never in chat, logs or an issue. Expired flows can be started
+   again. The authorization is separate from native Claude Code login.
 
-New project terminal shells inherit the gateway's Anthropic-compatible endpoint
-and model aliases. `claude` typed in those shells uses that connection. Other
-commands started in the same shell also inherit those environment variables.
-System terminals and task-mesh headless jobs retain their existing setup.
-Existing terminal shells and running Claude processes are not changed: after
-activation, exit Claude and close/reopen the project terminal before trying
-again. Model changes apply to new shells/sessions. No shell profile or existing
-CLI login cache is edited. The gateway is local to each Citadel machine.
+Claude authorization uses CLIProxyAPI's internal OAuth endpoints with
+`is_webui=false`. This avoids its wildcard callback listener: there is no SSH
+forwarding, extra callback port or public listener. The final code exchange
+still happens in the proxy. ChatGPT device login retains its existing flow.
+A setup-only proxy stops once Claude authorization finishes.
 
-## Disable, restart and disconnect
+## Modes and model preferences
 
-Uncheck the enable box and save to stop the gateway and restore native mode for
-new launches. Sessions already using the gateway lose connectivity when it
-stops. To restart a failed process, disable and enable it. Enabled gateways
-resume when Citadel starts; a startup failure is visible in Settings and does
-not block the core panel. Citadel does not silently fall back to another account
-or model when the gateway fails.
+| Mode | Selection |
+| --- | --- |
+| ChatGPT only | ChatGPT/Codex supplies all three model roles |
+| Claude only | Your gateway-connected Claude account supplies all three roles |
+| Auto | Claude has priority; ChatGPT is the fallback on eligible quota/availability failures |
 
-**Disconnect** stops the gateway, cancels pending device login and removes its
-stored ChatGPT credentials from Citadel. It does not sign other CLIs out or
-revoke the account's authorization at the provider. Use your account security
-controls for provider-side revocation.
+Select a mode and model IDs for each provider, then **Save**. ChatGPT defaults
+remain Sol for planning and Luna for execution/background work. Claude defaults
+are Opus 5.5 / Sonnet 5.5 / Haiku 5.5 from the pinned catalog; defaults do not
+establish account access. **Refresh status / models** loads advertised model IDs.
+**Test model** sends a small execution-role request using your allowance and
+shows the returned model ID when available. Test each provider's mode separately
+before relying on Auto. Auto requires both accounts connected.
 
-Automatic quota fallback is not enabled in this integration. The earlier
-[protocol trial](gateway-trial.md) demonstrated an injected-429 alternate-model
-pool with a fake upstream; ordered fallback, live quota handling and general
-side-effect replay safety still need validation.
+Enable **Use gateway for Claude Code in new project terminals**. The checkbox
+saves immediately; **Save** applies later mode/model edits. Open a new project
+terminal and type `claude`. The terminal prints **AI Gateway active**.
+Project agent launches use the same configuration.
 
-## Data and security
+### Changing routes without restarting Claude
 
-The listener binds only to `127.0.0.1`. Its management interface, panel downloads,
-network discovery, request/error-body capture middleware and usage aggregation
-are disabled. Provider stdout/stderr are drained without being copied to Citadel
-logs. Setup/settings/test actions are audited without prompts or credentials.
+New shells use fixed model IDs: `citadel-planning`, `citadel-execution`,
+`citadel-small`. `opusplan` selects planning versus execution; the gateway maps
+those IDs to real upstream models. Saving mode or model changes updates the
+proxy's runtime configuration in place. The next request uses the updated map;
+an already in-flight request retains its original route. No CLI binary or
+provider identity is modified.
 
-Credentials and the local client key persist encrypted with Citadel's existing
-AES-GCM key in `app_config`. The proxy needs plaintext while running: Citadel
-materializes its own credential files and launch configuration in a private
-0700 temporary directory (Linux `/dev/shm` when available), with files set to
-0600. Refreshed credentials are checkpointed encrypted periodically and on clean
-shutdown; runtime files are removed after login when idle, when disabled, and on clean
-shutdown/disconnect. An abrupt kill
-can leave temporary files until host cleanup and can lose the latest refresh.
-On macOS or Linux without `/dev/shm`, temporary plaintext may reside on disk.
-Never share or back up this runtime directory as ordinary project content.
-Existing Claude/Codex OAuth caches are never imported. Third-party gateway
-execution has the same unprivileged account access as Citadel.
+**Existing v0.48.0 terminals need one reopen** to adopt these aliases. A session
+started with a concrete upstream model ID keeps requesting that ID and is not
+controlled by the role aliases. After adopting them, ordinary route/model edits
+do not require reopening Claude. Changing the shared context budget or local
+port still requires a new terminal; disable the gateway before changing ports.
 
-Claude's [gateway guide](https://code.claude.com/docs/en/llm-gateway) describes
-protocol compatibility; Anthropic does not support routing Claude Code to
-non-Claude models. OpenAI's [authentication guide](https://learn.chatgpt.com/docs/auth)
-describes ChatGPT/Codex device login, not a blanket compatibility guarantee for
-this third-party gateway. Respect account and workspace restrictions.
+Auto uses priority 100 for Claude, 50 for ChatGPT, fill-first selection and
+session affinity. A conversation on its fallback can stay there even when
+Claude recovers; a new conversation prefers the available primary. Select
+**Claude only** to force a return. This avoids switching providers on every
+message. Quota and transient availability failures can fail over; invalid
+requests, authentication, billing and policy-denial statuses are surfaced.
+If all eligible accounts are exhausted, the request fails explicitly.
 
-## Verification limits
+The context budget defaults to the previous conservative 200,000-token
+assumption and is declared with `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, avoiding the
+unknown-alias context warning. Set a budget supported by **every** eligible
+model. This is operator configuration, not verified model capacity. Requests
+already emitted and arbitrary tool side effects are not guaranteed replayable;
+streaming/live subscription interoperability still needs real-account tests.
 
-Lifecycle, encrypted persistence/resume, port conflicts, download verification,
-admin boundaries, project launch routing and the Settings UI have isolated
-regression tests. A real Linux release download/extraction was checked in a
-temporary directory. The protocol trial used the actual Claude Code client with
-fake upstream responses and a tool-result round trip. No live ChatGPT-authenticated
-model call or real macOS run is claimed yet.
+## Disable and disconnect
+
+Disabling stops the proxy and interrupts its dependent sessions; new terminals
+use native mode. A pending Claude authorization is cancelled locally when it is
+stopped. **Disconnect** removes both gateway accounts from Citadel and cancels
+pending login; it does not sign your native CLIs out or revoke the provider's
+account-side authorization. Enabled gateways resume after a Citadel restart.
+
+Project shells inherit the gateway endpoint and aliases, so other commands in
+those shells also inherit those variables. System shells and headless task-mesh
+jobs retain their own setup. No shell profile is edited.
+
+## Security and verification
+
+The listener binds to `127.0.0.1`. Its management API is now enabled only on that
+listener, with remote access disabled and a separate random key kept in private
+runtime memory/files, never returned to the browser. Citadel exposes only
+administrator-authenticated, origin-checked setup/settings/test/callback routes.
+OAuth callback state and redirect origin/path are validated, callback URLs never
+enter audit details, and responses use `Cache-Control: no-store`. Panel downloads,
+network discovery, usage aggregation and request/error-body capture are disabled.
+Provider stdout/stderr are discarded.
+
+Account tokens and the client key persist encrypted with Citadel's existing
+AES-GCM key in `app_config`. The proxy needs plaintext while running: its own
+credential files and launch configuration live in a private temporary directory
+(0700, files 0600; Linux `/dev/shm` when available). Refreshed credentials are
+checkpointed encrypted and cleaned up after idle login, disable or clean
+shutdown. Abrupt termination can leave temporary material until host cleanup and
+lose the latest refresh. Other systems may place runtime plaintext on disk.
+Gateway execution has the Citadel service account's privileges.
+
+Tests cover auth boundaries, callback validation, encryption, account separation,
+priority/alias generation, lifecycle, typed `claude` and Settings actions. The
+real pinned binary was checked for Claude OAuth initialization without a new
+callback listener and for hot OAuth-alias catalog changes using fixture files.
+The [routing trial](gateway-routing.md) verifies cross-protocol priority, an
+in-flight non-streaming request, tool-result history, injected 429 fallback and
+explicit pool exhaustion with fake upstreams. The operator separately reported
+Luna responding; no real Claude-to-ChatGPT subscription failover, arbitrary
+stream replay safety or real macOS validation is claimed.
+
+See [Claude Code gateway documentation](https://code.claude.com/docs/en/llm-gateway)
+and [OpenAI authentication documentation](https://learn.chatgpt.com/docs/auth).
+Anthropic does not support routing Claude Code to non-Claude models; provider
+account/workspace restrictions continue to apply.

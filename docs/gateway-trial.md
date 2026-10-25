@@ -41,5 +41,12 @@ gateway at the operator's request. No live ChatGPT provider call is claimed.
 Before relying on cross-model routing for autonomous work, validate actual model
 availability, long context, permitted edits and tool-result round trips. Ordered
 quota fallback, cancellation during a provider request and exhausted-pool
-behaviour still require live checks; the Settings integration does not enable
-automatic quota fallback.
+behaviour still require live checks; the Settings integration now offers opt-in Auto routing after both providers
+are connected. Live subscription and streaming edge cases remain to be checked.
+
+## Hot routing follow-up
+
+The [hot-routing trial](gateway-routing.md) verifies configuration reload, a fixed
+client alias, cross-protocol priority selection and injected-quota fallback with
+the pinned binary. It does not configure live subscriptions. Auto is an explicit choice in
+Settings, with both providers required.

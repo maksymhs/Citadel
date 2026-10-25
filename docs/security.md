@@ -61,10 +61,15 @@ backend binds only to loopback, with server-side authentication; browser session
 credentials are filtered at the proxy. It runs as the Citadel user and is not a
 project sandbox. Stopping it terminates its editor process group.
 
-The optional [AI Gateway](ai-gateway.md) requires administrator setup and access to gateway-enabled project terminals, binds to
-loopback and uses a separate ChatGPT login. Persistent credentials are encrypted;
-the external proxy needs private temporary plaintext files while running (Linux
-uses `/dev/shm` where available). Clean shutdown removes those files; abrupt
-termination can leave them until host cleanup. Request/error-body capture,
-management and panel downloads are disabled. Existing CLI OAuth caches are never
-imported. Model/account compatibility and live quota fallback are not guaranteed.
+The optional [AI Gateway](ai-gateway.md) requires administrator setup and access
+to gateway-enabled project terminals. It binds to loopback and uses separate
+Claude/ChatGPT authorization. Persistent credentials are encrypted; the external
+proxy needs private temporary plaintext files while running (Linux uses
+`/dev/shm` where available). Clean shutdown removes them; abrupt termination can
+leave temporary files until host cleanup. Request/error-body capture and panel
+downloads are disabled. The loopback management API requires a separate private
+key for Claude OAuth, with remote access disabled; its wildcard callback
+forwarder is not used. Browser callbacks validate pending state and redirect
+origin/path. Existing CLI OAuth caches are never imported. Stable aliases and
+explicit Claude/ChatGPT/Auto routing are supported; live account-pair
+compatibility and arbitrary streaming/tool replay remain unverified.

@@ -6,6 +6,7 @@ const audit = require('../services/auditService');
 
 async function gatewayRoutes(fastify) {
   fastify.addHook('preHandler', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
     await requireAuth(request, reply);
     if (reply.sent) return;
     if (request.user.role !== 'admin') return reply.status(403).send({ error: 'Administrator privileges are required.' });
@@ -13,10 +14,11 @@ async function gatewayRoutes(fastify) {
   });
   fastify.addHook('onReady', () => gateway.resume());
   fastify.addHook('onClose', () => gateway.close());
-  fastify.get('/api/settings/gateway', () => ({ gateway: gateway.status() }));
+  fastify.get('/api/settings/gateway', async () => { await gateway.refreshLogin(); return { gateway: gateway.status() }; });
   for (const [method, url, action, run] of [
     ['POST', '/install', 'gateway_installed', () => gateway.install()],
-    ['POST', '/login', 'gateway_login_started', () => gateway.loginStart()],
+    ['POST', '/login', 'gateway_login_started', request => gateway.loginStart(request.body?.provider || 'codex')],
+    ['POST', '/callback', 'gateway_callback_submitted', request => gateway.callback(request.body?.redirectUrl)],
     ['PUT', '', 'gateway_settings_saved', request => gateway.save(request.body || {})],
     ['DELETE', '/login', 'gateway_disconnected', () => gateway.disconnect()],
     ['POST', '/test', 'gateway_connection_tested', () => gateway.testConnection()],

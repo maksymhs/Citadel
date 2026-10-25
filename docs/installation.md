@@ -127,11 +127,11 @@ checks on a real Mac or a macOS VM; Linux trial checks need no host installation
 ### Optional AI Gateway
 
 Open **Settings → AI Gateway** as an administrator to install the local component,
-connect ChatGPT by device login, choose planning/execution models and enable it
+connect ChatGPT by device login and Claude by browser authorization, choose
+Claude/ChatGPT/Auto routing and planning/execution models, then enable it
 for Claude Code in new project terminals (including typing `claude`).
 Exit Claude and reopen an existing project terminal after activation. It binds only to loopback,
-requires no sudo and remains off by default. This experimental integration does
-not enable automatic quota fallback. See [setup and limitations](ai-gateway.md).
+requires no sudo and remains off by default. This experimental integration offers opt-in Auto fallback after both providers are connected. See [setup and limitations](ai-gateway.md).
 
 ### Project folders and VS Code
 

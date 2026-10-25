@@ -11,7 +11,8 @@ have been retired; historical user data remains available on disk.
 - [ ] Validate a real ChatGPT-authenticated provider session through that gateway.
 - [x] Add opt-in [AI Gateway Settings](ai-gateway.md) with local installation,
   ChatGPT device login, model aliases and connection test; keep native mode.
-- [ ] Validate live quota handling before enabling ordered model fallback.
+- [x] Add stable gateway aliases, Claude/ChatGPT/Auto modes and explicit Claude authorization.
+- [ ] Validate a real two-subscription quota failover and streamed response failures.
 - [ ] Assess Telegram using existing notification support first; add private-chat
   allowlists and narrow actions before arbitrary terminal control.
 - [ ] Build/run the Docker trial where socket access exists. Linux containers do

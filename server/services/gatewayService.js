@@ -9,6 +9,7 @@ const { promisify } = require('node:util');
 const { DATA_DIR } = require('../config');
 const { getDatabase } = require('../database/db');
 const { encrypt, decrypt } = require('../security/secrets');
+const { ALIASES, DEFAULTS, providerOf, aliasesFor, errorRules, requireConnections } = require('./gatewayRouting');
 
 const VERSION = '8.0.43';
 const RELEASE = `https://github.com/router-for-me/CLIProxyAPI/releases/download/v${VERSION}`;
@@ -19,12 +20,23 @@ const AUTH_KEY = 'ai.gateway.credentials';
 function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetchImpl = fetch, spawnImpl = spawn, execFileImpl = promisify(execFile), platform = process.platform, arch = process.arch } = {}) {
   const root = path.join(dataDir, 'gateway');
   const binary = path.join(root, 'cli-proxy-api');
-  let runtime = null, processHandle = null, loginHandle = null, login = null, lastError = null, busy = false, credentialTimer = null;
+  let runtime = null, processHandle = null, loginHandle = null, login = null, lastError = null, busy = false, credentialTimer = null, loginTimer = null, managementKey = null, pollingLogin = false;
   const read = (key) => database().prepare('SELECT value FROM app_config WHERE key = ?').get(key)?.value;
   const write = (key, value) => database().prepare(`INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(key, value, new Date().toISOString());
-  const config = () => ({ enabled: false, port: 8317, planningModel: 'gpt-6.1-sol', executionModel: 'gpt-6-luna', smallModel: 'gpt-6-luna', ...JSON.parse(read(KEY) || '{}') });
-  const connected = () => Boolean(read(AUTH_KEY));
+  const config = () => ({ ...DEFAULTS, enabled: false, port: 8317, planningModel: 'gpt-6.1-sol', executionModel: 'gpt-6-luna', smallModel: 'gpt-6-luna', ...JSON.parse(read(KEY) || '{}') });
+  function credentialEntries() {
+    const saved = read(AUTH_KEY);
+    return saved ? JSON.parse(decrypt(saved)) : {};
+  }
+  function connections() {
+    const result = { codex: false, claude: false };
+    for (const [name, text] of Object.entries(credentialEntries())) {
+      try { const provider = providerOf(name, JSON.parse(text)); if (provider) result[provider] = true; } catch { /* not a valid credential */ }
+    }
+    return result;
+  }
+  const connected = () => connections().codex;
   const installed = () => { try { return fs.lstatSync(binary).isFile() && !fs.lstatSync(root).isSymbolicLink(); } catch { return false; } };
   const supported = () => ['linux', 'darwin'].includes(platform) && ['x64', 'arm64'].includes(arch);
 
@@ -88,6 +100,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
         fs.writeFileSync(path.join(runtime, 'auth', name), text, { mode: 0o600 });
       }
     }
+    managementKey = crypto.randomBytes(32).toString('hex');
     writeRuntime();
   }
   function writeRuntime() {
@@ -98,13 +111,25 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       server: { host: '127.0.0.1', port: c.port, 'commercial-mode': true, discovery: { enabled: false } },
       // Upstream otherwise captures error request bodies even with request-log=false.
       observability: { logs: { debug: false, 'logging-to-file': false, 'request-log': false }, usage: { 'usage-statistics-enabled': false }, pprof: { enable: false } },
-      management: { 'secret-key': '', 'disable-control-panel': true, 'disable-auto-update-panel': true },
+      management: { 'allow-remote': false, 'secret-key': managementKey, 'disable-control-panel': true, 'disable-auto-update-panel': true },
       access: { 'api-keys': [key] },
-      oauth: { 'auth-dir': path.join(runtime, 'auth') },
-      routing: { retry: { 'request-retry': 0, 'max-retry-interval': 0 } },
+      oauth: { 'auth-dir': path.join(runtime, 'auth'), 'model-alias': aliasesFor(c), 'request-scoped-errors': { claude: errorRules(), codex: errorRules() } },
+      routing: { strategy: 'fill-first', 'session-affinity': true, 'session-affinity-rebind-on': 'quota', retry: { 'request-retry': 0, 'max-retry-interval': 0 } },
     };
+    for (const name of fs.readdirSync(path.join(runtime, 'auth'))) {
+      if (!/^[a-zA-Z0-9_.@+-]+\.json$/.test(name)) continue;
+      const file = path.join(runtime, 'auth', name);
+      if (!fs.lstatSync(file).isFile() || fs.lstatSync(file).size > 256 * 1024) continue;
+      try {
+        const metadata = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const provider = providerOf(name, metadata);
+        const priority = provider === 'claude' ? 100 : 50;
+        if (provider && metadata.priority !== priority) { metadata.priority = priority; fs.writeFileSync(file, JSON.stringify(metadata), { mode: 0o600 }); }
+      } catch { /* temporary or unrelated files do not become credentials */ }
+    }
+    // Pinned CLIProxyAPI watches this inode; rename replacement loses its watch.
     fs.writeFileSync(path.join(runtime, 'config.json'), JSON.stringify(proxy), { mode: 0o600 });
-    fs.writeFileSync(path.join(runtime, 'launch.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${c.port}`, token: key, planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel }), { mode: 0o600 });
+    fs.writeFileSync(path.join(runtime, 'launch.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${c.port}`, token: key, planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel, mode: c.mode, aliases: ALIASES, contextTokens: c.contextTokens }), { mode: 0o600 });
   }
   function spawnGateway(args) {
     const child = spawnImpl(binary, ['--config', path.join(runtime, 'config.json'), '--local-model', ...args], {
@@ -117,10 +142,10 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
   function request(url, options = {}) {
     return fetchImpl(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(15000) });
   }
-  async function api(route, body) {
+  async function api(route, body, { management = false, method } = {}) {
     const c = config();
     if (!processHandle) throw new Error('Gateway is not running.');
-    const res = await request(`http://127.0.0.1:${c.port}${route}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const res = await request(`http://127.0.0.1:${c.port}${route}`, { method: method || (body ? 'POST' : 'GET'), headers: { authorization: `Bearer ${management ? managementKey : token()}`, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' }, ...(body ? { body: JSON.stringify(body) } : {}) });
     if (!res.ok) { await res.body?.cancel(); throw new Error(`Gateway request failed (HTTP ${res.status}). Check account access and model availability.`); }
     // Neither provider error bodies nor generated content are reflected to clients.
     const text = await boundedBody(res, 1024 * 1024);
@@ -185,21 +210,42 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     const c = config();
     return { version: VERSION, supported: supported(), installed: installed(), enabled: c.enabled, running: Boolean(processHandle), connected: connected(), port: c.port,
       planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel,
-      busy, error: lastError, login: login ? { ...login } : null };
+      mode: c.mode, contextTokens: c.contextTokens, claudePlanningModel: c.claudePlanningModel, claudeExecutionModel: c.claudeExecutionModel, claudeSmallModel: c.claudeSmallModel, connections: connections(), aliases: ALIASES,
+      busy, error: lastError, login: login ? { state: login.state, provider: login.provider, url: login.url, code: login.code, expiresAt: login.expiresAt } : null };
   }
-  async function loginStart() {
+  async function loginStart(provider = 'codex') {
     return exclusive(async () => {
       if (!installed()) throw new Error('Install the gateway first.');
-      if (loginHandle) return status();
+      if (!['codex', 'claude'].includes(provider)) throw new Error('Unknown gateway provider.');
+      if (loginHandle || ['waiting_callback', 'exchanging'].includes(login?.state)) throw new Error('Finish or disconnect the pending login first.');
       ensureRuntime();
-      login = { state: 'starting' };
+      if (provider === 'claude') {
+        await start({ setup: true });
+        try {
+          // is_webui=false avoids the upstream wildcard callback listener. The
+          // operator submits the redirect URL through Citadel's authenticated UI.
+          const result = await api('/v8/management/oauth/auth-url?provider=claude&is_webui=false', null, { management: true });
+          const url = new URL(result.url);
+          const redirect = new URL(url.searchParams.get('redirect_uri'));
+          if (url.origin !== 'https://claude.ai' || url.pathname !== '/oauth/authorize' || !result.state || url.searchParams.get('state') !== result.state || redirect.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(redirect.hostname) || redirect.pathname !== '/callback' || redirect.port !== '54545') throw new Error();
+          login = { provider, state: 'waiting_callback', url: url.href, oauthState: result.state, redirect: redirect.href, expiresAt: new Date(Date.now() + 5 * 60000).toISOString() };
+          clearInterval(loginTimer);
+          loginTimer = setInterval(() => { refreshLogin().catch(() => {}); }, 2000); loginTimer.unref();
+          return status();
+        } catch {
+          login = { provider, state: 'failed' };
+          if (!config().enabled) await stopSetupGateway();
+          throw new Error('Could not start Claude authorization. Try connecting again.');
+        }
+      }
+      login = { provider, state: 'starting' };
       const child = spawnGateway(['--codex-device-login', '--no-browser']);
       loginHandle = child;
       let output = '';
       const capture = chunk => {
         output = (output + chunk.toString()).slice(-8192);
         const code = output.match(/Codex device code:\s*([A-Z0-9-]{4,32})/i)?.[1];
-        if (code && login.state !== 'waiting') login = { state: 'waiting', url: 'https://auth.openai.com/codex/device', code, expiresAt: new Date(Date.now() + 15 * 60000).toISOString() };
+        if (code && login.state !== 'waiting') login = { provider, state: 'waiting', url: 'https://auth.openai.com/codex/device', code, expiresAt: new Date(Date.now() + 15 * 60000).toISOString() };
       };
       child.stdout.on('data', capture); child.stderr.on('data', capture);
       const timer = setTimeout(() => child.kill('SIGTERM'), 16 * 60000); timer.unref();
@@ -209,7 +255,8 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
         if (loginHandle !== child) return;
         loginHandle = null;
         try { persistCredentials(); } catch { lastError = 'Could not save gateway credentials.'; }
-        login = { state: code === 0 && connected() ? 'connected' : 'failed' };
+        login = { provider, state: code === 0 && connected() ? 'connected' : 'failed' };
+        if (processHandle) writeRuntime();
         releaseIdleRuntime();
       });
       return status();
@@ -220,10 +267,51 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     await new Promise((resolve, reject) => { server.once('error', () => reject(new Error('Gateway port is already in use. Choose another port.'))); server.listen(port, '127.0.0.1', resolve); });
     await new Promise(resolve => server.close(resolve));
   }
-  async function start() {
+  async function callback(input) {
+    return exclusive(async () => {
+      if (!login || login.provider !== 'claude' || login.state !== 'waiting_callback' || Date.now() >= Date.parse(login.expiresAt)) throw new Error('Claude login is not pending or expired. Connect again.');
+      if (typeof input !== 'string' || input.length > 8192) throw new Error('Paste the complete callback URL from the authorization browser tab.');
+      let url;
+      try { url = new URL(input); } catch { throw new Error('Paste the complete callback URL from the authorization browser tab.'); }
+      const expected = new URL(login.redirect);
+      if (url.origin !== expected.origin || url.pathname !== expected.pathname || url.hash || url.searchParams.get('state') !== login.oauthState || !url.searchParams.get('code') || input.length > 8192) throw new Error('Callback does not match this pending Claude login.');
+      await api('/v8/management/oauth/callback', { provider: 'claude', redirect_url: url.href }, { management: true });
+      login = { ...login, state: 'exchanging' };
+      return status();
+    });
+  }
+  async function stopSetupGateway() {
+    clearInterval(credentialTimer);
+    const child = processHandle; processHandle = null;
+    await stopChild(child);
+    if (runtime) persistCredentials();
+    releaseIdleRuntime();
+  }
+  async function refreshLogin() {
+    if (pollingLogin || busy || !processHandle || login?.provider !== 'claude' || !['waiting_callback', 'exchanging'].includes(login.state)) return;
+    pollingLogin = true;
+    const pending = login;
+    try {
+      let result;
+      if (Date.now() >= Date.parse(pending.expiresAt)) result = { status: 'error' };
+      else result = await api(`/v8/management/oauth/status?state=${encodeURIComponent(pending.oauthState)}`, null, { management: true });
+      if (login !== pending || busy || result.status === 'wait') return;
+      if (!['ok', 'error'].includes(result.status)) return;
+      clearInterval(loginTimer);
+      persistCredentials();
+      login = { provider: 'claude', state: result.status === 'ok' && connections().claude ? 'connected' : 'failed' };
+      if (config().enabled) writeRuntime(); else await stopSetupGateway();
+    } catch {
+      if (Date.now() >= Date.parse(pending.expiresAt) && login === pending) {
+        clearInterval(loginTimer); login = { provider: 'claude', state: 'failed' };
+        if (!config().enabled) await stopSetupGateway();
+      }
+    } finally { pollingLogin = false; }
+  }
+  async function start({ setup = false } = {}) {
     if (processHandle) return;
     if (!installed()) throw new Error('Install the gateway first.');
-    if (!connected()) throw new Error('Connect ChatGPT first.');
+    if (!setup) requireConnections(config(), connections());
     ensureRuntime(); writeRuntime();
     await freePort(config().port);
     lastError = null;
@@ -260,12 +348,21 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     return exclusive(async () => {
       const c = config();
       if (typeof input.enabled !== 'boolean') throw new Error('enabled must be a boolean.');
-      for (const key of ['planningModel', 'executionModel', 'smallModel']) {
+      for (const key of ['planningModel', 'executionModel', 'smallModel', 'claudePlanningModel', 'claudeExecutionModel', 'claudeSmallModel']) {
         if (input[key] !== undefined) {
           if (typeof input[key] !== 'string' || !MODEL.test(input[key])) throw new Error('Invalid model identifier.');
           c[key] = input[key];
         }
       }
+      if (input.mode !== undefined) {
+        if (!['chatgpt', 'claude', 'auto'].includes(input.mode)) throw new Error('Mode must be Claude, ChatGPT or Auto.');
+        c.mode = input.mode;
+      }
+      if (input.contextTokens !== undefined) {
+        if (!Number.isInteger(input.contextTokens) || input.contextTokens < 32000 || input.contextTokens > 1000000) throw new Error('Context budget must be an integer between 32000 and 1000000 tokens.');
+        c.contextTokens = input.contextTokens;
+      }
+      if (input.enabled) requireConnections(c, connections());
       if (input.port !== undefined) {
         if (!Number.isInteger(input.port) || input.port < 1024 || input.port > 65535) throw new Error('Port must be between 1024 and 65535.');
         if (processHandle && c.port !== input.port) throw new Error('Disable the gateway before changing its port.');
@@ -277,7 +374,9 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       write(KEY, JSON.stringify(c));
       try {
         if (enabled) { await start(); c.clientKey = config().clientKey; c.enabled = true; write(KEY, JSON.stringify(c)); if (runtime) writeRuntime(); }
-        else { clearInterval(credentialTimer); const child = processHandle; processHandle = null; await stopChild(child); if (runtime) persistCredentials(); releaseIdleRuntime(); }
+        else {
+          if (login?.provider === 'claude' && ['waiting_callback', 'exchanging'].includes(login.state)) { clearInterval(loginTimer); login = { provider: 'claude', state: 'failed' }; }
+          clearInterval(credentialTimer); const child = processHandle; processHandle = null; await stopChild(child); if (runtime) persistCredentials(); releaseIdleRuntime(); }
       } catch (err) { lastError = err.message; throw err; }
       return status();
     });
@@ -288,9 +387,9 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
   }
   async function testConnection() {
     const c = config();
-    const result = await api('/v1/messages', { model: c.executionModel, max_tokens: 16, messages: [{ role: 'user', content: 'Reply OK.' }] });
+    const result = await api('/v1/messages', { model: ALIASES.execution, max_tokens: 64, messages: [{ role: 'user', content: 'Reply OK.' }] });
     if (result.type !== 'message' || !Array.isArray(result.content) || result.error) throw new Error('Gateway did not return a valid model response.');
-    return { ok: true, model: c.executionModel };
+    return { ok: true, model: MODEL.test(result.model || '') ? result.model : ALIASES.execution, mode: c.mode };
   }
   function launchOptions() {
     if (!config().enabled) return null;
@@ -298,7 +397,8 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     return { command: process.execPath, args: [path.resolve(__dirname, '../../scripts/gateway-launch.js'), path.join(runtime, 'launch.json')] };
   }
   async function close() {
-    clearInterval(credentialTimer);
+    clearInterval(credentialTimer); clearInterval(loginTimer);
+    login = login && ['connected', 'failed'].includes(login.state) ? login : null;
     const children = [loginHandle, processHandle]; loginHandle = null; processHandle = null;
     await Promise.all(children.map(stopChild));
     if (runtime) {
@@ -316,6 +416,6 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     });
   }
   async function resume() { if (config().enabled) { try { await start(); } catch { lastError = 'Gateway could not resume. Open Settings → AI Gateway.'; } } }
-  return { status, install, loginStart, save, models, testConnection, launchOptions, close, disconnect, resume };
+  return { status, install, loginStart, save, models, testConnection, launchOptions, close, disconnect, resume, callback, refreshLogin };
 }
 module.exports = { ...createGatewayService(), createGatewayService, VERSION };

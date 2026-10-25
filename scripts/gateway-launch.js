@@ -10,8 +10,9 @@ function gatewayEnvironment(base, settings) {
     if (/^(ANTHROPIC_|CLAUDE_CODE_(OAUTH_TOKEN|USE_BEDROCK|USE_VERTEX|USE_FOUNDRY))/.test(name)) delete env[name];
   }
   return { ...env, ANTHROPIC_BASE_URL: settings.baseUrl, ANTHROPIC_AUTH_TOKEN: settings.token,
-    ANTHROPIC_MODEL: 'opusplan', ANTHROPIC_DEFAULT_OPUS_MODEL: settings.planningModel,
-    ANTHROPIC_DEFAULT_SONNET_MODEL: settings.executionModel, ANTHROPIC_DEFAULT_HAIKU_MODEL: settings.smallModel,
+    ANTHROPIC_MODEL: 'opusplan', ANTHROPIC_DEFAULT_OPUS_MODEL: settings.aliases?.planning || settings.planningModel,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: settings.aliases?.execution || settings.executionModel, ANTHROPIC_DEFAULT_HAIKU_MODEL: settings.aliases?.small || settings.smallModel,
+    ...(settings.contextTokens ? { CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(settings.contextTokens) } : {}),
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
 }
 function main() {
@@ -21,7 +22,7 @@ function main() {
   try {
     const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!binary || !settings.token || !/^http:\/\/127\.0\.0\.1:\d+$/.test(settings.baseUrl)) throw new Error();
-    if (shellMode) console.error(`[Citadel] AI Gateway active for this project terminal: planning ${settings.planningModel}, execution ${settings.executionModel}.`);
+    if (shellMode) console.error(`[Citadel] AI Gateway active for this project terminal: stable model aliases; routing at launch: ${settings.mode || 'chatgpt'}. Change routes in Settings → AI Gateway.`);
     const child = spawn(binary, shellMode ? args : ['--model', 'opusplan', ...args], { stdio: 'inherit', env: gatewayEnvironment(process.env, settings) });
     child.on('error', () => { console.error('Could not launch Claude Code through AI Gateway.'); process.exitCode = 1; });
     child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
