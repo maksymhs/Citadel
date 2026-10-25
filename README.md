@@ -80,7 +80,7 @@ Online/offline, CPU, memory, disk, latency and 24 h / 7 d availability for every
 <td valign="top">
 
 ### 🧩 Distributed task mesh
-A pull-based work queue so one orchestrator agent can split work across nodes, with a dependency-free **MCP server**. See [task mesh](docs/task-mesh.md). Give a whole team one goal with roles, dependencies, acceptance criteria and an animated office, keep a Markdown wiki per project, and let agents learn from failures and corrections in [Work, Docs and Learning](docs/missions.md).
+A pull-based work queue so one orchestrator agent can split work across nodes, with a dependency-free **MCP server**. See [task mesh](docs/task-mesh.md). Give a whole team one goal with roles, dependencies and acceptance criteria that need a human accept/reject before they count as done, keep a Markdown wiki per project, and let agents learn from failures and corrections in [Work, Docs and Learning](docs/missions.md).
 
 </td>
 <td valign="top">
@@ -150,6 +150,10 @@ Every extra capability is opt-in:
 | `--check-only` | Preview what the installer would do |
 
 **Windows** runs inside WSL2 (Ubuntu); **macOS** gets a menu bar icon. Updating, uninstalling, installing from a clone, laptop mode, tunnels and more are in [docs/installation.md](docs/installation.md).
+
+To just look at the panel without installing anything on the machine, there is a development-only Docker image: `docker compose up --build` (see [docs/installation.md](docs/installation.md#try-it-without-installing-docker)). It is not the supported deployment.
+
+Projects discovers folders under `PROJECTS_DIR`; import a suggestion and use **More actions → Open in VS Code** for local or SSH editing. [Details](docs/installation.md#project-folders-and-vs-code).
 
 ### Requirements
 

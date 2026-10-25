@@ -99,6 +99,53 @@ When it finishes, the installer prints the panel address (a **QR code** too). Wi
 
 You can override the source repository or branch with the `CITADEL_REPO_URL` and `CITADEL_REPO_BRANCH` environment variables.
 
+## Try it without installing (Docker)
+
+To look at the panel on a machine you do not want to install on, there is a **development-only** image. It is not the supported deployment: it has no systemd, no host Docker socket and no privileges, so the updater, tunnels, `doctor`, laptop mode and the privileged System Terminal do not apply inside it (the updater is disabled).
+
+```bash
+git clone https://github.com/maksymhs/Citadel.git && cd Citadel
+docker compose up --build
+```
+
+Open `http://127.0.0.1:3001`. Set `CITADEL_TRIAL_PORT=3010` to choose another port before running Compose. The first-run **setup code** stays inside the container's data volume, reachable only with shell access there:
+
+```bash
+docker compose exec citadel cat /data/setup-code
+```
+
+State (SQLite, projects, mission workspaces) lives in the `citadel-data` volume: `docker compose down` keeps it, `docker compose down -v` discards it. The port is published on loopback only; change it in `compose.yaml` if you deliberately want LAN access.
+
+The image includes `tmux` and `git`, so persistent terminals and projects work. AI CLI agents are **not** installed — install them inside the container only for a throwaway test. To use your own repositories, add a bind mount under `/data/projects` in `compose.yaml`.
+
+This image is for trying Citadel out, not for running it. For anything real, use the installer above so tmux, agents, tunnels and updates are managed on the host.
+
+This image exercises **Linux**, including when Docker runs on a Mac. It does not
+simulate macOS or validate launchd, Keychain or macOS permissions. Run platform
+checks on a real Mac or a macOS VM; Linux trial checks need no host installation.
+
+### Project folders and VS Code
+
+Opening **Projects**, or clicking **Refresh**, scans immediate non-hidden folders
+under `PROJECTS_DIR`. Suggestions are read-only; choose **Import folder** to
+register one. Registered projects and associated repositories are excluded, as
+are directory symlinks and `node_modules`. Scans stop after 500 entries or 100
+suggestions and never recurse or execute repository code. Use **Import folder**
+for other folders or to choose a different project name.
+
+A project's **More actions → Open in VS Code** prepares a desktop link. Choose
+**This computer** only when that exact project path exists on your computer.
+For a VPS or another machine, install the
+[Remote - SSH extension](https://code.visualstudio.com/docs/remote/ssh) locally
+and enter a host alias from your local SSH configuration (for example
+`citadel-vps`). Citadel remembers the alias per machine in this browser; SSH keys
+and passwords remain in your SSH tools. Click **Open VS Code** to launch it.
+The link uses the documented
+[local and remote URL formats](https://code.visualstudio.com/docs/configure/command-line#_opening-vs-code-with-urls).
+This integration adds no editor server or listening port. Container paths belong
+to the container; use VS Code Dev Containers or a separately configured SSH host
+for those paths rather than the host's local-file option.
+
 ## Updating an existing installation
 
 Re-running the same installer upgrades in place: it pulls the latest code from the configured branch, reinstalls dependencies, refreshes the service unit and helper scripts, and restarts Citadel. Your data, `.env` and projects are preserved.

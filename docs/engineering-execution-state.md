@@ -376,3 +376,54 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   test command; no paid inference is added; not exercised end-to-end with a live
   sentinel and real agent quotas. Docs writes are plain checkout edits (no commit
   or merge gate).
+
+## 117. Acceptance gate, budget, failure classes and doc relations
+
+- Added a real acceptance gate: an autonomous task with non-empty `acceptance`
+  now ends in `review` (migration `014_review_budget_docs` adds
+  `reviewed_at`, `reviewed_by`, `failure_kind`, `docs_linked`), the mission
+  reports `review` until an operator accepts or rejects, `reviewTask` moves an
+  accepted task to `done` and a rejected one to `failed` with
+  `blocked_reason = 'rejected'`. Tasks without criteria still auto-complete.
+- Persisted the plan and a `mission_plan_versions` row before the first subtask
+  is enqueued, and added a test that inspects `missions.plan` during the first
+  `taskService.enqueue` call.
+- Added `CITADEL_AUTONOMOUS_DAILY_BUDGET` (default 50, `0` pauses, bounded
+  0..10000); `claimTask` refuses new autonomous attempts once today's count is
+  reached, while manual queue work and terminals are untouched. `/api/missions/meta`
+  and the Work view expose the counter.
+- Classified failures deterministically (`quota|auth|network|tests|interrupted|
+  agent|unknown`) with a `retryable` hint; the class is stored as
+  `task.failure_kind` and shown in the task detail.
+- Added `document_links` and `document_refs`: `[[wiki]]` links are re-synced on
+  create/update/read, pages expose `links`/`backlinks`/`refs`, and a task result
+  or handoff links matching pages once (`docs_linked`). Task links accumulate
+  instead of replacing each other, `existingDoc` resolves only real files, and
+  the Docs reader shows links/backlinks/refs.
+- Moved redaction into `server/security/redact.js` and applied it to mission
+  goals, plan titles/descriptions/acceptance/refs, note text and review notes;
+  fixed `Bearer` handling and added `econnrefused` to the network class.
+- Added `POST /api/tasks/:id/retry` and a task-detail **Retry task** action for
+  rejected/failed tasks while attempts remain; it clears stale result/lease
+  state, keeps the review note and reopens the mission (`finished_at = NULL`).
+- Removed the Office tab, its CSS, its jsdom test and its documentation. A
+  mission in `review` can now be cancelled from the UI, and its review tasks are
+  cancelled through the normal cascade.
+- Verified: `npm test` 537 tests (536 pass, 1 skipped), `npm run lint` clean,
+  including `missions-budget`, `db-upgrade`, `docs` relations and UI smoke
+  against the board. Not exercised with a live sentinel or a real provider
+  budget; the budget is a local attempt counter, not a spend meter.
+
+## 118 — Development-only Docker trial image
+- **What**: Added `Dockerfile` (multi-stage, `node:22-bookworm-slim`, non-root `node` user, no Docker socket, `tmux`+`git`, healthcheck via `/api/auth/status`), `compose.yaml` (loopback-only port, named `citadel-data` volume, updater disabled, `init: true`) and `.dockerignore` (excludes `.env`, `data/`, `node_modules/`, `public/vendor/`, graphs, tests). Documented as development-only in `docs/installation.md` ("Try it without installing"), one line in `README.md`, and ADR-010 in `docs/decisions.md`.
+- **Why**: Let someone build once and try the panel without running `install.sh`, creating a systemd unit or giving sudo. Not a supported deployment: no systemd, tunnels, updater, host `doctor`, laptop mode or agent binaries inside.
+- **Verified**: `docker compose config` parses and resolves the build/volume/port mapping. **Not verified: the image was not built.** The working user (`citadel`) is not in the `docker` group and passwordless `sudo` is unavailable on this host, so `docker build` cannot connect to the socket. Build and run need to be checked where Docker access exists (or by adding the user to the `docker` group).
+- **Gaps**: image not built/run here; no CI job (project has none by design). Agent binaries and bind-mounted projects for real use remain manual.
+
+## 119 — Repair Work guarantees, discover projects, hand off to VS Code and measure core costs
+- **What**: Fixed the trial Docker build input for `postinstall` and moved its default loopback port to configurable `CITADEL_TRIAL_PORT=3001`. Added migration 015: daily autonomous usage increments per claim in the existing SQLite transaction and survives task deletion; legacy document refs are backfilled. Plan publication and revision roll back together with their task changes. Quota exhaustion stops looping and acceptance rejection cannot be turned into a quota retry.
+- **Security and Docs**: Redaction covers JSON/quoted credentials, Basic/Bearer values, credential URLs and private-key blocks; autonomous prompts/results/errors use it. Handoff linking checks canonical paths, regular files and size. Directly written Markdown is registered during linking; failed links remain retryable and refs accumulate across updates. Unchanged Docs reads and stable failure classifications avoid repeated writes.
+- **Projects/editor**: Projects automatically scans immediate folders on entry/Refresh, with a 500-entry/100-suggestion bound, no symlink traversal, implicit import, code execution or resident watcher. Explicit imports reuse the audited endpoint. A separate `project-tools.js` module prepares desktop VS Code links for local or configured SSH aliases, without adding an editor server or storing SSH credentials.
+- **Performance**: Added `scripts/benchmark.js` (`npm run benchmark`), isolated with all runtime paths under a temporary directory and no listening port/agents/terminals. Measured 20-project core workload; 160 read requests previously changed 160 session rows. Throttling informational session activity timestamps to once/minute reduced that to zero, retaining expiry checks on every request. Sample RSS 106–113 MiB; details and measurement limits in `docs/performance-baseline.md`.
+- **Verified**: Area regression suites, actual-server jsdom UI smoke including discovery/import and encoded SSH links; final `npm test`: 550 tests, 549 pass, 1 skipped, 0 fail. Full suite launched with DATA_DIR/DATABASE_PATH/PROJECTS_DIR/LOGS_DIR and CITADEL_MISSIONS_DIR overridden to a temporary directory. `npm run lint`, `git diff --check` and `docker compose config --quiet` pass.
+- **Gaps**: Docker image still not built/run (current account cannot access the socket); no real desktop VS Code/SSH launch, real Mac, live provider or full-service/terminal load benchmark. No external contribution selected/published. `docs/citadel-plan.md` tracks these follow-ups and `docs/contribution-workflow.md` describes the exercise. No installer/service/release commands, commits or pushes performed.

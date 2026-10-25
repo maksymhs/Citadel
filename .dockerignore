@@ -1,0 +1,20 @@
+# Never bake secrets, runtime data or host state into the trial image.
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Generated or host-specific; the image builds its own.
+node_modules/
+public/vendor/
+graphify-out/
+
+# Not needed at runtime.
+.git/
+.github/
+tests/
+screenshots/
+coverage/

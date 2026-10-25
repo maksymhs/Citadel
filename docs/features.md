@@ -5,7 +5,7 @@ Which files make up each feature. Start here when a task is phrased in product t
 | Feature | Server (routes → services) | UI (`public/js/`) | Tests (`tests/`) | Guide |
 | --- | --- | --- | --- | --- |
 | Sign-in, sessions, first-run setup code | `authRoutes` → `security/auth.js`, `security/setupCode.js` | `app.js` (`renderSetupView`, `renderLoginView`) | `auth`, `setup-code`, `security`, `hardening` | [security](security.md) |
-| Projects and Git repositories | `projectRoutes`, `gitRoutes` → `projectService`, `gitService`, `gitCredentialsService` | `app.js` (`renderProjectsView`), `repos.js` | `projects`, `project-repos`, `git`, `gitcred` | [installation](installation.md) |
+| Projects and Git repositories | `projectRoutes`, `gitRoutes` → `projectService`, `gitService`, `gitCredentialsService` | `app.js` (`renderProjectsView`), `repos.js`, `project-tools.js` | `projects`, `project-repos`, `project-discovery`, `ui-smoke`, `git`, `gitcred` | [installation](installation.md) |
 | Persistent terminals | `terminalRoutes`, `wsTerminal` → `terminalManager` | `app.js` (`renderWorkspaceView`, terminal tabs) | `terminal` | [architecture §7](architecture.md) |
 | AI agents (launch, one-click install) | `agentRoutes` → `agentRegistry`, `agentInstallService` | `app.js` | `agents`, `agent-install` | [architecture §7](architecture.md) |
 | Credential vault, `citadel-creds` | `secretRoutes` → `secretStore`, `secretSyncService`, `security/secrets.js`; CLI `scripts/citadel-creds.js` | `app.js` (Settings) | `secrets`, `secret-sync`, `gitcred` | [security](security.md) |
@@ -20,7 +20,7 @@ Which files make up each feature. Start here when a task is phrased in product t
 | Tailscale private address | `tailscaleRoutes` → `tailscaleService` | `settings-tailscale.js` | `tailscale` | [remote-access](remote-access.md) |
 | Activity, audit, service log, metrics | `logRoutes`, `systemRoutes` → `logService`, `auditService`, `serviceLogService` | `activity.js` | `logs`, `system`, `ui-smoke` | [installation](installation.md) |
 | Task mesh, sentinel, MCP | `taskRoutes` → `taskService`; `scripts/sentinel*.js`, `citadel-mcp.js` | — | `tasks`, `task-*`, `sentinel*`, `mcp` | [task-mesh](task-mesh.md) |
-| Work, Docs, Learning (autonomous loop, Markdown wiki, memory) | `missionRoutes`/`learningRoutes`/`docRoutes` → `missionService`/`learningService`/`docService`, `taskService` | `missions.js`, `knowledge.js` | `missions*`, `learning`, `docs`, `knowledge-http`, `ui-smoke` | [missions](missions.md) |
+| Work, Docs, Learning (autonomous loop, Markdown wiki, memory) | `missionRoutes`/`learningRoutes`/`docRoutes` → `missionService`/`learningService`/`docService`, `taskService` | `missions.js`, `knowledge.js` | `missions*`, `missions-budget`, `learning`, `docs`, `knowledge-http`, `ui-smoke` | [missions](missions.md) |
 | Fleet (legacy URL + token hosts) | `fleetRoutes` → `fleetService` | `fleet.js` | `fleet`, `ui-smoke` | [architecture §4](architecture.md) |
 | Domain publishing, Docker (optional) | `proxyRoutes`, `dockerRoutes` → `proxyProvider`, `dockerService` | `deployments.js` | `integrations`, `ui-smoke` | [architecture](architecture.md) |
 | Modules and plugins | `moduleRoutes`, `pluginRoutes` → `modules/registry.js`, `pluginLoader` | `app.js` | `modules`, `plugins` | [architecture §2](architecture.md) |

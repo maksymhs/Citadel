@@ -1,0 +1,35 @@
+# Dev / trial only — NOT the supported deployment.
+#
+#   docker compose up --build
+#   open http://127.0.0.1:3001
+#
+# The first-run setup code lives inside the volume:
+#   docker compose exec citadel cat /data/setup-code
+#
+# State (SQLite, projects, mission workspaces) stays in the `citadel-data`
+# volume, so `docker compose down` keeps it and `down -v` discards it.
+
+services:
+  citadel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: citadel:dev
+    init: true
+    # Bound to loopback only. Change to "3000:3000" deliberately for LAN tests.
+    ports:
+      - "127.0.0.1:${CITADEL_TRIAL_PORT:-3001}:3000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /data
+      DATABASE_PATH: /data/citadel.db
+      PROJECTS_DIR: /data/projects
+      LOGS_DIR: /data/logs
+      CITADEL_MISSIONS_DIR: /data/missions
+      CITADEL_SELF_UPDATE: "0"
+    volumes:
+      - citadel-data:/data
+
+volumes:
+  citadel-data:
