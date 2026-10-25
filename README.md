@@ -189,7 +189,8 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 
 | Latest | |
 | --- | --- |
-| **[v0.47.0](https://github.com/maksymhs/Citadel/releases/tag/v0.47.0)** | Optional AI Gateway activation and model settings; browser VS Code without SSH, with return to Citadel |
+| **[v0.48.0](https://github.com/maksymhs/Citadel/releases/tag/v0.48.0)** | Gateway applies when typing claude in new project terminals; terminal VS Code button and dark editor defaults |
+| [v0.47.0](https://github.com/maksymhs/Citadel/releases/tag/v0.47.0) | Optional AI Gateway activation and model settings; browser VS Code without SSH, with return to Citadel |
 | [v0.46.0](https://github.com/maksymhs/Citadel/releases/tag/v0.46.0) | Simpler Citadel: Project hub removed, historical data preserved, admin-only task orchestration |
 | [v0.45.0](https://github.com/maksymhs/Citadel/releases/tag/v0.45.0) | One optional Project hub with tasks and priorities, Markdown, a code graph and live execution traces |
 | [v0.44.0](https://github.com/maksymhs/Citadel/releases/tag/v0.44.0) | Work, Docs and Learning with acceptance review and attempt budgets; project discovery, VS Code links and a Linux Docker trial |

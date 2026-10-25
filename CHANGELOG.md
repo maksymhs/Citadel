@@ -2,6 +2,16 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.48.0](https://github.com/maksymhs/Citadel/releases/tag/v0.48.0) · 2026-10-25
+
+### Added
+
+- **editor**: Open browser VS Code from project terminals with dark defaults
+
+### Fixed
+
+- **gateway**: Route Claude typed in project terminals through the enabled gateway
+
 ## [0.47.0](https://github.com/maksymhs/Citadel/releases/tag/v0.47.0) · 2026-10-25
 
 ### Added
