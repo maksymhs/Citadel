@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.47.0](https://github.com/maksymhs/Citadel/releases/tag/v0.47.0) · 2026-10-25
+
+### Added
+
+- **workspace**: Add AI Gateway settings and browser VS Code with return to Citadel
+
 ## [0.46.0](https://github.com/maksymhs/Citadel/releases/tag/v0.46.0) · 2026-10-25
 
 ### Changed
