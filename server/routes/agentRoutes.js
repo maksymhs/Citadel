@@ -43,20 +43,21 @@ async function agentRoutes(fastify) {
 
   // Install a CLI agent by running its official one-line installer in a terminal
   fastify.post('/api/agents/install', async (request, reply) => {
-    const { agentId } = request.body || {};
+    const { agentId, action = 'install' } = request.body || {};
+    if (request.user.role !== 'admin') return reply.status(403).send({ error: 'Administrator privileges are required.' });
 
     if (!agentId) {
       return reply.status(400).send({ error: 'agentId is required.' });
     }
 
     try {
-      const result = agentRegistry.installAgent({ agentId });
+      const result = agentRegistry.installAgent({ agentId, action });
       auditService.logAction({
         userId: request.user.id,
         action: 'agent_install_started',
         targetType: 'agent',
         targetId: agentId,
-        details: { sessionId: result.session.sessionId, command: result.agent.installCommand },
+        details: { action, sessionId: result.session.sessionId, command: result.agent.installCommand },
         ip: request.ip,
       });
 

@@ -189,7 +189,8 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 
 | Latest | |
 | --- | --- |
-| **[v0.42.2](https://github.com/maksymhs/Citadel/releases/tag/v0.42.2)** | Documentation maintenance: open items and known gaps recorded |
+| **[v0.43.0](https://github.com/maksymhs/Citadel/releases/tag/v0.43.0)** | Isolated AI agent installs with validation, reinstall/update and managed-launcher removal |
+| [v0.42.2](https://github.com/maksymhs/Citadel/releases/tag/v0.42.2) | Documentation maintenance: open items and known gaps recorded |
 | [v0.42.1](https://github.com/maksymhs/Citadel/releases/tag/v0.42.1) | Maintenance: the web app code split into per-screen scripts with a browser-level smoke test, tests that no longer depend on the host, architecture and feature guides rewritten |
 | [v0.42.0](https://github.com/maksymhs/Citadel/releases/tag/v0.42.0) | Redesigned machine overview and selector, real RAM and temperature on macOS, one-time Full Disk Access setup (`citadel permissions`), new README and guides, `AGENTS.md` for contributors and AI agents |
 | [v0.41.0](https://github.com/maksymhs/Citadel/releases/tag/v0.41.0) | Setup code, security alerts, Tailscale wizard, WSL support, macOS menu bar icon, disk usage analysis and quick cleanup, `citadel reset-password`, Kilo Code and Qwen Code agents |
@@ -221,7 +222,13 @@ npm run dev     # development server (or: npm start)
 
 Then open <http://127.0.0.1:3000>.
 
+Administrators can install, reinstall/update and remove managed AI CLI launchers
+from **Machines → Tools**. Releases are retained for active sessions; see
+[agent management](docs/installation.md#managing-ai-cli-agents-from-the-panel).
+
 Contributing, with a human or an AI agent? [AGENTS.md](AGENTS.md) explains how the project is organised, how to make common changes, which docs to update and how releases work.
+
+See also [CONTRIBUTING.md](CONTRIBUTING.md), the [security policy](SECURITY.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Questions and ideas are welcome in [Discussions](https://github.com/maksymhs/Citadel/discussions).
 
 <details>
 <summary><b>Repository layout</b></summary>

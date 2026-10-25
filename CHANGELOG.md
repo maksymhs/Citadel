@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.43.0](https://github.com/maksymhs/Citadel/releases/tag/v0.43.0) · 2026-10-25
+
+### Added
+
+- **agents**: Validate isolated installs and add update and removal actions
+
 ## [0.42.2](https://github.com/maksymhs/Citadel/releases/tag/v0.42.2) · 2026-10-21
 
 _Maintenance release._

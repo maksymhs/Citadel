@@ -108,6 +108,39 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
+  test('Tools dispatches lifecycle actions and restricts removal to managed agents', async () => {
+    const toolsDom = new JSDOM('<div id="dash-machine-pane"></div>', { runScripts: 'dangerously' });
+    try {
+      const win = toolsDom.window;
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/monitor.js'), 'utf8'));
+      const calls = [];
+      const agents = [
+        { id: 'codex', name: 'Codex', available: true, managed: true, version: '1.0', warning: 'Daemon package missing' },
+        { id: 'claude', name: 'Claude', available: true, managed: false },
+        { id: 'qwen', name: 'Qwen', available: false },
+      ];
+      const ctx = {
+        isAdmin: true,
+        activeHostId: () => 'local',
+        escapeHtml: (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
+        installAgent: (...args) => calls.push(args),
+        localApi: async (url) => {
+          if (url === '/api/monitor/overview') return { hosts: [{ id: 'local', name: 'Local', isLocal: true, online: true, alerts: [] }] };
+          if (url === '/api/system/integrations') return { integrations: { agents } };
+          return { tools: [] };
+        },
+      };
+      await win.CitadelMonitor.renderMachine(ctx, 'local', 'tools');
+      const buttons = [...win.document.querySelectorAll('[data-mon-install]')];
+      assert.equal(buttons.length, 4);
+      for (const button of buttons) button.click();
+      assert.deepEqual(calls.map((args) => args[3]), ['reinstall', 'remove', 'reinstall', 'install']);
+      assert.match(win.document.body.textContent, /Daemon package missing/);
+      await win.CitadelMonitor.renderMachine({ ...ctx, isAdmin: false }, 'local', 'tools');
+      assert.ok([...win.document.querySelectorAll('[data-mon-install]')].every((button) => button.disabled));
+    } finally { toolsDom.window.close(); }
+  });
+
   test('main screens open without script errors', async () => {
     for (const view of ['files', 'settings', 'projects', 'dashboard', 'work', 'docs', 'learning']) {
       const link = w.document.querySelector(`.nav-item[data-view="${view}"]`);

@@ -113,3 +113,20 @@ session, GitHub or Internet access.
   rollback.
 - The collectors are injectable (`createDeps`), so the test suite uses fake
   command output and never touches the host network, firewall or SSH session.
+
+### Codex CLI versus its app-server daemon
+
+Codex's npm CLI and its separately managed app-server daemon can have different
+versions and installation directories. The Tools panel warns when daemon state
+exists but the current managed daemon executables are missing or inaccessible.
+This is a filesystem diagnostic, not a functional daemon health check.
+
+An error naming
+`~/.codex/packages/app-server-daemon/releases/.../bin/codex-code-mode-host`
+refers to that daemon package. Changing PATH or reinstalling the npm CLI does not
+restore it. Do not delete `~/.codex`, copy mismatched binaries, or stop a working
+daemon as a first repair step. Inspect `codex app-server daemon version` and the
+installed version's `--help`, and use its supported recovery workflow. In the
+reported 0.163.0 case, update, bootstrap and start all failed with a missing managed
+package; CLI lifecycle changes alone do not repair that upstream failure. Restore
+the daemon through its original installation mechanism before claiming recovery.

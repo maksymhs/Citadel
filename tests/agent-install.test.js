@@ -90,9 +90,45 @@ describe('AI coding agent install integrations', () => {
     assert.equal(calls[0].command, '/bin/bash');
     assert.equal(calls[0].args[0], '-lc');
     const script = calls[0].args[1];
-    assert.match(script, /npm install -g --prefix "\$HOME\/\.local" @openai\/codex/);
+    assert.match(script, /manage-agent\.js' 'install' 'codex'/);
     assert.match(script, /exec \/bin\/bash -l$/);
     assert.doesNotMatch(script, /\bsudo\b/);
+  });
+
+  test('both lifecycle endpoints require an administrator', async () => {
+    const { getDatabase } = require('../server/database/db');
+    const db = getDatabase();
+    db.prepare("UPDATE users SET role = 'user' WHERE username = 'intadmin'").run();
+    try {
+      for (const [url, payload] of [
+        ['/api/agents/install', { agentId: 'codex', action: 'remove' }],
+        ['/api/system/integrations/install', { tool: 'codex', action: 'reinstall' }],
+      ]) {
+        const res = await app.inject({ method: 'POST', url, headers: { cookie }, payload });
+        assert.equal(res.statusCode, 403, res.payload);
+      }
+    } finally {
+      db.prepare("UPDATE users SET role = 'admin' WHERE username = 'intadmin'").run();
+    }
+  });
+
+  test('invalid actions and unmanaged removal do not create terminal sessions', () => {
+    const registry = require('../server/services/agentRegistry');
+    const terminals = require('../server/services/terminalManager');
+    const originalGet = registry.getAgent;
+    const originalCreate = terminals.createSession;
+    registry.getAgent = () => ({ ...registry.builtinAgents.find((a) => a.id === 'codex'), installed: true, managed: false });
+    terminals.createSession = () => { throw new Error('Unexpected terminal creation'); };
+    try {
+      assert.throws(() => registry.installAgent({ agentId: 'codex', action: 'anything' }), /Unknown agent or action/);
+      assert.throws(() => registry.installAgent({ agentId: 'codex', action: 'remove' }), /managed/);
+      for (const action of ['reinstall', 'remove']) {
+        assert.match(registry.buildInstallCommand(registry.builtinAgents.find((a) => a.id === 'codex'), action), new RegExp("'" + action + "' 'codex'"));
+      }
+    } finally {
+      registry.getAgent = originalGet;
+      terminals.createSession = originalCreate;
+    }
   });
 
   test('rejects installing a tool outside the built-in catalogue', () => {

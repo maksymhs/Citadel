@@ -303,7 +303,39 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   pushed after this is its real test. The changelog must be committed before the tag is
   pushed, otherwise the Release gets a generic note.
 
-## 115. Agent missions MVP (branch `feat/agent-missions`)
+## 115. Isolated AI CLI lifecycle and Codex companion validation
+- Added administrator-only install/reinstall/update and managed-launcher removal
+  through the Machines Tools screen and both existing install APIs. Commands are
+  selected from a fixed catalogue and run as the service account without sudo.
+- Each attempt uses a new release HOME. Verify the executable/version and, for
+  Codex, its code-mode host before atomically activating the launcher. Failed
+  attempts leave the old launcher intact. Preserve old releases, credentials and
+  separately managed daemon files; apply sharing permissions only to new payloads.
+- Removal deactivates only Citadel's managed launcher and does not reclaim release
+  storage. Legacy/external installations are not deleted and may remain in PATH.
+  Warn when Codex daemon state exists but managed daemon executables are absent.
+- Validation: 19 focused agent tests passed; real npm Codex install validated both
+  CLI and companion, then launcher removal retained its payload. Browser smoke
+  includes lifecycle dispatch/admin controls; dashboard screenshots regenerated
+  with Chromium. Lint passed. Full suite: 494 tests, 492 passed, 1 skipped, 1 failed
+  at sentinel-process.test.js:149, reproducing the pre-change container zombie
+  reaping limitation (PID 1 is tail). No real macOS host was tested.
+- Known gap: the VPS's missing managed Codex daemon package is a separate upstream
+  installation failure. These CLI lifecycle changes do not reconstruct it. No
+  release, push or production deployment was performed.
+
+## 116. Release v0.43.0
+- Ships isolated, validated CLI-agent installations and administrator-only
+  reinstall/update and managed-launcher removal from Machines → Tools.
+- Codex activation checks the code-mode companion; the panel warns about missing
+  separate daemon files. Removal retains downloaded releases and user credentials;
+  this release does not reconstruct the VPS's missing app-server daemon package.
+- Versions and asset cache-busters updated. Validation before release: 19 focused
+  agent tests passed, real Codex CLI/companion install and launcher removal passed,
+  UI lifecycle/admin smoke passed, lint passed; full suite 494 tests, 492 passed,
+  1 skipped, 1 pre-existing sentinel-process zombie-reaping failure on this host.
+
+## 117. Agent missions MVP (branch `feat/agent-missions`)
 - Added a validated mission DAG on top of the existing task queue: `missions`
   table, mission columns on `tasks` (`title`, `mission_id`, `role`, `deps`,
   `stage`, `handoff_ref`, `exclusive`), migrations `011_agent_missions` and
@@ -341,7 +373,7 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   no node heartbeat is recent. Not exercised in a real browser with a live
   agent and sentinel.
 
-## 116. Work, Docs and Learning — autonomous loop on the task mesh
+## 118. Work, Docs and Learning — autonomous loop on the task mesh
 
 - Extended the uncommitted agent-missions work rather than replacing it. The
   `missions` module now exposes three views: Work (missions, acceptance criteria,
@@ -377,7 +409,7 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   sentinel and real agent quotas. Docs writes are plain checkout edits (no commit
   or merge gate).
 
-## 117. Acceptance gate, budget, failure classes and doc relations
+## 119. Acceptance gate, budget, failure classes and doc relations
 
 - Added a real acceptance gate: an autonomous task with non-empty `acceptance`
   now ends in `review` (migration `014_review_budget_docs` adds
@@ -414,13 +446,13 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   against the board. Not exercised with a live sentinel or a real provider
   budget; the budget is a local attempt counter, not a spend meter.
 
-## 118 — Development-only Docker trial image
-- **What**: Added `Dockerfile` (multi-stage, `node:22-bookworm-slim`, non-root `node` user, no Docker socket, `tmux`+`git`, healthcheck via `/api/auth/status`), `compose.yaml` (loopback-only port, named `citadel-data` volume, updater disabled, `init: true`) and `.dockerignore` (excludes `.env`, `data/`, `node_modules/`, `public/vendor/`, graphs, tests). Documented as development-only in `docs/installation.md` ("Try it without installing"), one line in `README.md`, and ADR-010 in `docs/decisions.md`.
+## 120 — Development-only Docker trial image
+- **What**: Added `Dockerfile` (multi-stage, `node:22-bookworm-slim`, non-root `node` user, no Docker socket, `tmux`+`git`, healthcheck via `/api/auth/status`), `compose.yaml` (loopback-only port, named `citadel-data` volume, updater disabled, `init: true`) and `.dockerignore` (excludes `.env`, `data/`, `node_modules/`, `public/vendor/`, graphs, tests). Documented as development-only in `docs/installation.md` ("Try it without installing"), one line in `README.md`, and ADR-011 in `docs/decisions.md`.
 - **Why**: Let someone build once and try the panel without running `install.sh`, creating a systemd unit or giving sudo. Not a supported deployment: no systemd, tunnels, updater, host `doctor`, laptop mode or agent binaries inside.
 - **Verified**: `docker compose config` parses and resolves the build/volume/port mapping. **Not verified: the image was not built.** The working user (`citadel`) is not in the `docker` group and passwordless `sudo` is unavailable on this host, so `docker build` cannot connect to the socket. Build and run need to be checked where Docker access exists (or by adding the user to the `docker` group).
 - **Gaps**: image not built/run here; no CI job (project has none by design). Agent binaries and bind-mounted projects for real use remain manual.
 
-## 119 — Repair Work guarantees, discover projects, hand off to VS Code and measure core costs
+## 121 — Repair Work guarantees, discover projects, hand off to VS Code and measure core costs
 - **What**: Fixed the trial Docker build input for `postinstall` and moved its default loopback port to configurable `CITADEL_TRIAL_PORT=3001`. Added migration 015: daily autonomous usage increments per claim in the existing SQLite transaction and survives task deletion; legacy document refs are backfilled. Plan publication and revision roll back together with their task changes. Quota exhaustion stops looping and acceptance rejection cannot be turned into a quota retry.
 - **Security and Docs**: Redaction covers JSON/quoted credentials, Basic/Bearer values, credential URLs and private-key blocks; autonomous prompts/results/errors use it. Handoff linking checks canonical paths, regular files and size. Directly written Markdown is registered during linking; failed links remain retryable and refs accumulate across updates. Unchanged Docs reads and stable failure classifications avoid repeated writes.
 - **Projects/editor**: Projects automatically scans immediate folders on entry/Refresh, with a 500-entry/100-suggestion bound, no symlink traversal, implicit import, code execution or resident watcher. Explicit imports reuse the audited endpoint. A separate `project-tools.js` module prepares desktop VS Code links for local or configured SSH aliases, without adding an editor server or storing SSH credentials.
