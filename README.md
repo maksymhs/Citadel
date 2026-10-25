@@ -189,7 +189,8 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 
 | Latest | |
 | --- | --- |
-| **[v0.45.0](https://github.com/maksymhs/Citadel/releases/tag/v0.45.0)** | One optional Project hub with tasks and priorities, Markdown, a code graph and live execution traces |
+| **[v0.46.0](https://github.com/maksymhs/Citadel/releases/tag/v0.46.0)** | Simpler Citadel: Project hub removed, historical data preserved, admin-only task orchestration |
+| [v0.45.0](https://github.com/maksymhs/Citadel/releases/tag/v0.45.0) | One optional Project hub with tasks and priorities, Markdown, a code graph and live execution traces |
 | [v0.44.0](https://github.com/maksymhs/Citadel/releases/tag/v0.44.0) | Work, Docs and Learning with acceptance review and attempt budgets; project discovery, VS Code links and a Linux Docker trial |
 | [v0.43.0](https://github.com/maksymhs/Citadel/releases/tag/v0.43.0) | Isolated AI agent installs with validation, reinstall/update and managed-launcher removal |
 | [v0.42.2](https://github.com/maksymhs/Citadel/releases/tag/v0.42.2) | Documentation maintenance: open items and known gaps recorded |
