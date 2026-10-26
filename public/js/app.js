@@ -36,6 +36,7 @@
     fleetAgents: {}, // hostId -> agents[]
     fleetStatus: {}, // hostId -> { ok, version, commit } | { error }
     activeHostId: 'local', // 'local' or a paired host id
+    terminalSelectionGeneration: 0, // invalidates asynchronous terminal pastes after navigation or switching tabs
     hostIdentity: null, // this machine's { instanceId, name, url, urls }
     hosts: [], // paired hosts (server rows, no tokens)
     hostStatus: { local: true }, // hostId -> true (online) | false | null
@@ -256,6 +257,19 @@
       error.details = data; // callers that need more than the message (e.g. a hint or link)
       throw error;
     }
+    return data;
+  }
+
+  async function apiForHost(hostId, path, options = {}) {
+    const opts = { ...options, headers: { ...(options.headers || {}) } };
+    if (opts.body && typeof opts.body === 'object') {
+      opts.body = JSON.stringify(opts.body);
+      opts.headers['Content-Type'] = 'application/json';
+    }
+    const url = hostId === 'local' ? path : `/api/remote/${encodeURIComponent(hostId)}${path.slice(4)}`;
+    const res = await netFetch(url, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.message || `Request failed (${res.status})`);
     return data;
   }
 
@@ -1147,6 +1161,7 @@
 
   function navigateTo(view) {
     view = resolveView(view);
+    state.terminalSelectionGeneration += 1;
     const from = state.currentView;
     if (from !== view && !Object.prototype.hasOwnProperty.call(DETAIL_VIEWS, from)) state.backView = from;
     // Files always opens as a grid; the list toggle only lasts while you stay in Files.
@@ -2111,6 +2126,7 @@
   function disposeTerminalItem(item) {
     if (!item) return;
     item.disposed = true;
+    if (item.imagePasteHandler && item.containerEl) item.containerEl.removeEventListener('paste', item.imagePasteHandler, true);
     if (item.reconnectTimer) {
       clearTimeout(item.reconnectTimer);
       item.reconnectTimer = null;
@@ -2302,6 +2318,7 @@
   }
 
   async function activateSysTerminal(sessionId, name = 'Terminal') {
+    state.terminalSelectionGeneration += 1;
     const viewport = document.getElementById('sys-terminal-viewport');
     if (!viewport) return;
 
@@ -2594,6 +2611,7 @@
   }
 
   async function activateTerminalSession(sessionId, name = 'Terminal') {
+    state.terminalSelectionGeneration += 1;
     const viewport = document.getElementById('terminal-viewport');
     if (!viewport) return;
 
@@ -2726,6 +2744,21 @@
   //   case a one-tap prompt finishes the job.
   // • Ctrl+C copies instead of interrupting while text is selected (like
   //   Windows Terminal); with nothing selected it still sends Ctrl+C.
+  function terminalPasteContext(item) {
+    const hostId = state.activeHostId;
+    const generation = state.terminalSelectionGeneration;
+    return {
+      hostId,
+      isCurrent: () => !item.disposed
+        && item.ws && item.ws.readyState === WebSocket.OPEN
+        && state.activeHostId === hostId
+        && state.terminalSelectionGeneration === generation
+        && state.currentView === 'workspace'
+        && state.workspaceContext === (item.kind === 'system' ? 'system' : item.projectId)
+        && (item.kind === 'system' ? state.activeSysTerminalId : state.activeTerminalId) === item.sessionId,
+    };
+  }
+
   function installTerminalClipboard(item) {
     const { term } = item;
     term.parser.registerOscHandler(52, (data) => {
@@ -2741,6 +2774,11 @@
       if (text) copyFromApp(text);
       return true;
     });
+
+    item.imagePasteHandler = (event) => {
+      window.CitadelTerminalImages.handlePaste(event, item, terminalPasteContext(item));
+    };
+    item.containerEl.addEventListener('paste', item.imagePasteHandler, true);
 
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === 'keydown' && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey
@@ -2951,9 +2989,10 @@
   async function pasteIntoTerminal(getItem) {
     const item = getItem ? getItem() : null;
     if (!item || item.disposed) return;
+    const context = terminalPasteContext(item);
 
     const send = (value, enter = false) => {
-      if (!value || item.disposed) return;
+      if (!value || !context.isCurrent()) return;
       item.term.paste(value);
       // Enter goes as a separate keystroke: bracketed paste would otherwise
       // treat it as part of the pasted text.
@@ -2968,6 +3007,20 @@
     // iOS shows a native "Paste" callout and the promise never settles if the
     // user ignores it, which made the button look dead. Race it against a
     // timeout so the manual textarea always appears as a fallback.
+    let clipboardImage = null;
+    try {
+      if (navigator.clipboard && navigator.clipboard.read) {
+        clipboardImage = await Promise.race([
+          window.CitadelTerminalImages.imageFromClipboardApi(),
+          new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+        ]);
+      }
+    } catch { clipboardImage = null; }
+    if (clipboardImage) {
+      await window.CitadelTerminalImages.upload(item, clipboardImage, context);
+      return;
+    }
+
     let text = null;
     try {
       if (navigator.clipboard && navigator.clipboard.readText) {
@@ -2994,12 +3047,22 @@
       bodyHtml: `
         <div class="form-group">
           <label class="form-label" for="terminal-paste-input">Long-press the box below and choose Paste</label>
-          <textarea id="terminal-paste-input" class="form-input" rows="5" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="Paste here..."></textarea>
+          <textarea id="terminal-paste-input" class="form-input" rows="5" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="Paste text or an image..."></textarea>
         </div>
-        <label class="act-live" style="margin-top:4px;"><input type="checkbox" id="terminal-paste-enter" ${pasteEnter ? 'checked' : ''}> Press Enter after pasting</label>
+        <div class="form-group">
+          <label class="form-label" for="terminal-paste-image">Or choose an image (up to 5 MiB)</label>
+          <input id="terminal-paste-image" class="form-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+        </div>
+        <label class="act-live" style="margin-top:4px;"><input type="checkbox" id="terminal-paste-enter" ${pasteEnter ? 'checked' : ''}> Press Enter after pasting text</label>
       `,
       confirmText: 'Send to terminal',
       onConfirm: async () => {
+        const file = document.getElementById('terminal-paste-image')?.files?.[0];
+        if (file) {
+          if (pendingImagePaste) await pendingImagePaste;
+          else await window.CitadelTerminalImages.upload(item, file, context);
+          return;
+        }
         const el = document.getElementById('terminal-paste-input');
         const enter = Boolean(document.getElementById('terminal-paste-enter')?.checked);
         try { localStorage.setItem('citadel.pasteEnter', enter ? '1' : '0'); } catch { /* ignore */ }
@@ -3007,17 +3070,34 @@
       },
     });
 
+    let pendingImagePaste = null;
     const input = document.getElementById('terminal-paste-input');
+    const imageInput = document.getElementById('terminal-paste-image');
+    const pasteImage = (file) => {
+      pendingImagePaste = window.CitadelTerminalImages.upload(item, file, context).then((ok) => {
+        if (ok) document.getElementById('modal-close-btn')?.click();
+        return ok;
+      });
+    };
+    if (imageInput) imageInput.addEventListener('change', () => {
+      const file = imageInput.files && imageInput.files[0];
+      if (file) pasteImage(file);
+    });
     if (input) {
       // One step on mobile: the system Paste action sends immediately.
       input.addEventListener('paste', (event) => {
+        const image = window.CitadelTerminalImages.imageFromClipboard(event.clipboardData);
+        if (image) {
+          event.preventDefault();
+          pasteImage(image);
+          return;
+        }
         const pasted = event.clipboardData && event.clipboardData.getData('text');
         if (!pasted) return;
         event.preventDefault();
         const enter = Boolean(document.getElementById('terminal-paste-enter')?.checked);
         try { localStorage.setItem('citadel.pasteEnter', enter ? '1' : '0'); } catch { /* ignore */ }
-        const closeBtn = document.getElementById('modal-close-btn');
-        if (closeBtn) closeBtn.click();
+        document.getElementById('modal-close-btn')?.click();
         send(pasted, enter);
       });
       input.focus();
@@ -3923,6 +4003,7 @@
 
   // Feature scripts (public/js/*.js) get the shared helpers here, once everything
   // above is defined. They never reach into this file's scope.
+  window.CitadelTerminalImages.init({ apiForHost, showToast });
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });

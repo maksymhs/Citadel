@@ -38,7 +38,7 @@ Self-hosted, lightweight and secure. Runs on a VPS, a Mac or a spare laptop.
 <td width="50%" valign="top">
 
 ### 🖥️ Persistent terminals
-`xterm.js` + `node-pty` + `tmux`. Close the browser, restart the panel: your sessions keep running. Phone-friendly, with on-screen keys, native text selection and clipboard copy.
+`xterm.js` + `node-pty` + `tmux`. Close the browser, restart the panel: your sessions keep running. Phone-friendly, with on-screen keys, native text selection, clipboard copy and image paste for AI coding tools.
 
 </td>
 <td width="50%" valign="top">

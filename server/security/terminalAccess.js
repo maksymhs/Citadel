@@ -5,7 +5,7 @@ const FORWARDED_ROLE_HEADER = 'x-citadel-origin-role';
 
 function getSession(sessionId) {
   if (typeof sessionId !== 'string' || !sessionId) return null;
-  return getDatabase().prepare('SELECT id, project_id FROM term_sessions WHERE id = ?').get(sessionId) || null;
+  return getDatabase().prepare('SELECT id, project_id, status FROM term_sessions WHERE id = ?').get(sessionId) || null;
 }
 
 function effectiveRole(user, headers = {}) {

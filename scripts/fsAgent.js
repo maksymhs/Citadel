@@ -777,6 +777,93 @@ async function cleanupRun(ids, only, projectsDir, privileged) {
   return { freed, results, disk: await diskInfo('/') };
 }
 
+const TERMINAL_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const TERMINAL_IMAGE_QUOTA_BYTES = 50 * 1024 * 1024;
+const TERMINAL_IMAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const TERMINAL_IMAGE_FORMATS = {
+  'image/png': { extension: 'png', signature: (b) => b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) },
+  'image/jpeg': { extension: 'jpg', signature: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  'image/gif': { extension: 'gif', signature: (b) => b.length >= 6 && ['GIF87a', 'GIF89a'].includes(b.toString('ascii', 0, 6)) },
+  'image/webp': { extension: 'webp', signature: (b) => b.length >= 12 && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP' },
+};
+const TERMINAL_IMAGE_NAME = /^image-[a-f0-9]{32}\.(png|jpg|gif|webp)$/;
+
+function decodeTerminalImage(mimeType, content) {
+  const format = typeof mimeType === 'string' && Object.hasOwn(TERMINAL_IMAGE_FORMATS, mimeType)
+    ? TERMINAL_IMAGE_FORMATS[mimeType]
+    : null;
+  if (!format || typeof content !== 'string' || !content || content.length > Math.ceil(TERMINAL_IMAGE_MAX_BYTES * 4 / 3) + 4
+    || content.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(content)) {
+    throw new Error('Unsupported or invalid image data.');
+  }
+  const bytes = Buffer.from(content, 'base64');
+  if (!bytes.length || bytes.length > TERMINAL_IMAGE_MAX_BYTES || bytes.toString('base64') !== content || !format.signature(bytes)) {
+    throw new Error('Unsupported or invalid image data.');
+  }
+  return { bytes, extension: format.extension };
+}
+
+async function withTerminalImageLock(dir, fn) {
+  const lock = path.join(dir, '.lock');
+  const deadline = Date.now() + 5000;
+  while (true) {
+    try {
+      await fsp.mkdir(lock, { mode: 0o700 });
+      break;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      try {
+        const st = await fsp.lstat(lock);
+        if (!st.isDirectory() || st.isSymbolicLink() || st.uid !== process.getuid()) throw new Error('Image storage is unavailable.');
+        if (Date.now() - st.mtimeMs > 60000) await fsp.rmdir(lock).catch(() => {});
+      } catch (statErr) {
+        if (statErr.code !== 'ENOENT') throw statErr;
+      }
+      if (Date.now() >= deadline) throw new Error('Image storage is busy. Try again.');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  try { return await fn(); } finally { await fsp.rmdir(lock).catch(() => {}); }
+}
+
+async function saveTerminalImage(mimeType, content) {
+  if (typeof process.getuid !== 'function') throw new Error('Private image storage is unavailable on this host.');
+  const { bytes, extension } = decodeTerminalImage(mimeType, content);
+  const uid = process.getuid();
+  const tempRoot = process.env.NODE_ENV === 'test' ? os.tmpdir() : (process.platform === 'darwin' ? '/private/tmp' : '/tmp');
+  const dir = path.join(tempRoot, `citadel-terminal-images-${uid}`);
+  try { await fsp.mkdir(dir, { mode: 0o700 }); } catch (err) { if (err.code !== 'EEXIST') throw err; }
+  const dirStat = await fsp.lstat(dir);
+  if (!dirStat.isDirectory() || dirStat.isSymbolicLink() || dirStat.uid !== uid || (dirStat.mode & 0o077) !== 0) {
+    throw new Error('Private image storage is unavailable on this host.');
+  }
+
+  return withTerminalImageLock(dir, async () => {
+    let used = 0;
+    const now = Date.now();
+    for (const name of await fsp.readdir(dir)) {
+      if (!TERMINAL_IMAGE_NAME.test(name)) continue;
+      const full = path.join(dir, name);
+      let st;
+      try { st = await fsp.lstat(full); } catch { continue; }
+      if (!st.isFile() || st.isSymbolicLink() || st.uid !== uid) continue;
+      if (now - st.mtimeMs >= TERMINAL_IMAGE_RETENTION_MS) {
+        await fsp.unlink(full).catch(() => {});
+        continue;
+      }
+      used += st.size;
+    }
+    if (used + bytes.length > TERMINAL_IMAGE_QUOTA_BYTES) throw new Error('Temporary image storage is full. Wait for older images to expire.');
+
+    const name = `image-${require('node:crypto').randomBytes(16).toString('hex')}.${extension}`;
+    const target = path.join(dir, name);
+    const handle = await fsp.open(target, 'wx', 0o600);
+    try { await handle.writeFile(bytes); } catch (err) { await handle.close(); await fsp.unlink(target).catch(() => {}); throw err; }
+    await handle.close();
+    return { path: target, size: bytes.length };
+  });
+}
+
 async function handle(req) {
   switch (req.op) {
     case 'list': return listDir(req.path);
@@ -789,6 +876,7 @@ async function handle(req) {
     case 'usage': return diskUsage(req.path);
     case 'cleanup-scan': return cleanupScan(req.projectsDir, req.privileged);
     case 'cleanup-run': return cleanupRun(req.ids, req.items, req.projectsDir, req.privileged);
+    case 'terminal-image': return saveTerminalImage(req.mimeType, req.content);
     default: throw new Error(`Unknown operation: ${req.op}`);
   }
 }

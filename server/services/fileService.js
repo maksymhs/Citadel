@@ -24,8 +24,8 @@ function isPrivileged() {
   return Boolean(ADMIN_USER);
 }
 
-function spawnAgent() {
-  if (ADMIN_USER) {
+function spawnAgent(asAdmin = Boolean(ADMIN_USER)) {
+  if (asAdmin && ADMIN_USER) {
     // `bash -c 'exec "$0" "$1"' <node> <agent>` keeps the path as data.
     return spawn('sudo', ['-n', '-u', ADMIN_USER, '/bin/bash', '-c', 'exec "$0" "$1"', NODE_BIN, AGENT_PATH], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -34,9 +34,9 @@ function spawnAgent() {
   return spawn(NODE_BIN, [AGENT_PATH], { stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
-function runAgent(req, { timeoutMs = 20000 } = {}) {
+function runAgent(req, { timeoutMs = 20000, asAdmin = Boolean(ADMIN_USER) } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawnAgent();
+    const child = spawnAgent(asAdmin);
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
@@ -97,5 +97,6 @@ module.exports = {
   usage: (p) => runAgent({ op: 'usage', path: p }, { timeoutMs: 60000 }),
   cleanupScan: () => runAgent({ op: 'cleanup-scan', projectsDir: PROJECTS_DIR, privileged: isPrivileged() }, { timeoutMs: 120000 }),
   cleanupRun: (ids, items) => runAgent({ op: 'cleanup-run', ids, items, projectsDir: PROJECTS_DIR, privileged: isPrivileged() }, { timeoutMs: 180000 }),
+  saveTerminalImage: (mimeType, content, asAdmin = false) => runAgent({ op: 'terminal-image', mimeType, content }, { asAdmin }),
   openReadStream,
 };

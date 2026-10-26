@@ -614,3 +614,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Bumps package metadata to `0.52.0`, cache-busters to `v0520`, and README Latest.
   The changelog is generated from the local v0.52.0 tag during release finalization.
 - Local release only; the tag and commits have not been pushed.
+
+## 143. Clipboard image paste for persistent terminals
+- Added native Ctrl/Cmd+V, toolbar Paste, modal paste and file-picker image handling. The browser uploads the image to the selected terminal host and inserts only the returned private path; image bytes never enter the PTY and image paste never sends Enter. Async completion is discarded after host, view, tab, connection or terminal changes.
+- Added an authenticated 7 MiB per-route upload endpoint and matching remote-proxy routes while retaining the 1 MiB default for unrelated APIs. PNG/JPEG/GIF/WebP are restricted to 5 MiB, stored with mode 0600 inside a per-UID 0700 directory in `/tmp`, capped at 50 MiB per identity, and expired files are removed opportunistically on a later upload. Project files use the service UID; System files use the configured System OS identity when enabled. Audit records contain only terminal id, MIME type and byte count.
+- Updated README, installation/security/architecture docs, feature map and generated code map. Added service, endpoint, proxy and UI tests.
+- Verified focused image/proxy tests (18 passed), UI smoke (11 passed), full `npm test` (540 passed, 1 skipped, 0 failed), `npm run lint`, syntax checks and `git diff --check`. No Chromium executable or `puppeteer-core` is installed here, so real-browser clipboard behavior and visual checks remain unverified; no live host, sudo, service, commit or release was touched.

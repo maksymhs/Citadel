@@ -87,11 +87,46 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('every feature script registers and the app shell renders', () => {
-    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelProjectTools', 'CitadelGatewaySettings', 'CitadelBrowserEditor']) {
+    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelProjectTools', 'CitadelGatewaySettings', 'CitadelBrowserEditor', 'CitadelTerminalImages']) {
       assert.equal(typeof w[name], 'object', `window.${name} is missing`);
     }
     assert.ok(w.document.querySelector('.nav-item'), 'the sidebar should render after sign-in');
     assert.deepEqual(errors, []);
+  });
+
+  test('terminal image helper detects, uploads and pastes only a path for the current terminal', async () => {
+    const helper = w.CitadelTerminalImages;
+    const file = new w.File(['fixture'], 'clipboard.png', { type: 'image/png' });
+    const found = helper.imageFromClipboard({ items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] });
+    assert.equal(found, file);
+    assert.equal(helper.imageFromClipboard({ items: [{ kind: 'file', type: 'image/svg+xml', getAsFile: () => file }] }), null);
+
+    const pasted = [];
+    const calls = [];
+    const toasts = [];
+    helper.init({
+      apiForHost: async (host, url, options) => {
+        calls.push({ host, url, options });
+        return { path: '/tmp/citadel-terminal-images-7/image-a.png' };
+      },
+      showToast: (message) => toasts.push(message),
+    });
+    const item = { sessionId: 'session-1', disposed: false, term: { paste: (value) => pasted.push(value), focus() {} } };
+    const uploadFile = {
+      type: 'image/png', size: 8,
+      arrayBuffer: async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer,
+    };
+    assert.equal(await helper.upload(item, uploadFile, { hostId: 'peer-1', isCurrent: () => true }), true);
+    assert.deepEqual(pasted, ['/tmp/citadel-terminal-images-7/image-a.png']);
+    assert.equal(calls[0].host, 'peer-1');
+    assert.ok(calls[0].url.endsWith('/session-1/clipboard-image'));
+    assert.equal(calls[0].options.body.content, 'iVBORw0KGgo=');
+    assert.equal(calls.length, 1, 'image bytes go only to the upload API, not to xterm');
+
+    assert.equal(await helper.upload(item, uploadFile, { hostId: 'peer-1', isCurrent: () => false }), false);
+    assert.equal(calls.length, 1, 'a stale terminal must not finish an upload');
+    assert.deepEqual(pasted, ['/tmp/citadel-terminal-images-7/image-a.png']);
+    assert.ok(toasts.some((message) => message.includes('Press Enter')));
   });
 
   test('Tools dispatches lifecycle actions and restricts removal to managed agents', async () => {

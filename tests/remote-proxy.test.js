@@ -21,6 +21,7 @@ describe('Remote host proxy', () => {
   let wss;
   let hostId;
   const seen = [];
+  const proxiedImageBodies = [];
 
   before(async () => {
     cleanDb(testDb);
@@ -53,6 +54,17 @@ describe('Remote host proxy', () => {
           'Content-Disposition': 'attachment; filename="x.bin"',
         });
         res.end(Buffer.from([0, 1, 2, 3, 4]));
+        return;
+      }
+      if (req.url.includes('/clipboard-image')) {
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => {
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          proxiedImageBodies.push({ url: req.url, body, originRole: req.headers['x-citadel-origin-role'] });
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ path: '/tmp/citadel-terminal-images-1/image-a.png' }));
+        });
         return;
       }
       if (req.url.startsWith('/api/projects')) {
@@ -189,6 +201,33 @@ describe('Remote host proxy', () => {
     const body = JSON.parse(res.payload);
     assert.equal(body.method, 'POST');
     assert.equal(body.body.name, 'from-proxy');
+  });
+
+  test('allows clipboard image JSON above the normal proxy body limit on both API paths', async () => {
+    const content = Buffer.alloc(1100 * 1024, 65).toString('base64');
+    for (const prefix of ['', 'api/']) {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/remote/${hostId}/${prefix}terminals/fixture-session/clipboard-image`,
+        headers: { cookie },
+        payload: { mimeType: 'image/png', content },
+      });
+      assert.equal(res.statusCode, 201);
+      assert.match(res.json().path, /image-a\.png$/);
+    }
+    assert.equal(proxiedImageBodies.length, 2);
+    assert.equal(proxiedImageBodies[0].body.content, content);
+    assert.equal(proxiedImageBodies[1].body.content, content);
+    assert.equal(proxiedImageBodies[0].originRole, 'admin');
+    assert.ok(proxiedImageBodies.every((call) => call.url === '/api/terminals/fixture-session/clipboard-image'));
+  });
+
+  test('keeps the normal proxy body limit for unrelated API routes', async () => {
+    const res = await app.inject({
+      method: 'POST', url: `/api/remote/${hostId}/projects`, headers: { cookie },
+      payload: { content: 'x'.repeat(1100 * 1024) },
+    });
+    assert.equal(res.statusCode, 413);
   });
 
   test('streams binary downloads unchanged', async () => {

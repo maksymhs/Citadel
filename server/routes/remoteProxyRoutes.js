@@ -89,12 +89,8 @@ function authenticate(request, reply) {
   return user;
 }
 
-async function remoteProxyRoutes(fastify) {
-  fastify.all('/api/remote/:hostId/*', async (request, reply) => {
-    const user = authenticate(request, reply);
-    if (!user) return;
-
-    const remotePath = buildRemotePath(request);
+async function proxyApiRequest(request, reply, user, remotePathOverride = null) {
+    const remotePath = remotePathOverride || buildRemotePath(request);
     if (isLocalOnly(remotePath)) {
       return reply.status(400).send({ error: `"${remotePath}" must be called on the local host.` });
     }
@@ -120,6 +116,28 @@ async function remoteProxyRoutes(fastify) {
     } catch (err) {
       return reply.status(502).send({ error: err.message });
     }
+}
+
+async function remoteProxyRoutes(fastify) {
+  const imageProxyOptions = {
+    bodyLimit: 7 * 1024 * 1024,
+    onRequest: async (request, reply) => {
+      const user = authenticate(request, reply);
+      if (user) request.proxyUser = user;
+    },
+  };
+  const imageProxyHandler = (request, reply) => {
+    if (!request.proxyUser) return;
+    const remotePath = `/api/terminals/${encodeURIComponent(request.params.id)}/clipboard-image`;
+    return proxyApiRequest(request, reply, request.proxyUser, remotePath);
+  };
+  fastify.post('/api/remote/:hostId/terminals/:id/clipboard-image', imageProxyOptions, imageProxyHandler);
+  fastify.post('/api/remote/:hostId/api/terminals/:id/clipboard-image', imageProxyOptions, imageProxyHandler);
+
+  fastify.all('/api/remote/:hostId/*', async (request, reply) => {
+    const user = authenticate(request, reply);
+    if (!user) return;
+    return proxyApiRequest(request, reply, user);
   });
 
   fastify.get('/ws/remote/:hostId/terminal/:sessionId', { websocket: true }, (socket, req) => {

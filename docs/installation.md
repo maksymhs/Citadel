@@ -210,6 +210,10 @@ sudo bash install.sh --no-admin-terminal         # unprivileged service user onl
 
 The named user must exist on the host; the installer validates it and refuses to continue otherwise. It installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. System sessions are administrator-only across HTTP and WebSocket access, including remote-machine proxying; non-admin users cannot list or reattach to persisted System sessions. A configured System shell starts as the selected OS user, while project shells continue to start as the Citadel service user. **Security warning:** this does not isolate project terminals or agents from the sudo capability: the grant belongs to the shared service UID and the systemd sandbox relaxation applies to the whole service. The Files integration is also affected. Do not enable this for untrusted projects/users; use a separate OS identity and privilege broker for stronger isolation. Citadel does not accept or store sudo passwords; prompts use the host account's normal sudo policy.
 
+### Paste an image into a terminal
+
+Use **Ctrl/Cmd+V** in a terminal, or the toolbar's **Paste** button, to upload a PNG, JPEG, GIF or WebP image (up to 5 MiB) to that terminal's host. Citadel pastes the generated path rather than sending image bytes through the terminal, so the image is available even when the browser and terminal are on different machines. The upload is stored privately for the same OS identity as the terminal, with a 50 MiB per-identity quota; files are eligible for cleanup after 24 hours and are removed the next time an image is uploaded. No command is run automatically—press Enter only when you are ready. See [security limitations](security.md#deployment-details) for the storage and validation limits.
+
 ## In-panel Updater
 
 Citadel checks GitHub for new releases (System view) and — when the updater is installed — can update itself with one click. It is **enabled by default**; skip it with `--no-updater`. To add it to an existing install, re-run the installer:
