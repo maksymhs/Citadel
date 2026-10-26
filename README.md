@@ -195,7 +195,8 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 
 | Latest | |
 | --- | --- |
-| **[v0.50.0](https://github.com/maksymhs/Citadel/releases/tag/v0.50.0)** | AI Gateway model discovery, per-provider usage/reset display and 1M context default |
+| **[v0.51.0](https://github.com/maksymhs/Citadel/releases/tag/v0.51.0)** | Simplified AI Gateway settings with visual provider usage meters and model discovery |
+| [v0.50.0](https://github.com/maksymhs/Citadel/releases/tag/v0.50.0) | AI Gateway model discovery, per-provider usage/reset display and 1M context default |
 | [v0.49.0](https://github.com/maksymhs/Citadel/releases/tag/v0.49.0) | Hot Claude / ChatGPT / Auto routing with stable model aliases, separate Claude authorization and opt-in quota fallback |
 | [v0.48.0](https://github.com/maksymhs/Citadel/releases/tag/v0.48.0) | Gateway applies when typing claude in new project terminals; terminal VS Code button and dark editor defaults |
 | [v0.47.0](https://github.com/maksymhs/Citadel/releases/tag/v0.47.0) | Optional AI Gateway activation and model settings; browser VS Code without SSH, with return to Citadel |

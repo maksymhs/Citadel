@@ -575,3 +575,12 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Verified with Gateway, discovery and UI smoke suites, full `npm test`, lint,
   and `git diff --check`. Visual browser review remains unavailable if no local
   browser is installed; no real provider account or inference was exercised.
+
+## 140. Release v0.51.0
+- Ships the simplified AI Gateway Settings, selected-model preservation,
+  accessible per-window usage meters, safe Claude authorization link and updated
+  README/guide. Per-model event statistics remain disabled pending a separate
+  privacy-preserving opt-in design.
+- Bumps package metadata to `0.51.0`, cache-busters to `v0510`, and README Latest.
+  Changelog is generated from the local v0.51.0 tag as part of release finalization.
+- Release-candidate verification: focused Gateway/discovery/UI and release-notes suites 26/26, full `npm test` 528 tests (527 passed, 1 skipped, 0 failed), `npm run lint` and `git diff --check` clean. No real provider login/inference or visual browser review (no browser installed).

@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.51.0](https://github.com/maksymhs/Citadel/releases/tag/v0.51.0) · 2026-10-26
+
+### Added
+
+- **gateway**: Simplify settings with visual usage meters
+
 ## [0.50.0](https://github.com/maksymhs/Citadel/releases/tag/v0.50.0) · 2026-10-26
 
 ### Added
