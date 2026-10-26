@@ -605,5 +605,12 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   hub and seven baseline Settings sections at 320px in dark theme.
 - Visual spot checks used default fixture content; populated machine rows and
   alternate live Gateway/Updates states were not screenshot-reviewed. No sudo,
-  installer, systemd, production database, live service, release or push action
-  was performed.
+  installer, systemd, production database or live service was modified.
+
+## 142. Release v0.52.0
+- Ships Claude Code Gateway naming and 1M context visibility, responsive Settings,
+  and admin-gated System terminals with role forwarding through remote proxies.
+  Documentation explains the shared service-UID privilege boundary.
+- Bumps package metadata to `0.52.0`, cache-busters to `v0520`, and README Latest.
+  The changelog is generated from the local v0.52.0 tag during release finalization.
+- Local release only; the tag and commits have not been pushed.
