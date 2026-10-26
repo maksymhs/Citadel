@@ -8,19 +8,19 @@ with your accounts. It does not import existing CLI login caches.
 
 ## Connect accounts
 
-1. Click **Install local gateway**. Citadel downloads the pinned platform binary
+1. Select **Install component**. Citadel downloads the pinned platform binary
    and verifies its SHA-256, then installs only the executable under
    `DATA_DIR/gateway`. Linux/macOS x64/arm64 and `tar` are supported. No sudo or
    system service is installed.
-2. **Connect ChatGPT** starts a device login. Open the OpenAI link, enter the
-   one-time code and authorize in your browser. Enable device login in ChatGPT
-   security settings if requested. Wait for **ChatGPT connected**.
-3. **Connect Claude** shows a Claude authorization link. After approving it, your
-   browser may fail to open the localhost callback address. Copy that complete
-   address from the browser address bar into **Claude callback URL**, then click
-   **Finish Claude connection**. Wait for **Claude connected**. Submit this URL
-   only in Citadel, never in chat, logs or an issue. Expired flows can be started
-   again. The authorization is separate from native Claude Code login.
+2. Select **Connect ChatGPT**. Open the device-login link, enter the one-time
+   code and authorize in your browser. Enable device login in ChatGPT security
+   settings if requested. Wait for **Connected**.
+3. Select **Connect Claude** and authorize from the displayed link. Your browser
+   may fail to open the localhost callback address. Copy that complete address
+   from the browser address bar into **Claude callback URL**, then select
+   **Finish connection**. Submit this URL only in Citadel, never in chat, logs or
+   an issue. Expired flows can be started again. This authorization is separate
+   from native Claude Code login.
 
 Claude authorization uses CLIProxyAPI's internal OAuth endpoints with
 `is_webui=false`. This avoids its wildcard callback listener: there is no SSH
@@ -36,20 +36,24 @@ A setup-only proxy stops once Claude authorization finishes.
 | Claude only | Your gateway-connected Claude account supplies all three roles |
 | Auto | Claude has priority; ChatGPT is the fallback on eligible quota/availability failures |
 
-Choose a routing mode and model IDs for each provider. Settings loads the provider
-catalogs and subscription usage when a connected account is available. Each
-provider has separate selectors for planning, execution and background work;
-the saved model stays selected even if a later catalog does not list it. Choose
-**Enter a model ID manually…** to enter a newer or custom ID. A catalog listing is
-informational and does not guarantee that your subscription can use that model.
+The compact Settings screen has one card per provider. Each card contains its
+connection status and actions, three model selectors (planning, execution and
+background), and separate usage meters when the account reports them. A meter
+shows the percentage and a thin bar; unavailable values are labeled rather than
+shown as zero. Reset dates are displayed with local time and relative time. Each
+account and each usage window stays separate: Citadel does not add percentages or
+infer a daily limit from an unnamed window. **Refresh** updates that provider's
+catalog and usage. Catalog provenance, freshness and account-access caveats are
+available in the card's model-list details. A listed model is informational and
+does not guarantee that your subscription can use it. A saved model remains
+selected and marked unverified if a later catalog does not list it; there is no
+manual-ID editor.
 
-The gateway may show provider-reported usage windows and reset times, such as
-Claude's five-hour/seven-day windows or Codex's windows when the upstream account
-reports their duration. These subscription endpoints are not stable public API
-contracts: usage can be unavailable or stale without preventing model
-configuration. A missing value is not unlimited usage. Multiple accounts are
-shown separately; Citadel does not add their percentages together or infer a
-daily limit from an unnamed window.
+Provider-reported usage windows may include Claude's five-hour/seven-day windows
+or Codex's windows when the upstream account reports their duration. These
+subscription endpoints are not stable public API contracts: usage may be
+unavailable or stale without preventing model configuration. A missing value is
+not unlimited usage.
 
 ChatGPT defaults remain Sol for planning and Luna for execution/background work.
 Claude defaults remain Opus 5.5 / Sonnet 5.5 / Haiku 5.5 from the pinned catalog;
@@ -90,8 +94,8 @@ If all eligible accounts are exhausted, the request fails explicitly.
 The shared context budget defaults to 1,000,000 tokens and is declared with
 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, avoiding the unknown-alias context warning. The
 current built-in Claude defaults and GPT-6.1 Sol / GPT-6 Luna defaults support at
-least 1M tokens, but discovered or manually entered model IDs may have smaller
-windows. Set a budget supported by **every** eligible model, including Auto's
+least 1M tokens, but discovered or previously saved custom model IDs may have
+smaller windows. Set a budget supported by **every** eligible model, including Auto's
 fallback; this is operator configuration, not verified model capacity. Previously
 saved budgets are preserved and can be changed in Advanced options. Context
 changes require a new terminal. Requests already emitted and arbitrary tool side
@@ -123,6 +127,24 @@ requests through the local proxy; it does not expose credentials, account
 identifiers, upstream headers or response bodies. Panel downloads, passive usage
 aggregation and request/error-body capture are disabled. Provider stdout/stderr
 are discarded.
+
+### Per-model statistics
+
+Per-model request statistics are not collected or shown. CLIProxyAPI 8.0.43's
+management `usage/queue` endpoint consumes queued events when read (`PopOldest`);
+it is not a passive snapshot. Events can contain credentials or account/source
+identifiers, session/trace IDs, headers, tokens and error bodies. They represent
+upstream attempts rather than necessarily user conversations, and are not the
+subscription's global usage. The in-memory queue can also lose events on expiry
+or restart. Citadel therefore keeps event capture disabled and does not poll this
+endpoint from Settings. A future opt-in design would need bounded server-side
+aggregation over an allowlist without retaining raw events, explicit loss
+semantics, and privacy tests.
+
+Sources pinned to the bundled CLIProxyAPI version:
+- [Management API contract (v8.0.43)](https://github.com/router-for-me/CLIProxyAPI/blob/v8.0.43/docs/management-api-v8.md#L83-L100)
+- [Usage queue handler: destructive pop](https://github.com/router-for-me/CLIProxyAPI/blob/v8.0.43/internal/api/handlers/management/usage.go#L23-L54)
+- [Queued event fields](https://github.com/router-for-me/CLIProxyAPI/blob/v8.0.43/internal/redisqueue/plugin.go#L181-L242)
 
 Account tokens and the client key persist encrypted with Citadel's existing
 AES-GCM key in `app_config`. The proxy needs plaintext while running: its own

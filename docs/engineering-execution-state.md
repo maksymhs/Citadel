@@ -559,3 +559,19 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Ships Settings → AI Gateway model discovery by provider, preserved/manual model selection, best-effort per-account subscription usage/reset display, simplified routing and isolated immediate activation. The new-user shared context default is 1M; existing saved budgets are preserved, and operators should choose a cap supported by every selected model and Auto fallback. Discovery/usage remains informational and best-effort, not an entitlement or inference guarantee.
 - Updates package/lock versions, frontend asset cache tokens and README Latest. Includes the feature implementation from entry 136 and 1M context adjustment from entry 137. The release workflow is expected to publish the pushed v0.50.0 tag as GitHub Latest; stable-channel adoption requires that tag. No production restart/update is part of this release.
 - Release-candidate verification: npm test 528 tests (527 passed, 1 skipped, 0 failed), focused Gateway/discovery 14/14, UI smoke 9/9, release-notes tests 3/3, npm run lint and git diff --check clean. No actual provider login, subscription usage or inference was tested; account compatibility, live quotas and real macOS remain operator validation.
+
+## 139. Simplify AI Gateway Settings and visualize provider usage
+- Removed the manual model-ID editor while retaining saved model IDs absent
+  from refreshed catalogs. Reorganized Settings into a compact route/activation
+  strip and one connection, model and usage card per provider; kept advanced
+  controls and common save/discard actions.
+- Replaced quota text with separate accessible percentage meters by account and
+  window, including explicit unavailable/stale states and keyboard-focusable
+  reset dates. Added the validated Claude authorization link to its callback
+  flow. README now highlights the optional gateway and links its guide.
+- Documented why per-model request statistics remain disabled: the pinned
+  CLIProxyAPI usage queue is destructive to read and carries sensitive raw event
+  metadata; a privacy-preserving opt-in aggregation requires a separate design.
+- Verified with Gateway, discovery and UI smoke suites, full `npm test`, lint,
+  and `git diff --check`. Visual browser review remains unavailable if no local
+  browser is installed; no real provider account or inference was exercised.

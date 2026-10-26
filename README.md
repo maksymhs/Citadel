@@ -44,7 +44,13 @@ Self-hosted, lightweight and secure. Runs on a VPS, a Mac or a spare laptop.
 <td width="50%" valign="top">
 
 ### 🤖 AI agent launcher
-Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries. Missing agents install with one click, once for every user. Optionally connect Claude and ChatGPT, select models and use hot **Claude / ChatGPT / Auto** routing in **Settings → AI Gateway** ([experimental setup](docs/ai-gateway.md)).
+Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries. Missing agents install with one click, once for every user.
+
+</td>
+<td width="50%" valign="top">
+
+### 🔀 Optional AI Gateway
+Connect Claude and ChatGPT separately, choose discovered models for planning, execution and background work, then route new conversations to **Claude**, **ChatGPT** or opt-in **Auto** fallback. Provider-reported usage windows and reset times appear when available. Experimental; account access and model compatibility are not guaranteed. [Setup and limitations →](docs/ai-gateway.md)
 
 </td>
 </tr>
@@ -213,6 +219,7 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 | [Security & limitations](docs/security.md) | Security layers and what Citadel does **not** protect against |
 | [Remote access](docs/remote-access.md) | QR pairing, Cloudflare tunnels, own domain |
 | [Task mesh](docs/task-mesh.md) | Parallel work across paired nodes |
+| [AI Gateway](docs/ai-gateway.md) | Optional Claude/ChatGPT routing, model choices, usage windows and limitations |
 | [Feature map](docs/features.md) | Which files make up each feature, with their tests and guide |
 | [Code map](docs/code-map.md) | Every source file with its purpose, and where each screen lives |
 | [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) | How it is built and why |

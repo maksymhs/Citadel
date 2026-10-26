@@ -154,7 +154,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.equal(w.document.getElementById('gateway-mode').value, 'chatgpt');
     assert.equal(w.document.getElementById('gateway-context').value, '1000000');
     assert.ok(w.document.getElementById('gateway-login-claude'));
-    assert.match(w.document.getElementById('gateway-body').textContent, /Auto requires both providers/);
+    assert.match(w.document.getElementById('gateway-body').textContent, /Both accounts must be connected/);
     w.document.querySelector('.nav-item[data-view="projects"]').click();
     await sleep(300);
     assert.equal(w.document.getElementById('gateway-body'), null);
@@ -167,16 +167,17 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     try {
       win.eval(fs.readFileSync(path.join(ROOT, 'public/js/settings-gateway.js'), 'utf8'));
       const calls = [], notices = [];
+      let unsafeAuthUrl = false;
       let gateway = { installed: true, supported: true, running: true, connected: true, enabled: true, port: 8317, version: 'fixture', mode: 'chatgpt', contextTokens: 200000,
         planningModel: 'gpt-plan', executionModel: 'gpt-run', smallModel: 'gpt-small', claudePlanningModel: 'claude-plan', claudeExecutionModel: 'claude-run', claudeSmallModel: 'claude-small', connections: { codex: true, claude: false } };
-      const discovery = { providers: { codex: { connected: true, models: { status: 'available', source: 'credential_catalog', fetchedAt: new Date().toISOString(), stale: false, items: [{ id: 'gpt-run', label: 'GPT run' }] }, usage: { status: 'available', accounts: [{ label: 'Account 1', windows: [{ id: 'primary', label: '5-hour window', usedPercent: 0, durationSeconds: 18000, resetsAt: new Date(Date.now() + 60000).toISOString() }] }] } }, claude: { connected: false, models: { status: 'not_connected', items: [] }, usage: { status: 'not_connected', accounts: [] } } } };
+      const discovery = { providers: { codex: { connected: true, models: { status: 'available', source: 'credential_catalog', fetchedAt: new Date().toISOString(), stale: false, items: [{ id: 'gpt-run', label: 'GPT run' }] }, usage: { status: 'available', fetchedAt: new Date().toISOString(), accounts: [{ label: 'Account 1', windows: [{ id: 'primary', label: '5-hour window', usedPercent: 0, durationSeconds: 18000, resetsAt: new Date(Date.now() + 60000).toISOString() }, { id: 'weekly', label: 'Weekly window', usedPercent: 45 }, { id: 'limit', label: 'Additional limit', usedPercent: 100 }, { id: 'unknown', label: 'Unknown window', usedPercent: null }] }, { label: 'Account 2', windows: [{ id: 'secondary', label: 'Other account', usedPercent: 12 }] }] } }, claude: { connected: false, models: { status: 'not_connected', items: [] }, usage: { status: 'not_connected', accounts: [] } } } };
       await win.CitadelGatewaySettings.init({ escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), showToast: msg => notices.push(msg),
         api: async (url, opts = {}) => {
           calls.push({ url, ...opts });
           if (url.endsWith('/discovery/refresh')) return discovery;
           if (url.endsWith('/discovery')) return discovery;
           if (url.endsWith('/models')) return { models: ['gpt-run', 'claude-run'] };
-          if (url.endsWith('/login') && opts.method === 'POST') gateway = { ...gateway, login: { provider: 'claude', state: 'waiting_callback', url: 'https://claude.ai/oauth/authorize?state=fixture' } };
+          if (url.endsWith('/login') && opts.method === 'POST') gateway = { ...gateway, login: { provider: 'claude', state: 'waiting_callback', url: unsafeAuthUrl ? 'javascript:alert(1)' : 'https://claude.ai/oauth/authorize?state=fixture' } };
           if (url.endsWith('/callback')) gateway = { ...gateway, login: { provider: 'claude', state: 'connected' }, connections: { codex: true, claude: true } };
           if (opts.method === 'PUT') gateway = { ...gateway, ...opts.body };
           if (url.endsWith('/test')) return { ok: true, model: 'actual-fixture-model' };
@@ -184,6 +185,11 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         } });
       win.document.getElementById('gateway-login-claude').click(); await sleep(30);
       assert.equal(calls.find(call => call.method === 'POST').body.provider, 'claude');
+      const authLink = win.document.querySelector('.gateway-auth-prompt a[href="https://claude.ai/oauth/authorize?state=fixture"]');
+      assert.ok(authLink, 'safe Claude authorization URL is linked');
+      assert.equal(authLink.rel, 'noopener noreferrer');
+      assert.equal(win.document.querySelector('[data-manual-field]'), null);
+      assert.equal(win.document.querySelector('#gateway-planning-manual'), null);
       const callback = 'http://localhost:54545/callback?state=fixture&code=private-fixture-code';
       win.document.getElementById('gateway-callback').value = callback;
       win.document.querySelector('[data-refresh-provider="codex"]').click(); await sleep(30);
@@ -193,8 +199,16 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(win.document.getElementById('gateway-callback'), null);
       assert.ok(!win.document.body.textContent.includes('private-fixture-code'));
       assert.equal(win.document.getElementById('gateway-planning').value, 'gpt-plan', 'model choices preserve saved IDs even outside the live catalog');
-      assert.match(win.document.getElementById('gateway-body').textContent, /0% used/);
-      assert.match(win.document.getElementById('gateway-body').textContent, /Resets/);
+      const gatewayBody = win.document.getElementById('gateway-body');
+      assert.match(gatewayBody.textContent, /0% used/);
+      assert.match(gatewayBody.textContent, /45% used/);
+      assert.match(gatewayBody.textContent, /100% used/);
+      assert.match(gatewayBody.textContent, /Unavailable/);
+      assert.match(gatewayBody.textContent, /resets in/);
+      assert.equal(gatewayBody.querySelectorAll('[role="meter"][aria-valuenow]').length, 4, 'each reported numeric usage window has a separate accessible meter');
+      assert.equal(gatewayBody.querySelector('[role="meter"][aria-valuenow="0"]').getAttribute('aria-valuemin'), '0');
+      assert.equal(gatewayBody.querySelector('[role="meter"][aria-valuenow="100"]').getAttribute('aria-valuemax'), '100');
+      assert.equal(gatewayBody.querySelectorAll('.gateway-account').length, 2, 'provider accounts remain separate');
       win.document.getElementById('gateway-mode').value = 'auto';
       win.document.getElementById('gateway-mode').dispatchEvent(new win.Event('change', { bubbles: true }));
       win.document.getElementById('gateway-save').click(); await sleep(30);
@@ -209,6 +223,9 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       win.document.getElementById('gateway-test').click(); await sleep(30);
       assert.ok(notices.some(message => message.includes('actual-fixture-model')));
       assert.ok(calls.every(call => !call.url.includes('private-fixture-code')));
+      unsafeAuthUrl = true;
+      win.document.getElementById('gateway-login-claude').click(); await sleep(30);
+      assert.equal(win.document.querySelector('.gateway-auth-prompt a[href^="javascript:"]'), null, 'untrusted authorization URLs are never linked');
     } finally { win.CitadelGatewaySettings.dispose(); isolated.window.close(); }
   });
 
