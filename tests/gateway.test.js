@@ -96,6 +96,7 @@ test('gateway routes require administrator access and never reveal stored values
   assert.equal(result.statusCode, 200);
   assert.equal(result.json().gateway.enabled, false);
   assert.equal(result.json().gateway.running, false);
+  assert.equal(result.json().gateway.contextTokens, 1000000, 'fresh status reports the 1M default');
   assert.equal((await app.inject({ method: 'POST', url: '/api/settings/gateway/login', cookies, headers: { origin: 'https://untrusted.example' } })).statusCode, 403);
   assert.equal((await app.inject({ method: 'POST', url: '/api/settings/gateway/discovery/refresh', cookies, payload: { provider: 'other' } })).statusCode, 400);
   const discovery = await app.inject({ url: '/api/settings/gateway/discovery', cookies });
@@ -136,11 +137,12 @@ test('managed lifecycle keeps credentials encrypted, scopes launcher settings an
   assert.equal(runtimeConfig.management['disable-control-panel'], true);
   assert.deepEqual(await s.models(), ['fixture-model']);
   assert.deepEqual(await s.testConnection(), { ok: true, model: 'fixture-model', mode: 'chatgpt' });
-  const env = gatewayEnvironment({ ANTHROPIC_API_KEY: 'old-key', CLAUDE_CODE_OAUTH_TOKEN: 'old-token', CLAUDE_CODE_USE_BEDROCK: '1', KEEP: 'yes' }, settings);
+  const env = gatewayEnvironment({ ANTHROPIC_API_KEY: 'old-key', CLAUDE_CODE_OAUTH_TOKEN: 'old-token', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_MAX_CONTEXT_TOKENS: '200000', KEEP: 'yes' }, settings);
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
   assert.equal(env.CLAUDE_CODE_USE_BEDROCK, undefined);
   assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'citadel-planning');
+  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1000000', 'configured context budget replaces an inherited lower value');
   assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'citadel-execution');
   assert.equal(env.KEEP, 'yes');
   assert.ok(!getDatabase().prepare("SELECT value FROM app_config WHERE key = 'ai.gateway'").get().value.includes(settings.token));
@@ -269,29 +271,30 @@ test('typing claude in a project shell receives gateway settings, including thro
   const fixtureBin = path.join(dir, 'fixture-bin'); fs.mkdirSync(fixtureBin);
   const report = path.join(dir, 'claude-report.json');
   fs.writeFileSync(path.join(fixtureBin, 'claude'), `#!/usr/bin/env node
-require('node:fs').writeFileSync(${JSON.stringify(report)}, JSON.stringify({ base: process.env.ANTHROPIC_BASE_URL, plan: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL, run: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL, model: process.env.ANTHROPIC_MODEL, credentialPresent: Boolean(process.env.ANTHROPIC_AUTH_TOKEN) }));
+require('node:fs').writeFileSync(${JSON.stringify(report)}, JSON.stringify({ base: process.env.ANTHROPIC_BASE_URL, plan: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL, run: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL, model: process.env.ANTHROPIC_MODEL, context: process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, credentialPresent: Boolean(process.env.ANTHROPIC_AUTH_TOKEN) }));
 `, { mode: 0o700 });
   const fixtureShell = path.join(fixtureBin, 'test-shell');
   fs.writeFileSync(fixtureShell, '#!/bin/sh\nexec /bin/bash --noprofile --norc -i\n', { mode: 0o700 });
-  const original = { launch: gateway.launchOptions, shell: process.env.SHELL, home: process.env.HOME };
+  const original = { launch: gateway.launchOptions, shell: process.env.SHELL, home: process.env.HOME, context: process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS };
   let session;
   try {
     gateway.launchOptions = () => s.launchOptions();
-    process.env.SHELL = fixtureShell; process.env.HOME = dir;
+    process.env.SHELL = fixtureShell; process.env.HOME = dir; process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = '200000';
     session = terminals.createSession({ projectId: project.id, name: 'Gateway regression shell' });
     const active = terminals.activePtySessions.get(session.sessionId);
-    await until(() => active.buffer.includes('AI Gateway active for this project terminal'));
+    await until(() => active.buffer.includes('Claude Code Gateway active for this project terminal'));
     // Only the fixture binary is invoked; never call a host's logged-in CLI.
     const quoted = `'${fixtureBin.replace(/'/g, "'\\''")}'`;
     active.ptyProcess.write(`export PATH=${quoted}:"$PATH"; claude\r`);
     await until(() => fs.existsSync(report));
-    assert.deepEqual(JSON.parse(fs.readFileSync(report)), { base: `http://127.0.0.1:${s.status().port}`, plan: 'citadel-planning', run: 'citadel-execution', model: 'opusplan', credentialPresent: true });
+    assert.deepEqual(JSON.parse(fs.readFileSync(report)), { base: `http://127.0.0.1:${s.status().port}`, plan: 'citadel-planning', run: 'citadel-execution', model: 'opusplan', context: '1000000', credentialPresent: true });
     assert.ok(!active.buffer.includes(JSON.parse(fs.readFileSync(s.launchOptions().args[1])).token));
   } finally {
     if (session) terminals.killSession(session.sessionId);
     gateway.launchOptions = original.launch;
     if (original.shell === undefined) delete process.env.SHELL; else process.env.SHELL = original.shell;
     if (original.home === undefined) delete process.env.HOME; else process.env.HOME = original.home;
+    if (original.context === undefined) delete process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS; else process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = original.context;
     await s.disconnect();
   }
 });

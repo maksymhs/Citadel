@@ -498,7 +498,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
   }
   function launchOptions() {
     if (!config().enabled) return null;
-    if (!processHandle || !runtime) throw new Error('AI Gateway is enabled but stopped. Restart it in Settings → AI Gateway.');
+    if (!processHandle || !runtime) throw new Error('Claude Code Gateway is enabled but stopped. Restart it in Settings → Claude Code Gateway.');
     return { command: process.execPath, args: [path.resolve(__dirname, '../../scripts/gateway-launch.js'), path.join(runtime, 'launch.json')] };
   }
   async function close() {
@@ -521,7 +521,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       return status();
     });
   }
-  async function resume() { if (config().enabled) { try { await start(); } catch { lastError = 'Gateway could not resume. Open Settings → AI Gateway.'; } } }
+  async function resume() { if (config().enabled) { try { await start(); } catch { lastError = 'Claude Code Gateway could not resume. Open Settings → Claude Code Gateway.'; } } }
   return { status, install, loginStart, save, models, discovery: discoverySnapshot, refreshDiscovery, testConnection, launchOptions, close, disconnect, resume, callback, refreshLogin };
 }
 module.exports = { ...createGatewayService(), createGatewayService, VERSION };

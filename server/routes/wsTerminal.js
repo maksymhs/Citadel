@@ -3,9 +3,9 @@
  */
 const { isAllowedOrigin } = require('../security/guard');
 const { getSessionUser, getPeerTokenUser } = require('../security/auth');
-const { getDatabase } = require('../database/db');
 const terminalManager = require('../services/terminalManager');
 const hostService = require('../services/hostService');
+const { getSession, canAccessSession } = require('../security/terminalAccess');
 
 function wsTerminalRoutes(fastify) {
   fastify.get('/ws/terminal/:sessionId', { websocket: true }, (socket, req) => {
@@ -36,16 +36,18 @@ function wsTerminalRoutes(fastify) {
       hostService.absorbIdentityHeaders(user.peerHostId, req.headers);
     }
 
-    // 3. Authorize the requested terminal session: it must exist and belong to a
-    //    project the caller may reach. (Single-admin installs currently allow all
-    //    authenticated users; keep the lookup so ownership can be enforced later.)
+    // 3. System sessions are administrator-only, including sessions restored
+    //    from persistence after the configured run-as user changes.
     const terminalSessionId = req.params.sessionId;
-    const sessionRow = getDatabase()
-      .prepare('SELECT id, project_id FROM term_sessions WHERE id = ?')
-      .get(terminalSessionId);
+    const sessionRow = getSession(terminalSessionId);
 
     if (!sessionRow) {
       socket.send(JSON.stringify({ type: 'error', message: 'Terminal session not found.' }));
+      socket.close();
+      return;
+    }
+    if (!canAccessSession(user, sessionRow, req.headers)) {
+      socket.send(JSON.stringify({ type: 'error', message: 'Administrator privileges are required for System terminals.' }));
       socket.close();
       return;
     }

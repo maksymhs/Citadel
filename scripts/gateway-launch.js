@@ -22,13 +22,13 @@ function main() {
   try {
     const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!binary || !settings.token || !/^http:\/\/127\.0\.0\.1:\d+$/.test(settings.baseUrl)) throw new Error();
-    if (shellMode) console.error(`[Citadel] AI Gateway active for this project terminal: stable model aliases; routing at launch: ${settings.mode || 'chatgpt'}. Change routes in Settings → AI Gateway.`);
+    if (shellMode) console.error(`[Citadel] Claude Code Gateway active for this project terminal: stable model aliases; routing at launch: ${settings.mode || 'chatgpt'}. Change routes in Settings → Claude Code Gateway.`);
     const child = spawn(binary, shellMode ? args : ['--model', 'opusplan', ...args], { stdio: 'inherit', env: gatewayEnvironment(process.env, settings) });
     child.on('error', () => { console.error('Could not launch Claude Code through AI Gateway.'); process.exitCode = 1; });
     child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
     for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => child.kill(signal));
   } catch {
-    console.error('AI Gateway launch settings are unavailable. Check Settings → AI Gateway.');
+    console.error('Claude Code Gateway launch settings are unavailable. Check Settings → Claude Code Gateway.');
     process.exitCode = 1;
   }
 }

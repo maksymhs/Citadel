@@ -138,14 +138,32 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
-  test('AI Gateway settings expose installation, login and model activation controls', async () => {
+  test('Settings hub and Updates selector use responsive section markup', async () => {
+    w.document.querySelector('.nav-item[data-view="settings"]').click();
+    await sleep(700);
+    assert.equal(w.document.querySelectorAll('.settings-tile[data-settings-section]').length, 7);
+    const updateIcon = w.document.querySelector('[data-settings-section="updates"] .settings-tile-icon svg path');
+    assert.ok(updateIcon && updateIcon.getAttribute('d').includes('M20 11'), 'Updates uses a connected refresh icon path');
+    w.document.querySelector('[data-settings-section="updates"]').click();
+    await sleep(500);
+    assert.equal(w.document.getElementById('update-channel')?.className, 'form-input');
+    w.document.querySelector('.top-bar-back')?.click();
+    await sleep(300);
+    assert.deepEqual(errors, []);
+  });
+
+  test('Claude Code Gateway settings expose installation, login and 1M context controls', async () => {
     w.document.querySelector('.nav-item[data-view="settings"]').click();
     await sleep(800);
     const tile = w.document.querySelector('[data-settings-section="gateway"]');
-    assert.ok(tile, 'Gateway is reachable from Settings');
+    assert.ok(tile, 'Claude Code Gateway is reachable from Settings');
+    assert.match(tile.textContent, /Claude Code Gateway/);
     tile.click();
     await sleep(500);
     assert.ok(w.document.getElementById('gateway-install'));
+    assert.equal(w.document.querySelector('.settings-screen-head h2').textContent, 'Claude Code Gateway');
+    assert.match(w.document.getElementById('top-bar-title').textContent, /Claude Code Gateway/);
+    assert.match(w.document.getElementById('gateway-body').textContent, /1,000,000 tokens \(1M\)/);
     assert.equal(w.document.getElementById('gateway-login').disabled, true);
     assert.equal(w.document.getElementById('gateway-enabled').checked, false);
     assert.equal(w.document.getElementById('gateway-enabled').disabled, true);
@@ -183,6 +201,10 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
           if (url.endsWith('/test')) return { ok: true, model: 'actual-fixture-model' };
           return { gateway };
         } });
+      assert.match(win.document.getElementById('gateway-body').textContent, /Saved shared context budget: 200,000 tokens/);
+      win.document.getElementById('gateway-context-restore').click();
+      assert.equal(win.document.getElementById('gateway-context').value, '1000000');
+      assert.equal(calls.filter(call => call.method === 'PUT').length, 0, 'restoring 1M changes only the draft until Save');
       win.document.getElementById('gateway-login-claude').click(); await sleep(30);
       assert.equal(calls.find(call => call.method === 'POST').body.provider, 'claude');
       const authLink = win.document.querySelector('.gateway-auth-prompt a[href="https://claude.ai/oauth/authorize?state=fixture"]');
@@ -213,6 +235,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       win.document.getElementById('gateway-mode').dispatchEvent(new win.Event('change', { bubbles: true }));
       win.document.getElementById('gateway-save').click(); await sleep(30);
       assert.equal(calls.find(call => call.method === 'PUT').body.mode, 'auto');
+      assert.equal(calls.find(call => call.method === 'PUT').body.contextTokens, 1000000, 'the explicit draft restoration is applied only by Save');
       const planning = win.document.getElementById('gateway-planning');
       planning.value = 'gpt-run'; planning.dispatchEvent(new win.Event('change', { bubbles: true }));
       const enabled = win.document.getElementById('gateway-enabled'); enabled.checked = false; enabled.dispatchEvent(new win.Event('change', { bubbles: true })); await sleep(30);

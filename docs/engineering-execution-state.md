@@ -575,6 +575,10 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Verified with Gateway, discovery and UI smoke suites, full `npm test`, lint,
   and `git diff --check`. Visual browser review remains unavailable if no local
   browser is installed; no real provider account or inference was exercised.
+- Release-candidate verification: focused Gateway/discovery/UI and release-notes
+  suites 26/26, full `npm test` 528 tests (527 passed, 1 skipped, 0 failed),
+  `npm run lint` and `git diff --check` clean. No real provider login/inference or
+  visual browser review (no browser installed).
 
 ## 140. Release v0.51.0
 - Ships the simplified AI Gateway Settings, selected-model preservation,
@@ -583,4 +587,23 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
   privacy-preserving opt-in design.
 - Bumps package metadata to `0.51.0`, cache-busters to `v0510`, and README Latest.
   Changelog is generated from the local v0.51.0 tag as part of release finalization.
-- Release-candidate verification: focused Gateway/discovery/UI and release-notes suites 26/26, full `npm test` 528 tests (527 passed, 1 skipped, 0 failed), `npm run lint` and `git diff --check` clean. No real provider login/inference or visual browser review (no browser installed).
+
+## 141. Claude Code Gateway, responsive Settings and System terminal access
+- Renamed the user-facing Gateway to Claude Code Gateway without changing API or
+  storage compatibility. Made the configured shared context budget visible and
+  added an explicit draft-only restore to 1M. Fixed the Updates icon and tightened
+  responsive layouts across Settings.
+- Added admin checks for global/System terminal creation, listing, actions and
+  WebSocket attachment, including caller-role forwarding through remote proxies.
+  System sessions can use the configured OS account; project sessions remain as
+  the service user. Documented that this is not an OS isolation boundary because
+  projects and agents share the service UID and its sudo capability.
+- Verified focused Gateway, UI, terminal, security and remote-proxy tests (49/49),
+  full `npm test` (531 passed, 1 skipped, 0 failed), `npm run lint` and
+  `git diff --check`. Chromium/CDP measured 80 hub/section combinations at five
+  widths and two themes with no horizontal overflow; reviewed screenshots of the
+  hub and seven baseline Settings sections at 320px in dark theme.
+- Visual spot checks used default fixture content; populated machine rows and
+  alternate live Gateway/Updates states were not screenshot-reviewed. No sudo,
+  installer, systemd, production database, live service, release or push action
+  was performed.

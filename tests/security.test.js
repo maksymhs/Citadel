@@ -3,9 +3,10 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+delete process.env.TERMINAL_ADMIN_USER;
 const { validateSafePath, sanitizeSlug, validateDomain, isAllowedOrigin } = require('../server/security/guard');
 const { buildServer } = require('../server/index');
-const { closeDatabase } = require('../server/database/db');
+const { getDatabase, closeDatabase } = require('../server/database/db');
 
 describe('Security & Protection Tests', () => {
   let app;
@@ -99,6 +100,32 @@ describe('Security & Protection Tests', () => {
     assert.equal(res.statusCode, 400);
     const body = JSON.parse(res.payload);
     assert.match(body.error, /Path traversal denied/i);
+  });
+
+  test('non-admins cannot create, list, attach actions to, or remove persisted System terminals', async () => {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO term_sessions (id, project_id, name, tmux_session, status, created_at, last_active) VALUES (?, NULL, ?, ?, 'closed', ?, ?)")
+      .run('security-system-fixture', 'System fixture', 'citadel_global_security_fixture', now, now);
+    db.prepare("UPDATE users SET role = 'viewer'").run();
+    try {
+      const create = await app.inject({ method: 'POST', url: '/api/terminals', cookies: { session_id: authCookie }, payload: { name: 'Not allowed' } });
+      assert.equal(create.statusCode, 403);
+      const globalList = await app.inject({ method: 'GET', url: '/api/terminals?scope=global', cookies: { session_id: authCookie } });
+      assert.equal(globalList.statusCode, 200);
+      assert.deepEqual(globalList.json().sessions, []);
+      assert.equal(globalList.json().runAsUser, null);
+      const allList = await app.inject({ method: 'GET', url: '/api/terminals', cookies: { session_id: authCookie } });
+      assert.equal(allList.json().sessions.some(session => session.id === 'security-system-fixture'), false);
+      for (const result of [
+        await app.inject({ method: 'GET', url: '/api/terminals/security-system-fixture/capture', cookies: { session_id: authCookie } }),
+        await app.inject({ method: 'POST', url: '/api/terminals/security-system-fixture/copy-mode', cookies: { session_id: authCookie }, payload: { action: 'enter' } }),
+        await app.inject({ method: 'DELETE', url: '/api/terminals/security-system-fixture', cookies: { session_id: authCookie } }),
+      ]) assert.equal(result.statusCode, 403);
+    } finally {
+      db.prepare("UPDATE users SET role = 'admin'").run();
+      db.prepare('DELETE FROM term_sessions WHERE id = ?').run('security-system-fixture');
+    }
   });
 
   test('Security response headers (CSP, HSTS, X-Content-Type-Options)', async () => {

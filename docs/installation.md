@@ -126,7 +126,7 @@ checks on a real Mac or a macOS VM; Linux trial checks need no host installation
 
 ### Optional AI Gateway
 
-Open **Settings → AI Gateway** as an administrator to install the local component,
+Open **Settings → Claude Code Gateway** as an administrator to install the local component,
 connect ChatGPT by device login and Claude by browser authorization, choose
 Claude/ChatGPT/Auto routing and planning/execution models, then enable it
 for Claude Code in new project terminals (including typing `claude`).
@@ -208,7 +208,7 @@ sudo bash install.sh --admin-terminal=deploy     # run terminals as 'deploy'
 sudo bash install.sh --no-admin-terminal         # unprivileged service user only (default)
 ```
 
-The named user must exist on the host; the installer validates it and refuses to continue otherwise. It installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. **Security warning:** it makes the panel root-equivalent — anyone able to log into the panel can obtain a root shell on the host. Only enable it on a personal, single-admin server.
+The named user must exist on the host; the installer validates it and refuses to continue otherwise. It installs a scoped `sudoers` rule, relaxes the systemd sandbox and sets `TERMINAL_ADMIN_USER` in `.env`. System sessions are administrator-only across HTTP and WebSocket access, including remote-machine proxying; non-admin users cannot list or reattach to persisted System sessions. A configured System shell starts as the selected OS user, while project shells continue to start as the Citadel service user. **Security warning:** this does not isolate project terminals or agents from the sudo capability: the grant belongs to the shared service UID and the systemd sandbox relaxation applies to the whole service. The Files integration is also affected. Do not enable this for untrusted projects/users; use a separate OS identity and privilege broker for stronger isolation. Citadel does not accept or store sudo passwords; prompts use the host account's normal sudo policy.
 
 ## In-panel Updater
 

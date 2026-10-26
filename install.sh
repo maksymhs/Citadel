@@ -601,9 +601,10 @@ EOF
     detail "      citadel service started and enabled at boot."
   fi
 
-  # Privileged "System Terminal" (enabled by default; disable with
-  # --no-admin-terminal). Grants the service user a sudoers rule to open a shell
-  # as the admin user and relaxes the sandbox drop-in (root-capable by design).
+  # Privileged "System Terminal" (explicit opt-in with --admin-terminal;
+  # skipped by default and with --no-admin-terminal). Grants the service user a
+  # sudoers rule to open a shell as the selected user and relaxes the service-wide
+  # sandbox. This is not an isolation boundary for project processes.
   if [ -n "$ADMIN_TERMINAL_USER" ]; then
     if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && command -v systemctl >/dev/null 2>&1; then
       detail "      Enabling privileged System Terminal as '$ADMIN_TERMINAL_USER'..."

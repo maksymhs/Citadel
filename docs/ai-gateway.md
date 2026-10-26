@@ -1,6 +1,6 @@
-# AI Gateway for Claude Code
+# Claude Code Gateway
 
-Open **Settings → AI Gateway** as an administrator. This optional integration
+Open **Settings → Claude Code Gateway** as an administrator. The API, stored configuration key and internal feature IDs retain their historical `gateway` names for compatibility. This optional integration
 runs pinned CLIProxyAPI 8.0.43 locally and routes Claude Code to your explicitly
 connected Claude and/or ChatGPT accounts. It is experimental: availability,
 subscription entitlement and third-party protocol compatibility must be checked
@@ -65,7 +65,7 @@ on Auto; Auto requires both accounts connected.
 The **Use in new terminals** switch applies immediately to the saved
 configuration and does not save other pending edits. Use **Save configuration**
 to apply model or mode changes; pending edits are kept separate from activation.
-Open a new project terminal and type `claude`. The terminal prints **AI Gateway
+Open a new project terminal and type `claude`. The terminal prints **Claude Code Gateway
 active**. Project agent launches use the same configuration.
 
 ### Changing routes without restarting Claude
@@ -92,7 +92,10 @@ requests, authentication, billing and policy-denial statuses are surfaced.
 If all eligible accounts are exhausted, the request fails explicitly.
 
 The shared context budget defaults to 1,000,000 tokens and is declared with
-`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, avoiding the unknown-alias context warning. The
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, avoiding the unknown-alias context warning.
+Settings shows the saved budget (including a lower value retained from an older
+configuration); **Restore 1M context in draft** changes only the unsaved draft,
+and takes effect only after **Save configuration**. The
 current built-in Claude defaults and GPT-6.1 Sol / GPT-6 Luna defaults support at
 least 1M tokens, but discovered or previously saved custom model IDs may have
 smaller windows. Set a budget supported by **every** eligible model, including Auto's

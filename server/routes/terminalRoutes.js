@@ -6,6 +6,7 @@ const terminalManager = require('../services/terminalManager');
 const auditService = require('../services/auditService');
 const { validateSafePath } = require('../security/guard');
 const { PROJECTS_DIR } = require('../config');
+const { getSession, canAccessSession, canCreateGlobalSession, effectiveRole } = require('../security/terminalAccess');
 
 async function terminalRoutes(fastify) {
   fastify.addHook('preHandler', requireAuth);
@@ -14,17 +15,22 @@ async function terminalRoutes(fastify) {
   fastify.get('/api/terminals', async (request) => {
     const projectId = request.query?.projectId || null;
     const globalOnly = request.query?.scope === 'global';
+    const sessions = terminalManager.listSessions(projectId, globalOnly)
+      .filter((session) => canAccessSession(request.user, session, request.headers));
     return {
-      sessions: terminalManager.listSessions(projectId, globalOnly),
+      sessions,
       tmuxAvailable: terminalManager.isTmuxAvailable(),
-      runAsUser: terminalManager.getAdminTerminalUser(),
+      runAsUser: effectiveRole(request.user, request.headers) === 'admin' ? terminalManager.getAdminTerminalUser() : null,
     };
   });
 
   // Create new terminal session
   fastify.post('/api/terminals', async (request, reply) => {
     const { projectId, repoId, name, cwd, cols, rows } = request.body || {};
-    if (projectId && require('../services/gatewayService').status().enabled && request.user.role !== 'admin') {
+    if (!projectId && !canCreateGlobalSession(request.user, request.headers)) {
+      return reply.status(403).send({ error: 'Administrator privileges are required for System terminals.' });
+    }
+    if (projectId && require('../services/gatewayService').status().enabled && effectiveRole(request.user, request.headers) !== 'admin') {
       return reply.status(403).send({ error: 'Administrator privileges are required for gateway-enabled project terminals.' });
     }
 
@@ -54,7 +60,7 @@ async function terminalRoutes(fastify) {
         action: 'terminal_session_created',
         targetType: 'terminal',
         targetId: session.sessionId,
-        details: { projectId, repoId: projectId ? repoId : null, tmuxSession: session.tmuxSession },
+        details: { projectId, repoId: projectId ? repoId : null, tmuxSession: session.tmuxSession, runAsUser: projectId ? null : terminalManager.getAdminTerminalUser() },
         ip: request.ip,
       });
 
@@ -67,6 +73,9 @@ async function terminalRoutes(fastify) {
   // Toggle tmux copy-mode (scrollback browsing) for a session
   fastify.post('/api/terminals/:id/copy-mode', async (request, reply) => {
     const sessionId = request.params.id;
+    if (!canAccessSession(request.user, getSession(sessionId), request.headers)) {
+      return reply.status(403).send({ error: 'Administrator privileges are required for System terminals.' });
+    }
     const action = request.body?.action === 'exit' ? 'exit' : 'enter';
 
     const result = terminalManager.tmuxCopyMode(sessionId, action);
@@ -89,6 +98,9 @@ async function terminalRoutes(fastify) {
   // Text of the screen plus scrollback (used by the "Select" view in the panel)
   fastify.get('/api/terminals/:id/capture', async (request, reply) => {
     const sessionId = request.params.id;
+    if (!canAccessSession(request.user, getSession(sessionId), request.headers)) {
+      return reply.status(403).send({ error: 'Administrator privileges are required for System terminals.' });
+    }
     const result = terminalManager.captureSession(sessionId, request.query?.lines);
     if (!result.success) {
       return reply.status(400).send({ error: result.error });
@@ -106,6 +118,9 @@ async function terminalRoutes(fastify) {
   // Kill terminal session
   fastify.delete('/api/terminals/:id', async (request, reply) => {
     const sessionId = request.params.id;
+    if (!canAccessSession(request.user, getSession(sessionId), request.headers)) {
+      return reply.status(403).send({ error: 'Administrator privileges are required for System terminals.' });
+    }
     try {
       const res = terminalManager.killSession(sessionId);
       auditService.logAction({

@@ -1,4 +1,4 @@
-/** Settings → AI Gateway: provider connections, model preferences and usage. */
+/** Settings → Claude Code Gateway: provider connections, model preferences and usage. */
 (function () {
   'use strict';
   const REQUIRED = ['api', 'escapeHtml', 'showToast'];
@@ -36,7 +36,7 @@
     } catch { return ''; }
   }
   async function init(ctx) {
-    for (const key of REQUIRED) if (typeof ctx[key] !== 'function') throw new Error(`AI Gateway requires ${key}`);
+    for (const key of REQUIRED) if (typeof ctx[key] !== 'function') throw new Error(`Claude Code Gateway requires ${key}`);
     dispose();
     const currentInstance = instance;
     const { api, escapeHtml: esc, showToast } = ctx;
@@ -98,10 +98,11 @@
       };
       body.innerHTML = `<div class="gateway-settings">
         <section class="gateway-card gateway-control-row"><div><span class="gateway-live-status" role="status">${esc(gateway.running ? 'Gateway running' : gateway.enabled ? 'Enabled · start required' : 'Gateway disabled')}</span><label class="gateway-enable"><input type="checkbox" id="gateway-enabled" ${gateway.enabled ? 'checked' : ''} ${(!gateway.connected && !gateway.connections?.claude) || working ? 'disabled' : ''}> Use in new terminals</label></div><label class="settings-field gateway-route">Route<select class="form-input" id="gateway-mode" ${disabled}><option value="chatgpt" ${draftConfig.mode === 'chatgpt' ? 'selected' : ''}>ChatGPT</option><option value="claude" ${draftConfig.mode === 'claude' ? 'selected' : ''}>Claude</option><option value="auto" ${draftConfig.mode === 'auto' ? 'selected' : ''}>Auto</option></select></label><p class="gateway-muted">Auto is opt-in: Claude first, ChatGPT fallback for eligible availability or quota errors. Both accounts must be connected.</p></section>
+        <p class="gateway-muted gateway-context-summary">Saved shared context budget: <strong>${Number(gateway.contextTokens || 1000000).toLocaleString()} tokens${Number(gateway.contextTokens || 1000000) === 1000000 ? ' (1M)' : ''}</strong>. This is a launch budget, not a guarantee of model access or output size.</p>
         ${gateway.error ? `<p class="settings-warn">${esc(gateway.error)}</p>` : ''}
         ${!gateway.installed ? `<section class="gateway-card"><div><strong>Gateway component not installed</strong><p class="gateway-muted">Optional local component; it listens only on this machine.</p></div><button id="gateway-install" class="btn btn-secondary btn-sm" ${!gateway.supported || working ? 'disabled' : ''}>Install component</button>${!gateway.supported ? '<p class="settings-warn">Installation supports Linux/macOS x64/arm64.</p>' : ''}</section>` : ''}
         <div class="gateway-provider-grid">${providerSection('codex', 'ChatGPT', [['Planning', 'planningModel'], ['Execution', 'executionModel'], ['Background', 'smallModel']], gateway.connected)}${providerSection('claude', 'Claude', [['Planning', 'claudePlanningModel'], ['Execution', 'claudeExecutionModel'], ['Background', 'claudeSmallModel']], gateway.connections?.claude)}</div>
-        <details class="gateway-card"><summary>Advanced options and help</summary><div class="gateway-advanced"><label class="settings-field">Shared context budget (tokens)<input class="form-input" type="number" min="32000" max="1000000" id="gateway-context" value="${draftConfig.contextTokens || 1000000}" ${disabled}></label><label class="settings-field">Local port<input class="form-input" type="number" min="1024" max="65535" id="gateway-port" value="${draftConfig.port}" ${gateway.running || working ? 'disabled' : ''}></label><button id="gateway-test" class="btn btn-secondary btn-sm" ${!gateway.running || working ? 'disabled' : ''}>Test saved configuration</button><button id="gateway-disconnect" class="btn btn-secondary btn-sm" ${!(gateway.connected || gateway.connections?.claude) || working ? 'disabled' : ''}>Disconnect all accounts</button><p class="gateway-muted">The test sends a small request and consumes provider allowance. Model changes apply to future requests; context changes require a new terminal. Disabling stops the proxy and may interrupt its sessions. Disconnecting removes all gateway accounts but does not revoke provider authorization.</p></div></details>
+        <details class="gateway-card"><summary>Advanced options and help</summary><div class="gateway-advanced"><label class="settings-field">Shared context budget (tokens)<input class="form-input" type="number" min="32000" max="1000000" id="gateway-context" value="${draftConfig.contextTokens || 1000000}" ${disabled}></label>${Number(draftConfig.contextTokens) < 1000000 ? '<button type="button" class="btn btn-secondary btn-sm" id="gateway-context-restore">Restore 1M context in draft</button>' : ''}<label class="settings-field">Local port<input class="form-input" type="number" min="1024" max="65535" id="gateway-port" value="${draftConfig.port}" ${gateway.running || working ? 'disabled' : ''}></label><button id="gateway-test" class="btn btn-secondary btn-sm" ${!gateway.running || working ? 'disabled' : ''}>Test saved configuration</button><button id="gateway-disconnect" class="btn btn-secondary btn-sm" ${!(gateway.connected || gateway.connections?.claude) || working ? 'disabled' : ''}>Disconnect all accounts</button><p class="gateway-muted">The test sends a small request and consumes provider allowance. Model changes apply to future requests; context changes require a new terminal. Disabling stops the proxy and may interrupt its sessions. Disconnecting removes all gateway accounts but does not revoke provider authorization.</p></div></details>
         <div class="gateway-save-row"><span class="gateway-muted" id="gateway-dirty" role="status">${changed ? 'You have unsaved changes.' : 'Configuration saved.'}</span><button id="gateway-discard" class="btn btn-secondary btn-sm" ${!changed || working ? 'disabled' : ''}>Discard changes</button><button id="gateway-save" class="btn btn-primary btn-sm" ${!changed || working ? 'disabled' : ''}>Save configuration</button></div>
       </div>`;
       body.querySelectorAll('details').forEach((detail, index) => { detail.open = detailsOpen[index] || false; });
@@ -109,7 +110,7 @@
       body.querySelector('#gateway-login')?.addEventListener('click', () => action('/login', 'POST', { provider: 'codex' }));
       body.querySelector('#gateway-login-claude')?.addEventListener('click', () => action('/login', 'POST', { provider: 'claude' }));
       body.querySelector('#gateway-submit-callback')?.addEventListener('click', () => action('/callback', 'POST', { redirectUrl: body.querySelector('#gateway-callback').value.trim() }));
-      body.querySelector('#gateway-disconnect')?.addEventListener('click', () => { if (window.confirm('This will disconnect all AI Gateway accounts and stop sessions using them. Continue?')) action('/login', 'DELETE', null, 'All accounts disconnected.'); });
+      body.querySelector('#gateway-disconnect')?.addEventListener('click', () => { if (window.confirm('This will disconnect all Claude Code Gateway accounts and stop sessions using them. Continue?')) action('/login', 'DELETE', null, 'All accounts disconnected.'); });
       body.querySelector('#gateway-enabled')?.addEventListener('change', event => action('', 'PUT', { enabled: event.target.checked }, event.target.checked ? 'Gateway enabled.' : 'Gateway disabled.'));
       body.querySelector('#gateway-save')?.addEventListener('click', () => { readDraft(); action('', 'PUT', { ...draftConfig, enabled: Boolean(gateway.enabled) }, 'Configuration saved.', true); });
       body.querySelector('#gateway-discard')?.addEventListener('click', () => { draftConfig = { ...savedConfig }; draw(); });
@@ -118,6 +119,10 @@
       body.querySelectorAll('[data-model-select]').forEach(select => select.addEventListener('change', () => { draftConfig[select.dataset.modelSelect] = select.value; updateDirty(); }));
       body.querySelector('#gateway-mode')?.addEventListener('change', event => { draftConfig.mode = event.target.value; updateDirty(); });
       body.querySelector('#gateway-context')?.addEventListener('input', event => { draftConfig.contextTokens = Number(event.target.value); updateDirty(); });
+      body.querySelector('#gateway-context-restore')?.addEventListener('click', () => {
+        draftConfig.contextTokens = 1000000;
+        draw();
+      });
       body.querySelector('#gateway-port')?.addEventListener('input', event => { draftConfig.port = Number(event.target.value); updateDirty(); });
       function updateDirty() {
         const dirty = !sameConfig(draftConfig, savedConfig);

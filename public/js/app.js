@@ -410,12 +410,12 @@
   }
 
   // Generic modal helper
-  function openModal({ title, bodyHtml, confirmText = 'Confirm', onConfirm, onClose }) {
+  function openModal({ title, bodyHtml, confirmText = 'Confirm', onConfirm, onClose, dialogClass = '' }) {
     const root = document.getElementById('modal-root');
     const previouslyFocused = document.activeElement;
     root.innerHTML = `
       <div class="modal-overlay" id="active-modal-overlay">
-        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="active-modal-title">
+        <div class="modal-content ${escapeHtml(dialogClass)}" role="dialog" aria-modal="true" aria-labelledby="active-modal-title">
           <div class="modal-header">
             <h3 class="modal-title" id="active-modal-title">${escapeHtml(title)}</h3>
             <button class="tab-close-btn" id="modal-close-btn" aria-label="Close dialog">&times;</button>
@@ -2193,6 +2193,8 @@
       <div class="workspace-container">
         <div class="terminal-tabs-bar" id="sys-terminal-tabs-container">
           <span class="badge badge-muted" id="sys-host-badge" style="margin-right:6px;">Host shell</span>
+          <button class="btn btn-secondary btn-sm" id="sys-new-terminal" type="button">New System terminal</button>
+          <span class="system-terminal-security-note" id="sys-terminal-security-note" hidden>Project agents share the service user's sudo capability; this is not OS isolation.</span>
           ${fontButtonsHtml('sys')}
           <button class="btn btn-secondary btn-sm select-btn" id="sys-select-btn" title="Select and copy text (screen and history)">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7V5a1 1 0 011-1h2M4 17v2a1 1 0 001 1h2m10-16h2a1 1 0 011 1v2m0 10v2a1 1 0 01-1 1h-2M9 12h6"/></svg>
@@ -2233,12 +2235,19 @@
     };
 
     const viewport = document.getElementById('sys-terminal-viewport');
+    const newTerminalButton = document.getElementById('sys-new-terminal');
+    const isAdmin = state.user?.role === 'admin';
+    if (!isAdmin) newTerminalButton.hidden = true;
+    newTerminalButton.onclick = () => spawnSysTerminal(newTerminalButton.dataset.runAsUser || '');
 
     try {
       const termRes = await api('/api/terminals?scope=global');
       state.tmuxAvailable = !!termRes.tmuxAvailable;
       const hostBadge = document.getElementById('sys-host-badge');
-      if (hostBadge) hostBadge.textContent = termRes.runAsUser ? `Host shell (as ${termRes.runAsUser})` : 'Host shell';
+      if (hostBadge) hostBadge.textContent = termRes.runAsUser ? `Host shell (as ${termRes.runAsUser})` : 'Host shell (service user)';
+      newTerminalButton.dataset.runAsUser = termRes.runAsUser || '';
+      const securityNote = document.getElementById('sys-terminal-security-note');
+      if (securityNote) securityNote.hidden = !termRes.runAsUser;
 
       const alive = (termRes.sessions || []).filter((s) => s.isAlive);
 
@@ -2251,9 +2260,11 @@
       }
 
       if (alive.length === 0) {
-        await spawnSysTerminal();
+        viewport.innerHTML = `<div class="system-terminal-empty"><strong>${isAdmin ? 'No System terminal is open.' : 'System terminals require an administrator account.'}</strong>${termRes.runAsUser ? `<p>This terminal will start as <strong>${escapeHtml(termRes.runAsUser)}</strong>. Projects continue to start as the Citadel service user, but this is not an OS isolation boundary: projects and agents may share the service user’s sudo capability.</p>` : '<p>The host terminal uses the Citadel service account.</p>'}${isAdmin ? '<p>Start a terminal only when you need host-level access; sudo prompts use the host account policy.</p>' : ''}</div>`;
+        newTerminalButton.disabled = !isAdmin;
         return;
       }
+      newTerminalButton.disabled = !isAdmin;
 
       for (const s of alive) {
         if (!state.sysTerminals.has(s.id)) {
@@ -2272,7 +2283,12 @@
     }
   }
 
-  async function spawnSysTerminal() {
+  async function spawnSysTerminal(runAsUser = '') {
+    if (state.user?.role !== 'admin') {
+      showToast('Administrator privileges are required for System terminals.', 'error');
+      return;
+    }
+    if (runAsUser && !window.confirm(`Create a System terminal as ${runAsUser}? This grants the terminal that OS account’s permissions. Project terminals remain launched as the Citadel service user, but they are not isolated from its sudo capability.`)) return;
     try {
       const res = await api('/api/terminals', {
         method: 'POST',
@@ -3023,7 +3039,7 @@
   function connectSourceNote(...args) { return window.CitadelDeployments.connectSourceNote(...args); }
 
   const SETTINGS_SECTIONS = {
-    gateway: { title: 'AI Gateway', desc: 'Connect Claude and ChatGPT, choose models, and switch the gateway route for your Claude Code sessions.' },
+    gateway: { title: 'Claude Code Gateway', desc: 'Connect Claude and ChatGPT, choose models, and switch the gateway route for your Claude Code sessions.' },
     updates: { title: 'Updates', desc: 'Keep this machine and the machines paired with it on the latest version.' },
     machines: { title: 'Machines', desc: 'Pair other Citadels to reach them from this panel. Live health and alerts are on the Dashboard.' },
     network: { title: 'Network & access', desc: 'The address Citadel advertises to other devices. This only changes the advertised address; it never opens ports or exposes anything by itself.' },
@@ -3034,7 +3050,7 @@
 
   const SETTINGS_ICONS = {
     gateway: NAV_ICONS.agents,
-    updates: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5M5.6 15A8 8 0 0018.4 9M18.4 9L20 9M5.6 15L4 15"/>',
+    updates: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 11a8 8 0 00-14.93-3M4 4v4h4m-4 5a8 8 0 0014.93 3M20 20v-4h-4"/>',
     machines: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>',
     network: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
     alerts: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2a2 2 0 01-.6 1.4L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>',
@@ -3067,7 +3083,7 @@
     updateBackButton('settings');
     window.CitadelGatewaySettings.dispose();
     if (section === 'gateway') {
-      content.innerHTML = `<div class="settings-screen"><div class="settings-screen-head"><h2>AI Gateway</h2><p>${escapeHtml(SETTINGS_SECTIONS.gateway.desc)}</p></div><div class="card settings-panel" id="gateway-body">Loading…</div></div>`;
+      content.innerHTML = `<div class="settings-screen"><div class="settings-screen-head"><h2>${escapeHtml(SETTINGS_SECTIONS.gateway.title)}</h2><p>${escapeHtml(SETTINGS_SECTIONS.gateway.desc)}</p></div><div class="card settings-panel" id="gateway-body">Loading…</div></div>`;
       await window.CitadelGatewaySettings.init({ api, escapeHtml, showToast });
       return;
     }
@@ -3164,7 +3180,7 @@
             ${ver.repo ? `<span class="mon-muted">· ${escapeHtml(ver.repo)}${ver.branch ? ` · ${escapeHtml(ver.branch)}` : ''}</span>` : ''}
           </div>
           ${canPair ? `<label class="settings-field">Update channel
-            <select id="update-channel" class="input">
+            <select id="update-channel" class="form-input">
               <option value="stable"${ver.channel === 'stable' ? ' selected' : ''}>Stable (latest release)</option>
               <option value="main"${ver.channel !== 'stable' ? ' selected' : ''}>Main (latest commit, may be unstable)</option>
             </select>
@@ -3211,8 +3227,8 @@
         alerts: alertsHtml,
         machines: `
         <div class="card" style="margin-bottom:24px;">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
-            <div>
+          <div class="settings-machine-head">
+            <div class="settings-machine-description">
               <h3 style="font-size:16px;font-weight:600;">Paired machines</h3>
               <p style="color:var(--text-secondary);font-size:13px;margin-top:6px;">
                 Pair another Citadel to reach it from this panel. Pairing is bidirectional and survives
@@ -3224,7 +3240,7 @@
                 · <span style="font-family:var(--font-mono);">${escapeHtml((state.hostIdentity && state.hostIdentity.url) || '')}</span>
               </div>
             </div>
-            <div style="display:flex;gap:8px;flex-shrink:0;">
+            <div class="settings-machine-actions">
               <button class="btn btn-secondary btn-sm" id="settings-rename-local" title="Change the name of this machine">Rename this machine</button>
               <button class="btn btn-secondary btn-sm" id="settings-pair-btn">Pair a machine</button>
             </div>
@@ -3233,15 +3249,15 @@
             ${state.hosts.length === 0
               ? '<div style="color:var(--text-muted);font-size:13px;">No paired machines yet.</div>'
               : state.hosts.map((h) => `
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:8px;">
-                  <div style="min-width:0;">
+                <div class="settings-machine-row">
+                  <div class="settings-machine-info">
                     <strong>${escapeHtml(h.name)}</strong>
                     ${h.alias ? `<span class="mon-muted" title="The machine's own name"> (${escapeHtml(h.peerName)})</span>` : ''}
                     ${state.activeHostId === h.id ? '<span class="badge badge-success" style="margin-left:6px;">Active</span>' : ''}
                     <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);word-break:break-all;">${escapeHtml((h.urls && h.urls[0]) || h.baseUrl)}</div>
                     ${h.lastSeen ? `<div style="font-size:11px;color:var(--text-muted);">Last seen ${escapeHtml(new Date(h.lastSeen).toLocaleString())}</div>` : ''}
                   </div>
-                  <div style="display:flex;gap:6px;flex-shrink:0;">
+                  <div class="settings-machine-row-actions">
                     ${state.activeHostId === h.id ? '' : `<button class="btn btn-secondary btn-sm" data-use-host="${h.id}">Use</button>`}
                     <button class="btn btn-secondary btn-sm" data-rename-host="${h.id}" title="Give this machine your own name">Rename</button>
                     <button class="btn btn-secondary btn-sm" data-address-host="${h.id}" title="Set this machine's current address">Address</button>
@@ -3458,11 +3474,11 @@
           suggestionsEl.innerHTML = `
             <div style="font-size:12px;color:var(--text-muted);margin:10px 0 6px;">Known by your other machines, not paired with this one</div>
             ${list.map((m) => `
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;border:1px dashed var(--border-color);border-radius:6px;margin-bottom:6px;">
-                <div style="min-width:0;">
+              <div class="settings-machine-suggestion">
+                <div class="settings-machine-info">
                   <strong>${escapeHtml(m.name)}</strong>
                   <span style="font-size:11px;color:var(--text-muted);"> via ${escapeHtml(m.via.join(', '))}</span>
-                  <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(m.urls[0])}">${escapeHtml(hostAddress(m.urls[0]))}</div>
+                  <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);overflow-wrap:anywhere;word-break:break-word;" title="${escapeHtml(m.urls[0])}">${escapeHtml(hostAddress(m.urls[0]))}</div>
                 </div>
                 <button class="btn btn-secondary btn-sm" data-suggest-pair="${escapeHtml(m.urls[0])}">Pair</button>
               </div>`).join('')}

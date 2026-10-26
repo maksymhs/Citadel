@@ -632,7 +632,7 @@ async function requestHost(hostId, apiPath, {
  * every candidate URL. Resolves with the raw IncomingMessage and the base URL
  * that answered.
  */
-function openHostStream(hostId, apiPath, { method = 'GET', body = null, timeout = STREAM_TIMEOUT_MS } = {}) {
+function openHostStream(hostId, apiPath, { method = 'GET', body = null, headers: extraHeaders = {}, timeout = STREAM_TIMEOUT_MS } = {}) {
   const row = getHostRow(hostId);
   if (!row) return Promise.reject(new Error('Host not found.'));
   const token = getOutboundToken(row);
@@ -661,6 +661,7 @@ function openHostStream(hostId, apiPath, { method = 'GET', body = null, timeout 
         'User-Agent': 'Citadel-Peer',
         Authorization: `Bearer ${token}`,
         ...identityHeaders(),
+        ...extraHeaders,
       };
       if (payload !== null) {
         headers['Content-Type'] = 'application/json';

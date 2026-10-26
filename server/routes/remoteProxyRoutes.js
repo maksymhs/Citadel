@@ -13,6 +13,7 @@ const { WebSocket } = require('ws');
 const { getSessionUser, getPeerTokenUser } = require('../security/auth');
 const { isAllowedOrigin } = require('../security/guard');
 const hostService = require('../services/hostService');
+const { FORWARDED_ROLE_HEADER, effectiveRole } = require('../security/terminalAccess');
 
 // Routes that must always run on the local machine: authentication, pairing and
 // the host list itself. Everything else (files, terminals, projects, settings,
@@ -90,7 +91,8 @@ function authenticate(request, reply) {
 
 async function remoteProxyRoutes(fastify) {
   fastify.all('/api/remote/:hostId/*', async (request, reply) => {
-    if (!authenticate(request, reply)) return;
+    const user = authenticate(request, reply);
+    if (!user) return;
 
     const remotePath = buildRemotePath(request);
     if (isLocalOnly(remotePath)) {
@@ -105,6 +107,7 @@ async function remoteProxyRoutes(fastify) {
       const { res } = await hostService.openHostStream(request.params.hostId, remotePath, {
         method: request.method,
         body,
+        headers: { [FORWARDED_ROLE_HEADER]: effectiveRole(user, request.headers) },
       });
 
       reply.hijack();
@@ -176,6 +179,7 @@ async function remoteProxyRoutes(fastify) {
         headers: {
           Authorization: `Bearer ${candidate.token}`,
           'User-Agent': 'Citadel-Peer',
+          [FORWARDED_ROLE_HEADER]: effectiveRole(user, req.headers),
           ...hostService.identityHeaders(),
         },
         handshakeTimeout: 12000,

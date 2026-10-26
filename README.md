@@ -49,7 +49,7 @@ Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**
 </td>
 <td width="50%" valign="top">
 
-### 🔀 Optional AI Gateway
+### 🔀 Optional Claude Code Gateway
 Connect Claude and ChatGPT separately, choose discovered models for planning, execution and background work, then route new conversations to **Claude**, **ChatGPT** or opt-in **Auto** fallback. Provider-reported usage windows and reset times appear when available. Experimental; account access and model compatibility are not guaranteed. [Setup and limitations →](docs/ai-gateway.md)
 
 </td>
@@ -195,7 +195,7 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 
 | Latest | |
 | --- | --- |
-| **[v0.51.0](https://github.com/maksymhs/Citadel/releases/tag/v0.51.0)** | Simplified AI Gateway settings with visual provider usage meters and model discovery |
+| [v0.51.0](https://github.com/maksymhs/Citadel/releases/tag/v0.51.0) | Simplified AI Gateway settings with visual provider usage meters and model discovery |
 | [v0.50.0](https://github.com/maksymhs/Citadel/releases/tag/v0.50.0) | AI Gateway model discovery, per-provider usage/reset display and 1M context default |
 | [v0.49.0](https://github.com/maksymhs/Citadel/releases/tag/v0.49.0) | Hot Claude / ChatGPT / Auto routing with stable model aliases, separate Claude authorization and opt-in quota fallback |
 | [v0.48.0](https://github.com/maksymhs/Citadel/releases/tag/v0.48.0) | Gateway applies when typing claude in new project terminals; terminal VS Code button and dark editor defaults |
@@ -220,7 +220,7 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 | [Security & limitations](docs/security.md) | Security layers and what Citadel does **not** protect against |
 | [Remote access](docs/remote-access.md) | QR pairing, Cloudflare tunnels, own domain |
 | [Task mesh](docs/task-mesh.md) | Parallel work across paired nodes |
-| [AI Gateway](docs/ai-gateway.md) | Optional Claude/ChatGPT routing, model choices, usage windows and limitations |
+| [Claude Code Gateway](docs/ai-gateway.md) | Optional Claude/ChatGPT routing, model choices, usage windows and limitations |
 | [Feature map](docs/features.md) | Which files make up each feature, with their tests and guide |
 | [Code map](docs/code-map.md) | Every source file with its purpose, and where each screen lives |
 | [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) | How it is built and why |

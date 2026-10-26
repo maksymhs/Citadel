@@ -572,6 +572,7 @@
           <button class="btn btn-secondary btn-sm" id="mon-test-btn">Save &amp; send test</button>
           <button class="btn btn-secondary btn-sm" id="mon-clear-btn">Remove all channels</button>
         </div>`,
+      dialogClass: 'settings-alert-modal',
       onConfirm: async () => { await save(false); showToast('Alert settings saved.', 'success'); },
     });
 

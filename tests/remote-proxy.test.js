@@ -31,6 +31,7 @@ describe('Remote host proxy', () => {
         url: req.url,
         authorization: req.headers.authorization,
         instance: req.headers['x-citadel-instance'],
+        originRole: req.headers['x-citadel-origin-role'],
       });
       res.setHeader('x-citadel-instance', 'instance-remote-1');
       res.setHeader('x-citadel-name', 'remote-1');
@@ -78,6 +79,7 @@ describe('Remote host proxy', () => {
       socket.on('message', (data) => socket.send(`echo:${data.toString()}`));
     });
     upstream.on('upgrade', (req, socket, head) => {
+      seen.push({ method: 'WS', url: req.url, originRole: req.headers['x-citadel-origin-role'] });
       if (!req.url.startsWith('/ws/terminal/')) {
         socket.destroy();
         return;
@@ -135,6 +137,18 @@ describe('Remote host proxy', () => {
     assert.equal(JSON.parse(res.payload).version.version, '7.7.7');
     const call = seen.find((s) => s.url.startsWith('/api/system/version'));
     assert.equal(call.authorization, 'Bearer remote-token-abc');
+    assert.equal(call.originRole, 'admin');
+  });
+
+  test('forwards a non-admin browser role across chained remote proxies', async () => {
+    const { getDatabase } = require('../server/database/db');
+    getDatabase().prepare("UPDATE users SET role = 'viewer'").run();
+    try {
+      const res = await app.inject({ method: 'GET', url: `/api/remote/${hostId}/system/version`, headers: { cookie } });
+      assert.equal(res.statusCode, 200);
+      const call = seen.filter(s => s.url.startsWith('/api/system/version')).at(-1);
+      assert.equal(call.originRole, 'viewer');
+    } finally { getDatabase().prepare("UPDATE users SET role = 'admin'").run(); }
   });
 
   test('advertises its identity and absorbs the peer identity headers', async () => {
@@ -238,6 +252,7 @@ describe('Remote host proxy', () => {
         clearTimeout(timer);
         try {
           assert.equal(data.toString(), 'echo:hello');
+          assert.equal(seen.filter(s => s.method === 'WS').at(-1).originRole, 'admin');
           resolve();
         } catch (err) {
           reject(err);
@@ -250,5 +265,23 @@ describe('Remote host proxy', () => {
     });
 
     ws.close();
+    const { getDatabase } = require('../server/database/db');
+    getDatabase().prepare("UPDATE users SET role = 'viewer'").run();
+    try {
+      const viewerSocket = new WebSocket(`ws://127.0.0.1:${port}/ws/remote/${hostId}/terminal/abc`, { headers: { cookie } });
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('WebSocket viewer timeout')), 5000);
+        viewerSocket.on('open', () => viewerSocket.send('viewer'));
+        viewerSocket.on('message', () => {
+          clearTimeout(timer);
+          try {
+            assert.equal(seen.filter(s => s.method === 'WS').at(-1).originRole, 'viewer');
+            resolve();
+          } catch (err) { reject(err); }
+        });
+        viewerSocket.on('error', err => { clearTimeout(timer); reject(err); });
+      });
+      viewerSocket.close();
+    } finally { getDatabase().prepare("UPDATE users SET role = 'admin'").run(); }
   });
 });

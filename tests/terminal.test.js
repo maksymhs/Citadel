@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const terminalManager = require('../server/services/terminalManager');
 const { AGENTS_DIR } = require('../server/config');
 const { initDatabase, closeDatabase } = require('../server/database/db');
+const { canAccessSession, canCreateGlobalSession, effectiveRole, FORWARDED_ROLE_HEADER } = require('../server/security/terminalAccess');
 
 describe('Terminal & Persistent Session Tests', () => {
   const testDb = path.resolve(__dirname, '../data/test-terminal.db');
@@ -110,6 +111,22 @@ describe('Terminal & Persistent Session Tests', () => {
 
     // No admin user configured means no privilege escalation.
     assert.equal(terminalManager._buildRunAs(null, null), null);
+  });
+
+  test('System terminal authorization respects local and forwarded non-admin identities', () => {
+    const globalSession = { project_id: null };
+    const projectSession = { project_id: 'project-1' };
+    const admin = { role: 'admin' };
+    const viewer = { role: 'viewer' };
+    const peer = { role: 'admin', isPeer: true };
+    assert.equal(canAccessSession(admin, globalSession), true);
+    assert.equal(canCreateGlobalSession(viewer), false);
+    assert.equal(canAccessSession(peer, globalSession), false, 'legacy peer requests without an explicit forwarded admin role fail closed');
+    assert.equal(canAccessSession(viewer, globalSession), false);
+    assert.equal(canAccessSession(viewer, projectSession), true);
+    assert.equal(effectiveRole(peer, { [FORWARDED_ROLE_HEADER]: 'viewer' }), 'viewer');
+    assert.equal(canAccessSession(peer, globalSession, { [FORWARDED_ROLE_HEADER]: 'viewer' }), false);
+    assert.equal(canAccessSession(peer, globalSession, { [FORWARDED_ROLE_HEADER]: 'admin' }), true);
   });
 
   test('tmuxCopyMode reports a clear error for unknown sessions', () => {
