@@ -238,6 +238,10 @@ npm run dev     # development server (or: npm start)
 
 Then open <http://127.0.0.1:3000>.
 
+The optional [AI Gateway](docs/ai-gateway.md) can route Claude Code and OpenCode
+through the same connected Claude/ChatGPT accounts. OpenCode supports separate
+Plan/Build models with automatic context compaction and tool-output pruning.
+
 Administrators can install, reinstall/update and remove managed AI CLI launchers
 from **Machines → Tools**. Releases are retained for active sessions; see
 [agent management](docs/installation.md#managing-ai-cli-agents-from-the-panel).

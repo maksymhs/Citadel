@@ -24,8 +24,26 @@ async function main() {
       res.end(JSON.stringify({ error: { type: 'rate_limit_error', message: 'Fixture quota exhausted' } })); return;
     }
     const send = () => {
-      res.writeHead(200, { 'content-type': 'application/json' });
       const text = `MODEL:${body.model}`;
+      if (body.stream) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        if (primary) {
+          const events = [
+            ['message_start', { type: 'message_start', message: { id: 'fixture', type: 'message', role: 'assistant', model: body.model, content: [], usage: { input_tokens: 10, output_tokens: 0 } } }],
+            ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
+            ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }],
+            ['content_block_stop', { type: 'content_block_stop', index: 0 }],
+            ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 10 } }],
+            ['message_stop', { type: 'message_stop' }],
+          ];
+          for (const [event, data] of events) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        } else {
+          for (const [delta, finish] of [[{ role: 'assistant', content: text }, null], [{}, 'stop']]) res.write(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
+          res.write('data: [DONE]\n\n');
+        }
+        res.end(); return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(primary
         ? { id: 'fixture', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 10 } }
         : { id: 'fixture', object: 'chat.completion', created: 1, model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }));
@@ -66,18 +84,26 @@ async function main() {
       const data = await response.json();
       return { status: response.status, text: data.content?.map(c => c.text || '').join('') || '' };
     }
+    async function chatRequest() {
+      const response = await fetch(`${base}/v1/chat/completions`, { method: 'POST', headers: { authorization: 'Bearer fixture-client-key', 'content-type': 'application/json' }, body: JSON.stringify({ model: stableAlias, max_tokens: 64, messages: [{ role: 'user', content: 'OpenCode protocol fixture' }] }), signal: AbortSignal.timeout(10000) });
+      const data = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(data));
+      return data.choices?.[0]?.message?.content;
+    }
     configure('claude');
     child = spawn(binary, ['--config', configFile, '--local-model'], { cwd: root, env: { PATH: process.env.PATH, HOME: root }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.on('error', () => {});
     child.stdout.resume(); child.stderr.resume();
     const originalPid = child.pid;
     await until(async () => { try { return (await request()).text === 'MODEL:claude-fixture'; } catch { return false; } });
+    assert.equal(await chatRequest(), 'MODEL:claude-fixture', 'OpenCode-compatible requests reach Claude');
     await pause(500);
     const held = request('HOLD_FIXTURE');
     held.catch(() => {});
     await until(() => Boolean(releaseHeld));
     configure('chatgpt');
     await until(async () => (await request()).text === 'MODEL:gpt-fixture');
+    assert.equal(await chatRequest(), 'MODEL:gpt-fixture', 'OpenCode-compatible requests reach ChatGPT');
     releaseHeld(); releaseHeld = null;
     assert.equal((await held).text, 'MODEL:claude-fixture', 'an in-flight request must retain its original route');
     const messages = [
@@ -99,7 +125,7 @@ async function main() {
     const exhausted = await request('Both exhausted.', 'sticky-auto');
     assert.ok(exhausted.status >= 400, 'all-exhausted must fail explicitly');
     assert.equal(child.pid, originalPid); assert.equal(child.exitCode, null);
-    console.log(JSON.stringify({ passed: true, gatewayVersion: '8.0.43', stableClientAlias: stableAlias, hotSwap: true, inFlightRoutePreserved: true, toolResultPreserved: true, priorityFallback429: true, exhaustedPrimarySkipped: true, bothExhaustedFails: true, gatewayRestarted: false, atomicConfigWrites: atomic, liveSubscriptions: false }));
+    console.log(JSON.stringify({ passed: true, gatewayVersion: '8.0.43', stableClientAlias: stableAlias, openaiCompatibleClients: true, hotSwap: true, inFlightRoutePreserved: true, toolResultPreserved: true, priorityFallback429: true, exhaustedPrimarySkipped: true, bothExhaustedFails: true, gatewayRestarted: false, atomicConfigWrites: atomic, liveSubscriptions: false }));
   } finally {
     if (releaseHeld) releaseHeld();
     if (child && child.exitCode === null && child.signalCode === null) {

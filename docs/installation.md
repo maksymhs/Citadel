@@ -313,3 +313,11 @@ using Remove. Do not delete retained releases while agents or daemons use them.
 The installer changes sharing permissions only within the newly downloaded
 release, never recursively on existing agent directories. Linux and macOS use the
 same lifecycle helper; no change to the host/system installers is required.
+
+### OpenCode through the optional gateway
+
+Install OpenCode through Machines → Tools, then enable **Use this gateway in OpenCode**
+in Settings → Claude Code Gateway and save. Enable the gateway and open a new
+project terminal. Plan/Build use the shared planning/execution models; switch with
+Tab. Native OpenCode remains the default. See [AI Gateway](ai-gateway.md#opencode-as-a-shared-terminal-client)
+for context budgets, account routing and current validation limits.

@@ -266,10 +266,14 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(gatewayBody.querySelector('[role="meter"][aria-valuenow="0"]').getAttribute('aria-valuemin'), '0');
       assert.equal(gatewayBody.querySelector('[role="meter"][aria-valuenow="100"]').getAttribute('aria-valuemax'), '100');
       assert.equal(gatewayBody.querySelectorAll('.gateway-account').length, 2, 'provider accounts remain separate');
+      const opencode = win.document.getElementById('gateway-opencode');
+      assert.ok(opencode);
+      opencode.checked = true; opencode.dispatchEvent(new win.Event('change', { bubbles: true }));
       win.document.getElementById('gateway-mode').value = 'auto';
       win.document.getElementById('gateway-mode').dispatchEvent(new win.Event('change', { bubbles: true }));
       win.document.getElementById('gateway-save').click(); await sleep(30);
       assert.equal(calls.find(call => call.method === 'PUT').body.mode, 'auto');
+      assert.equal(calls.find(call => call.method === 'PUT').body.opencodeEnabled, true);
       assert.equal(calls.find(call => call.method === 'PUT').body.contextTokens, 1000000, 'the explicit draft restoration is applied only by Save');
       const planning = win.document.getElementById('gateway-planning');
       planning.value = 'gpt-run'; planning.dispatchEvent(new win.Event('change', { bubbles: true }));

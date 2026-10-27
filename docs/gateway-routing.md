@@ -88,3 +88,8 @@ login does not by itself connect that account to the proxy; saved CLI tokens
 are never imported. API-key fixture success is not proof that every live
 Claude/Codex OAuth pair behaves identically. Test both account routes, their
 actual limits and streaming/tool use before relying on Auto.
+
+The routing trial also checks `/v1/chat/completions`, the OpenCode adapter path,
+against Claude and OpenAI-compatible fixture upstreams. The fixtures emit SSE when
+the gateway requests streaming. This validates protocol conversion with CLIProxyAPI
+8.0.43, not a live subscription or a complete OpenCode conversation.

@@ -105,6 +105,55 @@ changes require a new terminal. Requests already emitted and arbitrary tool side
 effects are not guaranteed replayable; streaming/live subscription interoperability
 still needs real-account tests.
 
+## OpenCode as a shared terminal client
+
+Enable **Use this gateway in OpenCode (experimental)**, select **Save configuration**, and enable
+**Use in new terminals**. Open a new project terminal and run `opencode`, or launch
+OpenCode from the project's agent selector. OpenCode must be installed separately
+through Machines → Tools. The switch defaults off; disabling it leaves new OpenCode
+launches in native mode. Existing terminals keep their launch environment.
+
+Citadel injects runtime-only `OPENCODE_CONFIG_CONTENT` overrides: a custom
+`citadel` provider using `@ai-sdk/openai-compatible` at the local `/v1` endpoint.
+The local client key is passed through an environment reference, never command
+arguments or project/global configuration files. Only this provider is enabled in
+gateway sessions; native provider credentials remain untouched. Existing inline
+settings are merged, but Citadel owns its provider, role models and compaction
+settings. Invalid inline JSON fails the launch rather than silently using another
+provider. Gateway launches remain administrator-only.
+
+| OpenCode role | Stable model alias | Purpose |
+| --- | --- | --- |
+| Plan | `citadel/citadel-planning` | Stronger planning model |
+| Build | `citadel/citadel-execution` | Implementation model |
+| Small tasks | `citadel/citadel-small` | Lightweight tasks such as titles |
+
+Switch Plan/Build with **Tab** in OpenCode. This is an explicit agent switch,
+not an automatic reproduction of Claude Code's `opusplan` workflow. The provider
+mode (Claude, ChatGPT or Auto) and model preferences are shared with Claude Code;
+changing them updates the proxy's routes for subsequent requests.
+
+Automatic compaction and pruning of old tool outputs are enabled. Model context
+metadata uses the saved shared context budget, with output capped at the smaller of 16,000 tokens or a quarter of the window,
+and a compaction reserve of the smaller of 16,000 tokens or an eighth of the window. Choose a context budget and output capability
+supported by every upstream model; these values are configuration, not discovery
+of actual capacity. Reopen terminals after changing the context budget. Provider
+prompt caches are not shared between Claude and Codex, and no cache savings are
+claimed: the OpenAI-compatible adapter/proxy path needs live-account measurement.
+No third-party free fallback is enabled by this integration.
+
+Validation: the resolved configuration was accepted by OpenCode 1.19.4. Automated
+launcher/UI tests pass, and the pinned real gateway routes OpenAI-compatible
+requests to both simulated upstreams. An end-to-end OpenCode conversation did not
+complete in this environment (the CLI stalled during initialization before any
+upstream request); OpenCode 1.2.27 also timed out. OpenCode 2.2.0 was inspected but
+its conversation path was not validated. No live subscriptions were exercised,
+so this client integration remains experimental.
+
+Codex CLI continues to use native configuration. Its custom provider requires the
+Responses protocol; accepting a custom URL is insufficient evidence of streaming,
+tool and cross-provider compatibility, so it is not enabled through this launcher.
+
 ## Disable and disconnect
 
 Disabling stops the proxy and interrupts its dependent sessions; new terminals

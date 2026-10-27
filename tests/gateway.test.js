@@ -12,7 +12,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-gateway-suite-'));
 Object.assign(process.env, { DATA_DIR: root, DATABASE_PATH: path.join(root, 'db.sqlite'), PROJECTS_DIR: path.join(root, 'projects'), LOGS_DIR: path.join(root, 'logs'), CITADEL_SELF_UPDATE: '0' });
 const { getDatabase, closeDatabase } = require('../server/database/db');
 const { createGatewayService, VERSION } = require('../server/services/gatewayService');
-const { gatewayEnvironment } = require('../scripts/gateway-launch');
+const { gatewayEnvironment, opencodeEnvironment } = require('../scripts/gateway-launch');
 const { buildServer } = require('../server/index');
 const { decrypt } = require('../server/security/secrets');
 let app, cookies;
@@ -86,10 +86,10 @@ test('gateway routes require administrator access and never reveal stored values
     }
     const gateway = require('../server/services/gatewayService');
     const originalStatus = gateway.status;
-    gateway.status = () => ({ enabled: true });
+    gateway.status = () => ({ enabled: true, opencodeEnabled: true });
     try {
       assert.equal((await app.inject({ method: 'POST', url: '/api/terminals', cookies, payload: { projectId: 'fixture' } })).statusCode, 403);
-      assert.equal((await app.inject({ method: 'POST', url: '/api/agents/launch', cookies, payload: { projectId: 'fixture', agentId: 'claude' } })).statusCode, 403);
+      for (const agentId of ['claude', 'opencode']) assert.equal((await app.inject({ method: 'POST', url: '/api/agents/launch', cookies, payload: { projectId: 'fixture', agentId } })).statusCode, 403);
     } finally { gateway.status = originalStatus; }
   } finally { getDatabase().prepare("UPDATE users SET role = 'admin'").run(); }
   const result = await app.inject({ url: '/api/settings/gateway', cookies });
@@ -255,6 +255,16 @@ test('agent launch routes Claude through scoped wrapper and keeps native mode av
     gateway.launchOptions = () => null;
     registry.launchAgent({ projectId: project.id, agentId: 'claude' });
     assert.equal(launches[1].command, undefined);
+    registry.getAgent = () => ({ id: 'opencode', name: 'OpenCode', installed: true, path: '/usr/bin/opencode', defaultArgs: [] });
+    gateway.launchOptions = client => {
+      assert.equal(client, 'opencode');
+      return { command: process.execPath, args: ['/wrapper.js', '/private/runtime/launch.json', '--client', client] };
+    };
+    registry.launchAgent({ projectId: project.id, agentId: 'opencode' });
+    assert.deepEqual(launches[2].args, ['/wrapper.js', '/private/runtime/launch.json', '--client', 'opencode', '/usr/bin/opencode']);
+    gateway.launchOptions = () => null;
+    registry.launchAgent({ projectId: project.id, agentId: 'opencode' });
+    assert.equal(launches[3].command, undefined);
   } finally {
     registry.getAgent = original.getAgent; terminals.createSession = original.createSession; gateway.launchOptions = original.launchOptions;
   }
@@ -340,4 +350,61 @@ test('separate Claude authorization validates callbacks and hot policy changes p
   assert.equal(after.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1000000');
   assert.ok(!JSON.stringify(s.status()).includes(proxy.management['secret-key']));
   await s.disconnect();
+});
+
+
+test('OpenCode is opt-in, uses the shared private launch config and preserves native clients', async () => {
+  const { dir, service: s } = fresh(); fakeBinary(dir);
+  await s.loginStart(); await until(() => s.status().connected);
+  await s.save({ enabled: true, port: await port() });
+  assert.equal(s.status().opencodeEnabled, false);
+  assert.equal(s.launchOptions('opencode'), null);
+  assert.equal(s.launchOptions('codex'), null);
+  await assert.rejects(s.save({ enabled: true, opencodeEnabled: 'yes' }), /boolean/);
+  await s.save({ enabled: true, opencodeEnabled: true });
+  const launch = s.launchOptions('opencode');
+  assert.deepEqual(launch.args.slice(2), ['--client', 'opencode']);
+  const settings = JSON.parse(fs.readFileSync(launch.args[1]));
+  assert.equal(settings.opencodeEnabled, true);
+  assert.ok(!JSON.stringify(s.status()).includes(settings.token));
+  await s.close();
+});
+
+test('OpenCode runtime config routes Plan, Build and small tasks with bounded context', () => {
+  const settings = { baseUrl: 'http://127.0.0.1:8317', token: 'fixture-local-key', contextTokens: 64000,
+    aliases: { planning: 'citadel-planning', execution: 'citadel-execution', small: 'citadel-small' } };
+  const original = JSON.stringify({ theme: 'system', agent: { plan: { temperature: 0.2 } }, provider: { other: {} }, disabled_providers: ['citadel', 'other'], compaction: { reserved: 1 } });
+  const env = opencodeEnvironment({ OPENCODE_CONFIG_CONTENT: original, KEEP: 'yes' }, settings);
+  const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+  assert.equal(config.model, 'citadel/citadel-execution');
+  assert.equal(config.agent.plan.model, 'citadel/citadel-planning');
+  assert.equal(config.agent.build.model, 'citadel/citadel-execution');
+  assert.equal(config.small_model, 'citadel/citadel-small');
+  assert.equal(config.agent.plan.temperature, 0.2);
+  assert.deepEqual(config.compaction, { auto: true, prune: true, reserved: 8000 });
+  const minimum = JSON.parse(opencodeEnvironment({}, { ...settings, contextTokens: 32000 }).OPENCODE_CONFIG_CONTENT);
+  assert.equal(minimum.provider.citadel.models['citadel-execution'].limit.output, 8000);
+  assert.equal(minimum.compaction.reserved, 4000);
+  assert.equal(config.provider.citadel.options.baseURL, settings.baseUrl + '/v1');
+  assert.deepEqual(config.provider.citadel.models['citadel-execution'].limit, { context: 64000, output: 16000 });
+  assert.deepEqual(config.enabled_providers, ['citadel']);
+  assert.deepEqual(config.disabled_providers, ['other']);
+  assert.equal(env.CITADEL_GATEWAY_TOKEN, settings.token);
+  assert.ok(!env.OPENCODE_CONFIG_CONTENT.includes(settings.token));
+  assert.equal(env.KEEP, 'yes');
+  assert.throws(() => opencodeEnvironment({ OPENCODE_CONFIG_CONTENT: 'invalid' }, settings));
+});
+
+test('OpenCode direct launch and typed project shell receive the same scoped configuration', () => {
+  const dir = fs.mkdtempSync(path.join(root, 'opencode-launch-'));
+  const file = path.join(dir, 'launch.json');
+  fs.writeFileSync(file, JSON.stringify({ baseUrl: 'http://127.0.0.1:8317', token: 'fixture-local-key', opencodeEnabled: true, contextTokens: 64000 }), { mode: 0o600 });
+  const wrapper = path.resolve(__dirname, '../scripts/gateway-launch.js');
+  const probe = 'process.stdout.write(process.env.OPENCODE_CONFIG_CONTENT)';
+  const options = { encoding: 'utf8', env: { ...process.env, OPENCODE_CONFIG_CONTENT: '' }, stdio: ['ignore', 'pipe', 'pipe'] };
+  const direct = execFileSync(process.execPath, [wrapper, file, '--client', 'opencode', process.execPath, '-e', probe], options);
+  const shell = execFileSync(process.execPath, [wrapper, '--shell', file, process.execPath, '-e', probe], options);
+  assert.deepEqual(JSON.parse(direct), JSON.parse(shell));
+  assert.equal(JSON.parse(direct).agent.plan.model, 'citadel/citadel-planning');
+  assert.ok(!direct.includes('fixture-local-key'));
 });

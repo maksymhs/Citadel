@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const REQUIRED = ['api', 'escapeHtml', 'showToast'];
-  const FIELDS = ['mode', 'contextTokens', 'planningModel', 'executionModel', 'smallModel', 'claudePlanningModel', 'claudeExecutionModel', 'claudeSmallModel', 'port'];
+  const FIELDS = ['opencodeEnabled', 'mode', 'contextTokens', 'planningModel', 'executionModel', 'smallModel', 'claudePlanningModel', 'claudeExecutionModel', 'claudeSmallModel', 'port'];
   const MODEL_IDS = { planningModel: 'gateway-planning', executionModel: 'gateway-execution', smallModel: 'gateway-small', claudePlanningModel: 'gateway-claude-planning', claudeExecutionModel: 'gateway-claude-execution', claudeSmallModel: 'gateway-claude-small' };
   let timer = null;
   let instance = 0;
@@ -47,9 +47,9 @@
     function readDraft() {
       if (!draftConfig) return;
       for (const key of FIELDS) {
-        const id = key === 'mode' ? 'gateway-mode' : key === 'contextTokens' ? 'gateway-context' : key === 'port' ? 'gateway-port' : MODEL_IDS[key];
+        const id = key === 'opencodeEnabled' ? 'gateway-opencode' : key === 'mode' ? 'gateway-mode' : key === 'contextTokens' ? 'gateway-context' : key === 'port' ? 'gateway-port' : MODEL_IDS[key];
         const field = body.querySelector(`#${id}`);
-        if (field) draftConfig[key] = key === 'contextTokens' || key === 'port' ? Number(field.value) : field.value;
+        if (field) draftConfig[key] = key === 'opencodeEnabled' ? field.checked : key === 'contextTokens' || key === 'port' ? Number(field.value) : field.value;
       }
     }
     function quotaMarkup(provider) {
@@ -98,6 +98,7 @@
       };
       body.innerHTML = `<div class="gateway-settings">
         <section class="gateway-card gateway-control-row"><div><span class="gateway-live-status" role="status">${esc(gateway.running ? 'Gateway running' : gateway.enabled ? 'Enabled · start required' : 'Gateway disabled')}</span><label class="gateway-enable"><input type="checkbox" id="gateway-enabled" ${gateway.enabled ? 'checked' : ''} ${(!gateway.connected && !gateway.connections?.claude) || working ? 'disabled' : ''}> Use in new terminals</label></div><label class="settings-field gateway-route">Route<select class="form-input" id="gateway-mode" ${disabled}><option value="chatgpt" ${draftConfig.mode === 'chatgpt' ? 'selected' : ''}>ChatGPT</option><option value="claude" ${draftConfig.mode === 'claude' ? 'selected' : ''}>Claude</option><option value="auto" ${draftConfig.mode === 'auto' ? 'selected' : ''}>Auto</option></select></label><p class="gateway-muted">Auto is opt-in: Claude first, ChatGPT fallback for eligible availability or quota errors. Both accounts must be connected.</p></section>
+        <section class="gateway-card"><label class="gateway-enable"><input type="checkbox" id="gateway-opencode" ${draftConfig.opencodeEnabled ? 'checked' : ''} ${disabled}> Use this gateway in OpenCode (experimental)</label><p class="gateway-muted">Applies to new project terminals and agent launches after saving. OpenCode uses the same connected accounts and routes, with Plan for the planning model, Build for execution, automatic compaction and old tool-output pruning. Switch Plan/Build with Tab. Leave off for native OpenCode. Codex CLI retains its native configuration.</p></section>
         <p class="gateway-muted gateway-context-summary">Saved shared context budget: <strong>${Number(gateway.contextTokens || 1000000).toLocaleString()} tokens${Number(gateway.contextTokens || 1000000) === 1000000 ? ' (1M)' : ''}</strong>. This is a launch budget, not a guarantee of model access or output size.</p>
         ${gateway.error ? `<p class="settings-warn">${esc(gateway.error)}</p>` : ''}
         ${!gateway.installed ? `<section class="gateway-card"><div><strong>Gateway component not installed</strong><p class="gateway-muted">Optional local component; it listens only on this machine.</p></div><button id="gateway-install" class="btn btn-secondary btn-sm" ${!gateway.supported || working ? 'disabled' : ''}>Install component</button>${!gateway.supported ? '<p class="settings-warn">Installation supports Linux/macOS x64/arm64.</p>' : ''}</section>` : ''}
@@ -117,6 +118,7 @@
       body.querySelector('#gateway-test')?.addEventListener('click', () => action('/test', 'POST', null, 'Model request succeeded.'));
       body.querySelectorAll('[data-refresh-provider]').forEach(button => button.addEventListener('click', () => refreshDiscovery(button.dataset.refreshProvider)));
       body.querySelectorAll('[data-model-select]').forEach(select => select.addEventListener('change', () => { draftConfig[select.dataset.modelSelect] = select.value; updateDirty(); }));
+      body.querySelector('#gateway-opencode')?.addEventListener('change', event => { draftConfig.opencodeEnabled = event.target.checked; updateDirty(); });
       body.querySelector('#gateway-mode')?.addEventListener('change', event => { draftConfig.mode = event.target.value; updateDirty(); });
       body.querySelector('#gateway-context')?.addEventListener('input', event => { draftConfig.contextTokens = Number(event.target.value); updateDirty(); });
       body.querySelector('#gateway-context-restore')?.addEventListener('click', () => {

@@ -1,4 +1,4 @@
-/** Optional local CLIProxyAPI lifecycle, encrypted credentials and Claude launch settings. */
+/** Optional local CLIProxyAPI lifecycle, encrypted credentials and scoped Claude/OpenCode launch settings. */
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -134,7 +134,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     }
     // Pinned CLIProxyAPI watches this inode; rename replacement loses its watch.
     fs.writeFileSync(path.join(runtime, 'config.json'), JSON.stringify(proxy), { mode: 0o600 });
-    fs.writeFileSync(path.join(runtime, 'launch.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${c.port}`, token: key, planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel, mode: c.mode, aliases: ALIASES, contextTokens: c.contextTokens }), { mode: 0o600 });
+    fs.writeFileSync(path.join(runtime, 'launch.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${c.port}`, token: key, planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel, mode: c.mode, aliases: ALIASES, contextTokens: c.contextTokens, opencodeEnabled: Boolean(c.opencodeEnabled) }), { mode: 0o600 });
   }
   function spawnGateway(args) {
     const child = spawnImpl(binary, ['--config', path.join(runtime, 'config.json'), '--local-model', ...args], {
@@ -215,7 +215,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     const c = config();
     return { version: VERSION, supported: supported(), installed: installed(), enabled: c.enabled, running: Boolean(processHandle), connected: connected(), port: c.port,
       planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel,
-      mode: c.mode, contextTokens: c.contextTokens, claudePlanningModel: c.claudePlanningModel, claudeExecutionModel: c.claudeExecutionModel, claudeSmallModel: c.claudeSmallModel, connections: connections(), aliases: ALIASES,
+      mode: c.mode, opencodeEnabled: Boolean(c.opencodeEnabled), contextTokens: c.contextTokens, claudePlanningModel: c.claudePlanningModel, claudeExecutionModel: c.claudeExecutionModel, claudeSmallModel: c.claudeSmallModel, connections: connections(), aliases: ALIASES,
       busy, error: lastError, login: login ? { state: login.state, provider: login.provider, url: login.url, code: login.code, expiresAt: login.expiresAt } : null };
   }
   async function loginStart(provider = 'codex') {
@@ -366,6 +366,10 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
         if (!['chatgpt', 'claude', 'auto'].includes(input.mode)) throw new Error('Mode must be Claude, ChatGPT or Auto.');
         c.mode = input.mode;
       }
+      if (input.opencodeEnabled !== undefined) {
+        if (typeof input.opencodeEnabled !== 'boolean') throw new Error('opencodeEnabled must be a boolean.');
+        c.opencodeEnabled = input.opencodeEnabled;
+      }
       if (input.contextTokens !== undefined) {
         if (!Number.isInteger(input.contextTokens) || input.contextTokens < 32000 || input.contextTokens > 1000000) throw new Error('Context budget must be an integer between 32000 and 1000000 tokens.');
         c.contextTokens = input.contextTokens;
@@ -496,10 +500,12 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     if (result.type !== 'message' || !Array.isArray(result.content) || result.error) throw new Error('Gateway did not return a valid model response.');
     return { ok: true, model: MODEL.test(result.model || '') ? result.model : ALIASES.execution, mode: c.mode };
   }
-  function launchOptions() {
+  function launchOptions(client = 'claude') {
+    if (!['claude', 'opencode'].includes(client)) return null;
+    if (client === 'opencode' && !config().opencodeEnabled) return null;
     if (!config().enabled) return null;
     if (!processHandle || !runtime) throw new Error('Claude Code Gateway is enabled but stopped. Restart it in Settings → Claude Code Gateway.');
-    return { command: process.execPath, args: [path.resolve(__dirname, '../../scripts/gateway-launch.js'), path.join(runtime, 'launch.json')] };
+    return { command: process.execPath, args: [path.resolve(__dirname, '../../scripts/gateway-launch.js'), path.join(runtime, 'launch.json'), ...(client === 'opencode' ? ['--client', 'opencode'] : [])] };
   }
   async function close() {
     clearInterval(credentialTimer); clearInterval(loginTimer);
