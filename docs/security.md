@@ -62,7 +62,7 @@ backend binds only to loopback, with server-side authentication; browser session
 credentials are filtered at the proxy. It runs as the Citadel user and is not a
 project sandbox. Stopping it terminates its editor process group.
 
-The optional [Claude Code Gateway](ai-gateway.md) requires administrator setup and access
+The optional [AI Gateway](ai-gateway.md) requires administrator setup and access
 to gateway-enabled project terminals. It binds to loopback and uses separate
 Claude/ChatGPT authorization. Persistent credentials are encrypted; the external
 proxy needs private temporary plaintext files while running (Linux uses
@@ -72,5 +72,8 @@ downloads are disabled. The loopback management API requires a separate private
 key for Claude OAuth, with remote access disabled; its wildcard callback
 forwarder is not used. Browser callbacks validate pending state and redirect
 origin/path. Existing CLI OAuth caches are never imported. Stable aliases and
-explicit Claude/ChatGPT/Auto routing are supported; live account-pair
+explicit Claude/ChatGPT/Auto routing are supported. Opt-in OpenCode and Codex
+launchers reuse the local client key through process environment variables; Codex
+uses private PATH shims and structured provider overrides, not global config or
+login-cache edits. Gateway-enabled launches remain administrator-only; live account-pair
 compatibility and arbitrary streaming/tool replay remain unverified.

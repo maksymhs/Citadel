@@ -49,7 +49,7 @@ Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**
 </td>
 <td width="50%" valign="top">
 
-### 🔀 Optional Claude Code Gateway
+### 🔀 Optional AI Gateway
 Connect Claude and ChatGPT separately, choose discovered models for planning, execution and background work, then route new conversations to **Claude**, **ChatGPT** or opt-in **Auto** fallback. Provider-reported usage windows and reset times appear when available. Experimental; account access and model compatibility are not guaranteed. [Setup and limitations →](docs/ai-gateway.md)
 
 </td>
@@ -222,7 +222,7 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 | [Security & limitations](docs/security.md) | Security layers and what Citadel does **not** protect against |
 | [Remote access](docs/remote-access.md) | QR pairing, Cloudflare tunnels, own domain |
 | [Task mesh](docs/task-mesh.md) | Parallel work across paired nodes |
-| [Claude Code Gateway](docs/ai-gateway.md) | Optional Claude/ChatGPT routing, model choices, usage windows and limitations |
+| [AI Gateway](docs/ai-gateway.md) | Optional Claude/ChatGPT routing, model choices, usage windows and limitations |
 | [Feature map](docs/features.md) | Which files make up each feature, with their tests and guide |
 | [Code map](docs/code-map.md) | Every source file with its purpose, and where each screen lives |
 | [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) | How it is built and why |
@@ -238,7 +238,7 @@ npm run dev     # development server (or: npm start)
 
 Then open <http://127.0.0.1:3000>.
 
-The optional [AI Gateway](docs/ai-gateway.md) can route Claude Code and OpenCode
+The optional [AI Gateway](docs/ai-gateway.md) can route Claude Code, OpenCode and Codex CLI
 through the same connected Claude/ChatGPT accounts. OpenCode supports separate
 Plan/Build models with automatic context compaction and tool-output pruning.
 

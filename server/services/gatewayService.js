@@ -1,4 +1,4 @@
-/** Optional local CLIProxyAPI lifecycle, encrypted credentials and scoped Claude/OpenCode launch settings. */
+/** Optional local CLIProxyAPI lifecycle, encrypted credentials and scoped Claude/OpenCode/Codex launch settings. */
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -29,7 +29,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
   const read = (key) => database().prepare('SELECT value FROM app_config WHERE key = ?').get(key)?.value;
   const write = (key, value) => database().prepare(`INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(key, value, new Date().toISOString());
-  const config = () => ({ ...DEFAULTS, enabled: false, port: 8317, planningModel: 'gpt-6.1-sol', executionModel: 'gpt-6-luna', smallModel: 'gpt-6-luna', ...JSON.parse(read(KEY) || '{}') });
+  const config = () => ({ ...DEFAULTS, claudeEnabled: true, enabled: false, port: 8317, planningModel: 'gpt-6.1-sol', executionModel: 'gpt-6-luna', smallModel: 'gpt-6-luna', ...JSON.parse(read(KEY) || '{}') });
   function credentialEntries() {
     const saved = read(AUTH_KEY);
     return saved ? JSON.parse(decrypt(saved)) : {};
@@ -134,7 +134,18 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     }
     // Pinned CLIProxyAPI watches this inode; rename replacement loses its watch.
     fs.writeFileSync(path.join(runtime, 'config.json'), JSON.stringify(proxy), { mode: 0o600 });
-    fs.writeFileSync(path.join(runtime, 'launch.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${c.port}`, token: key, planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel, mode: c.mode, aliases: ALIASES, contextTokens: c.contextTokens, opencodeEnabled: Boolean(c.opencodeEnabled) }), { mode: 0o600 });
+    const codexBinDir = path.join(root, 'launch-bin');
+    if (c.codexEnabled) {
+      fs.mkdirSync(codexBinDir, { recursive: true, mode: 0o700 });
+      if (!fs.lstatSync(codexBinDir).isDirectory() || fs.lstatSync(codexBinDir).isSymbolicLink()) throw new Error('Gateway launch directory must not be a symlink.');
+      fs.chmodSync(codexBinDir, 0o700);
+      const shim = path.join(codexBinDir, 'codex');
+      try { if (!fs.lstatSync(shim).isFile()) throw new Error('Invalid gateway Codex launcher.'); }
+      catch (err) { if (err.code !== 'ENOENT') throw err; }
+      const launcher = path.resolve(__dirname, '../../scripts/gateway-launch.js');
+      fs.writeFileSync(shim, `#!${process.execPath}\nrequire(${JSON.stringify(launcher)}).codexShell();\n`, { mode: 0o700 });
+    }
+    fs.writeFileSync(path.join(runtime, 'launch.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${c.port}`, token: key, planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel, mode: c.mode, aliases: ALIASES, contextTokens: c.contextTokens, claudeEnabled: c.claudeEnabled !== false, opencodeEnabled: Boolean(c.opencodeEnabled), codexEnabled: Boolean(c.codexEnabled), codexBinDir }), { mode: 0o600 });
   }
   function spawnGateway(args) {
     const child = spawnImpl(binary, ['--config', path.join(runtime, 'config.json'), '--local-model', ...args], {
@@ -215,7 +226,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     const c = config();
     return { version: VERSION, supported: supported(), installed: installed(), enabled: c.enabled, running: Boolean(processHandle), connected: connected(), port: c.port,
       planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel,
-      mode: c.mode, opencodeEnabled: Boolean(c.opencodeEnabled), contextTokens: c.contextTokens, claudePlanningModel: c.claudePlanningModel, claudeExecutionModel: c.claudeExecutionModel, claudeSmallModel: c.claudeSmallModel, connections: connections(), aliases: ALIASES,
+      mode: c.mode, claudeEnabled: c.claudeEnabled !== false, opencodeEnabled: Boolean(c.opencodeEnabled), codexEnabled: Boolean(c.codexEnabled), contextTokens: c.contextTokens, claudePlanningModel: c.claudePlanningModel, claudeExecutionModel: c.claudeExecutionModel, claudeSmallModel: c.claudeSmallModel, connections: connections(), aliases: ALIASES,
       busy, error: lastError, login: login ? { state: login.state, provider: login.provider, url: login.url, code: login.code, expiresAt: login.expiresAt } : null };
   }
   async function loginStart(provider = 'codex') {
@@ -366,9 +377,11 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
         if (!['chatgpt', 'claude', 'auto'].includes(input.mode)) throw new Error('Mode must be Claude, ChatGPT or Auto.');
         c.mode = input.mode;
       }
-      if (input.opencodeEnabled !== undefined) {
-        if (typeof input.opencodeEnabled !== 'boolean') throw new Error('opencodeEnabled must be a boolean.');
-        c.opencodeEnabled = input.opencodeEnabled;
+      for (const key of ['claudeEnabled', 'opencodeEnabled', 'codexEnabled']) {
+        if (input[key] !== undefined) {
+          if (typeof input[key] !== 'boolean') throw new Error(`${key} must be a boolean.`);
+          c[key] = input[key];
+        }
       }
       if (input.contextTokens !== undefined) {
         if (!Number.isInteger(input.contextTokens) || input.contextTokens < 32000 || input.contextTokens > 1000000) throw new Error('Context budget must be an integer between 32000 and 1000000 tokens.');
@@ -501,11 +514,11 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     return { ok: true, model: MODEL.test(result.model || '') ? result.model : ALIASES.execution, mode: c.mode };
   }
   function launchOptions(client = 'claude') {
-    if (!['claude', 'opencode'].includes(client)) return null;
-    if (client === 'opencode' && !config().opencodeEnabled) return null;
+    if (!['shell', 'claude', 'opencode', 'codex'].includes(client)) return null;
+    if (client !== 'shell' && !config()[`${client}Enabled`]) return null;
     if (!config().enabled) return null;
-    if (!processHandle || !runtime) throw new Error('Claude Code Gateway is enabled but stopped. Restart it in Settings → Claude Code Gateway.');
-    return { command: process.execPath, args: [path.resolve(__dirname, '../../scripts/gateway-launch.js'), path.join(runtime, 'launch.json'), ...(client === 'opencode' ? ['--client', 'opencode'] : [])] };
+    if (!processHandle || !runtime) throw new Error('AI Gateway is enabled but stopped. Restart it in Settings → AI Gateway.');
+    return { command: process.execPath, args: [path.resolve(__dirname, '../../scripts/gateway-launch.js'), path.join(runtime, 'launch.json'), ...(!['shell', 'claude'].includes(client) ? ['--client', client] : [])] };
   }
   async function close() {
     clearInterval(credentialTimer); clearInterval(loginTimer);
@@ -527,7 +540,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       return status();
     });
   }
-  async function resume() { if (config().enabled) { try { await start(); } catch { lastError = 'Claude Code Gateway could not resume. Open Settings → Claude Code Gateway.'; } } }
+  async function resume() { if (config().enabled) { try { await start(); } catch { lastError = 'AI Gateway could not resume. Open Settings → AI Gateway.'; } } }
   return { status, install, loginStart, save, models, discovery: discoverySnapshot, refreshDiscovery, testConnection, launchOptions, close, disconnect, resume, callback, refreshLogin };
 }
 module.exports = { ...createGatewayService(), createGatewayService, VERSION };

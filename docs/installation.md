@@ -126,10 +126,13 @@ checks on a real Mac or a macOS VM; Linux trial checks need no host installation
 
 ### Optional AI Gateway
 
-Open **Settings → Claude Code Gateway** as an administrator to install the local component,
+Open **Settings → AI Gateway** as an administrator to install the local component,
 connect ChatGPT by device login and Claude by browser authorization, choose
 Claude/ChatGPT/Auto routing and planning/execution models, then enable it
 for Claude Code in new project terminals (including typing `claude`).
+Independent tool checkboxes select Claude Code, OpenCode and Codex CLI for the
+same connected accounts. Save client activation changes and open a new project terminal before
+running `opencode` or `codex`. Native CLI installations are still required.
 Exit Claude and reopen an existing project terminal after activation. It binds only to loopback,
 requires no sudo and remains off by default. This experimental integration offers opt-in Auto fallback after both providers are connected. See [setup and limitations](ai-gateway.md).
 
@@ -316,8 +319,8 @@ same lifecycle helper; no change to the host/system installers is required.
 
 ### OpenCode through the optional gateway
 
-Install OpenCode through Machines → Tools, then enable **Use this gateway in OpenCode**
-in Settings → Claude Code Gateway and save. Enable the gateway and open a new
+Install OpenCode through Machines → Tools, then select **OpenCode** under **Choose your tools**
+in Settings → AI Gateway and save. Enable the gateway and open a new
 project terminal. Plan/Build use the shared planning/execution models; switch with
 Tab. Native OpenCode remains the default. See [AI Gateway](ai-gateway.md#opencode-as-a-shared-terminal-client)
 for context budgets, account routing and current validation limits.

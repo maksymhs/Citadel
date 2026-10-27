@@ -12,7 +12,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-gateway-suite-'));
 Object.assign(process.env, { DATA_DIR: root, DATABASE_PATH: path.join(root, 'db.sqlite'), PROJECTS_DIR: path.join(root, 'projects'), LOGS_DIR: path.join(root, 'logs'), CITADEL_SELF_UPDATE: '0' });
 const { getDatabase, closeDatabase } = require('../server/database/db');
 const { createGatewayService, VERSION } = require('../server/services/gatewayService');
-const { gatewayEnvironment, opencodeEnvironment } = require('../scripts/gateway-launch');
+const { gatewayEnvironment, opencodeEnvironment, codexLaunch } = require('../scripts/gateway-launch');
 const { buildServer } = require('../server/index');
 const { decrypt } = require('../server/security/secrets');
 let app, cookies;
@@ -86,10 +86,10 @@ test('gateway routes require administrator access and never reveal stored values
     }
     const gateway = require('../server/services/gatewayService');
     const originalStatus = gateway.status;
-    gateway.status = () => ({ enabled: true, opencodeEnabled: true });
+    gateway.status = () => ({ enabled: true, opencodeEnabled: true, codexEnabled: true });
     try {
       assert.equal((await app.inject({ method: 'POST', url: '/api/terminals', cookies, payload: { projectId: 'fixture' } })).statusCode, 403);
-      for (const agentId of ['claude', 'opencode']) assert.equal((await app.inject({ method: 'POST', url: '/api/agents/launch', cookies, payload: { projectId: 'fixture', agentId } })).statusCode, 403);
+      for (const agentId of ['claude', 'opencode', 'codex']) assert.equal((await app.inject({ method: 'POST', url: '/api/agents/launch', cookies, payload: { projectId: 'fixture', agentId } })).statusCode, 403);
     } finally { gateway.status = originalStatus; }
   } finally { getDatabase().prepare("UPDATE users SET role = 'admin'").run(); }
   const result = await app.inject({ url: '/api/settings/gateway', cookies });
@@ -273,7 +273,7 @@ test('agent launch routes Claude through scoped wrapper and keeps native mode av
 test('typing claude in a project shell receives gateway settings, including through tmux', async () => {
   const { dir, service: s } = fresh(); fakeBinary(dir);
   await s.loginStart(); await until(() => s.status().connected);
-  await s.save({ enabled: true, port: await port(), planningModel: 'fixture-plan', executionModel: 'fixture-run', smallModel: 'fixture-small' });
+  await s.save({ enabled: true, codexEnabled: true, port: await port(), planningModel: 'fixture-plan', executionModel: 'fixture-run', smallModel: 'fixture-small' });
   const gateway = require('../server/services/gatewayService');
   const terminals = require('../server/services/terminalManager');
   const projects = require('../server/services/projectService');
@@ -283,25 +283,36 @@ test('typing claude in a project shell receives gateway settings, including thro
   fs.writeFileSync(path.join(fixtureBin, 'claude'), `#!/usr/bin/env node
 require('node:fs').writeFileSync(${JSON.stringify(report)}, JSON.stringify({ base: process.env.ANTHROPIC_BASE_URL, plan: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL, run: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL, model: process.env.ANTHROPIC_MODEL, context: process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, credentialPresent: Boolean(process.env.ANTHROPIC_AUTH_TOKEN) }));
 `, { mode: 0o700 });
+  const codexReport = path.join(dir, 'codex-report.json');
+  fs.writeFileSync(path.join(fixtureBin, 'codex'), `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(codexReport)}, JSON.stringify({ args: process.argv.slice(2), credentialPresent: Boolean(process.env.CITADEL_GATEWAY_TOKEN) }));\n`, { mode: 0o700 });
   const fixtureShell = path.join(fixtureBin, 'test-shell');
   fs.writeFileSync(fixtureShell, '#!/bin/sh\nexec /bin/bash --noprofile --norc -i\n', { mode: 0o700 });
-  const original = { launch: gateway.launchOptions, shell: process.env.SHELL, home: process.env.HOME, context: process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS };
+  const original = { launch: gateway.launchOptions, shell: process.env.SHELL, home: process.env.HOME, context: process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, path: process.env.PATH };
   let session;
   try {
     gateway.launchOptions = () => s.launchOptions();
+    process.env.PATH = fixtureBin + path.delimiter + process.env.PATH;
     process.env.SHELL = fixtureShell; process.env.HOME = dir; process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = '200000';
     session = terminals.createSession({ projectId: project.id, name: 'Gateway regression shell' });
     const active = terminals.activePtySessions.get(session.sessionId);
-    await until(() => active.buffer.includes('Claude Code Gateway active for this project terminal'));
+    await until(() => active.buffer.includes('AI Gateway active for this project terminal'));
     // Only the fixture binary is invoked; never call a host's logged-in CLI.
     const quoted = `'${fixtureBin.replace(/'/g, "'\\''")}'`;
     active.ptyProcess.write(`export PATH=${quoted}:"$PATH"; claude\r`);
     await until(() => fs.existsSync(report));
     assert.deepEqual(JSON.parse(fs.readFileSync(report)), { base: `http://127.0.0.1:${s.status().port}`, plan: 'citadel-planning', run: 'citadel-execution', model: 'opusplan', context: '1000000', credentialPresent: true });
+    const codexSettings = JSON.parse(fs.readFileSync(s.launchOptions().args[1]));
+    active.ptyProcess.write(`export PATH='${codexSettings.codexBinDir}':"$PATH"; codex fixture-argument\r`);
+    await until(() => fs.existsSync(codexReport));
+    const codexResult = JSON.parse(fs.readFileSync(codexReport));
+    assert.equal(codexResult.credentialPresent, true);
+    assert.ok(codexResult.args.includes('model_provider="citadel"'));
+    assert.equal(codexResult.args.at(-1), 'fixture-argument');
     assert.ok(!active.buffer.includes(JSON.parse(fs.readFileSync(s.launchOptions().args[1])).token));
   } finally {
     if (session) terminals.killSession(session.sessionId);
     gateway.launchOptions = original.launch;
+    process.env.PATH = original.path;
     if (original.shell === undefined) delete process.env.SHELL; else process.env.SHELL = original.shell;
     if (original.home === undefined) delete process.env.HOME; else process.env.HOME = original.home;
     if (original.context === undefined) delete process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS; else process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = original.context;
@@ -361,7 +372,7 @@ test('OpenCode is opt-in, uses the shared private launch config and preserves na
   assert.equal(s.launchOptions('opencode'), null);
   assert.equal(s.launchOptions('codex'), null);
   await assert.rejects(s.save({ enabled: true, opencodeEnabled: 'yes' }), /boolean/);
-  await s.save({ enabled: true, opencodeEnabled: true });
+  await s.save({ enabled: true, opencodeEnabled: true, codexEnabled: true });
   const launch = s.launchOptions('opencode');
   assert.deepEqual(launch.args.slice(2), ['--client', 'opencode']);
   const settings = JSON.parse(fs.readFileSync(launch.args[1]));
@@ -407,4 +418,72 @@ test('OpenCode direct launch and typed project shell receive the same scoped con
   assert.deepEqual(JSON.parse(direct), JSON.parse(shell));
   assert.equal(JSON.parse(direct).agent.plan.model, 'citadel/citadel-planning');
   assert.ok(!direct.includes('fixture-local-key'));
+});
+
+
+test('Codex is opt-in and its Responses overrides do not expose the key in arguments', async () => {
+  const { dir, service: s } = fresh(); fakeBinary(dir);
+  await s.loginStart(); await until(() => s.status().connected);
+  await s.save({ enabled: true, port: await port() });
+  assert.equal(s.status().codexEnabled, false);
+  assert.equal(s.launchOptions('codex'), null);
+  await assert.rejects(s.save({ enabled: true, codexEnabled: 1 }), /boolean/);
+  await s.save({ enabled: true, codexEnabled: true });
+  const launch = s.launchOptions('codex');
+  assert.deepEqual(launch.args.slice(2), ['--client', 'codex']);
+  const settings = JSON.parse(fs.readFileSync(launch.args[1]));
+  assert.equal(settings.codexEnabled, true);
+  const overrides = codexLaunch({ KEEP: 'yes', OPENAI_API_KEY: 'native-key' }, settings, ['exec', 'argument with spaces']);
+  assert.ok(overrides.args.includes('model_providers.citadel.wire_api="responses"'));
+  assert.ok(overrides.args.includes('model_providers.citadel.requires_openai_auth=false'));
+  assert.ok(overrides.args.includes('model="citadel-execution"'));
+  assert.deepEqual(overrides.args.slice(-2), ['exec', 'argument with spaces']);
+  assert.ok(!overrides.args.join(' ').includes(settings.token));
+  assert.equal(overrides.env.CITADEL_GATEWAY_TOKEN, settings.token);
+  assert.equal(overrides.env.KEEP, 'yes');
+  assert.equal(overrides.env.OPENAI_API_KEY, 'native-key');
+  assert.equal(fs.statSync(path.join(settings.codexBinDir, 'codex')).mode & 0o777, 0o700);
+  assert.ok(!fs.readFileSync(path.join(settings.codexBinDir, 'codex'), 'utf8').includes(settings.token));
+  await s.close();
+});
+
+test('Codex direct launch and typed codex use the same private settings without changing native config', async () => {
+  const { dir, service: s } = fresh(); fakeBinary(dir);
+  await s.loginStart(); await until(() => s.status().connected);
+  await s.save({ enabled: true, codexEnabled: true, port: await port() });
+  const nativeDir = path.join(dir, 'native-bin'); fs.mkdirSync(nativeDir);
+  const native = path.join(nativeDir, 'codex');
+  fs.writeFileSync(native, '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ args: process.argv.slice(2), credentialPresent: Boolean(process.env.CITADEL_GATEWAY_TOKEN) }));\n', { mode: 0o700 });
+  const launch = s.launchOptions('codex');
+  const options = { encoding: 'utf8', env: { ...process.env, PATH: nativeDir + path.delimiter + process.env.PATH }, stdio: ['ignore', 'pipe', 'pipe'] };
+  const direct = JSON.parse(execFileSync(launch.command, [...launch.args, native, 'argument with spaces'], options));
+  const probe = "process.stdout.write(require('node:child_process').execFileSync('codex', ['argument with spaces'], {encoding:'utf8'}))";
+  const shell = JSON.parse(execFileSync(launch.command, [launch.args[0], '--shell', launch.args[1], process.execPath, '-e', probe], options));
+  assert.deepEqual(shell, direct);
+  assert.equal(shell.credentialPresent, true);
+  assert.equal(shell.args.at(-1), 'argument with spaces');
+  assert.ok(shell.args.includes('model_provider="citadel"'));
+  // Removing native Codex from the resolver PATH must fail closed, not recurse into the shim.
+  assert.throws(() => execFileSync(launch.command, [launch.args[0], '--shell', launch.args[1], process.execPath, '-e', probe], { ...options, env: { ...options.env, PATH: JSON.parse(fs.readFileSync(launch.args[1])).codexBinDir } }));
+  await s.close();
+});
+
+
+test('Claude activation is independent and disabling it preserves OpenCode project-shell routing', async () => {
+  const { dir, service: s } = fresh(); fakeBinary(dir);
+  await s.loginStart(); await until(() => s.status().connected);
+  await s.save({ enabled: true, port: await port() });
+  assert.equal(s.status().claudeEnabled, true, 'existing installations keep Claude enabled');
+  await assert.rejects(s.save({ enabled: true, claudeEnabled: 'yes' }), /boolean/);
+  await s.save({ enabled: true, claudeEnabled: false, opencodeEnabled: true });
+  assert.equal(s.launchOptions('claude'), null);
+  assert.ok(s.launchOptions('opencode'));
+  const shell = s.launchOptions('shell');
+  assert.ok(shell, 'project shell must not depend on Claude activation');
+  const probe = "process.stdout.write(JSON.stringify({claude: !!process.env.ANTHROPIC_BASE_URL, opencode: !!process.env.OPENCODE_CONFIG_CONTENT}))";
+  const output = execFileSync(shell.command, [shell.args[0], '--shell', shell.args[1], process.execPath, '-e', probe], {
+    encoding: 'utf8', env: { ...process.env, ANTHROPIC_BASE_URL: undefined, OPENCODE_CONFIG_CONTENT: undefined }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.deepEqual(JSON.parse(output), { claude: false, opencode: true });
+  await s.close();
 });

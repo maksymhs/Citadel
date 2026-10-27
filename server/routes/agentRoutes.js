@@ -25,8 +25,8 @@ async function agentRoutes(fastify) {
     }
 
     const gateway = require('../services/gatewayService').status();
-    if (gateway.enabled && (agentId === 'claude' || (agentId === 'opencode' && gateway.opencodeEnabled)) && request.user.role !== 'admin') {
-      return reply.status(403).send({ error: 'Administrator privileges are required to use Claude Code Gateway.' });
+    if (gateway.enabled && ((agentId === 'claude' && gateway.claudeEnabled !== false) || (['opencode', 'codex'].includes(agentId) && gateway[`${agentId}Enabled`])) && request.user.role !== 'admin') {
+      return reply.status(403).send({ error: 'Administrator privileges are required to use AI Gateway.' });
     }
     try {
       const result = agentRegistry.launchAgent({ projectId, agentId, extraArgs });

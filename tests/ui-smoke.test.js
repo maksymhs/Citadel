@@ -187,17 +187,17 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
-  test('Claude Code Gateway settings expose installation, login and 1M context controls', async () => {
+  test('AI Gateway settings expose installation, login and 1M context controls', async () => {
     w.document.querySelector('.nav-item[data-view="settings"]').click();
     await sleep(800);
     const tile = w.document.querySelector('[data-settings-section="gateway"]');
-    assert.ok(tile, 'Claude Code Gateway is reachable from Settings');
-    assert.match(tile.textContent, /Claude Code Gateway/);
+    assert.ok(tile, 'AI Gateway is reachable from Settings');
+    assert.match(tile.textContent, /AI Gateway/);
     tile.click();
     await sleep(500);
     assert.ok(w.document.getElementById('gateway-install'));
-    assert.equal(w.document.querySelector('.settings-screen-head h2').textContent, 'Claude Code Gateway');
-    assert.match(w.document.getElementById('top-bar-title').textContent, /Claude Code Gateway/);
+    assert.equal(w.document.querySelector('.settings-screen-head h2').textContent, 'AI Gateway');
+    assert.match(w.document.getElementById('top-bar-title').textContent, /AI Gateway/);
     assert.match(w.document.getElementById('gateway-body').textContent, /1,000,000 tokens \(1M\)/);
     assert.equal(w.document.getElementById('gateway-login').disabled, true);
     assert.equal(w.document.getElementById('gateway-enabled').checked, false);
@@ -223,7 +223,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       let unsafeAuthUrl = false;
       let gateway = { installed: true, supported: true, running: true, connected: true, enabled: true, port: 8317, version: 'fixture', mode: 'chatgpt', contextTokens: 200000,
         planningModel: 'gpt-plan', executionModel: 'gpt-run', smallModel: 'gpt-small', claudePlanningModel: 'claude-plan', claudeExecutionModel: 'claude-run', claudeSmallModel: 'claude-small', connections: { codex: true, claude: false } };
-      const discovery = { providers: { codex: { connected: true, models: { status: 'available', source: 'credential_catalog', fetchedAt: new Date().toISOString(), stale: false, items: [{ id: 'gpt-run', label: 'GPT run' }] }, usage: { status: 'available', fetchedAt: new Date().toISOString(), accounts: [{ label: 'Account 1', windows: [{ id: 'primary', label: '5-hour window', usedPercent: 0, durationSeconds: 18000, resetsAt: new Date(Date.now() + 60000).toISOString() }, { id: 'weekly', label: 'Weekly window', usedPercent: 45 }, { id: 'limit', label: 'Additional limit', usedPercent: 100 }, { id: 'unknown', label: 'Unknown window', usedPercent: null }] }, { label: 'Account 2', windows: [{ id: 'secondary', label: 'Other account', usedPercent: 12 }] }] } }, claude: { connected: false, models: { status: 'not_connected', items: [] }, usage: { status: 'not_connected', accounts: [] } } } };
+      const discovery = { providers: { codex: { connected: true, models: { status: 'available', source: 'credential_catalog', fetchedAt: new Date().toISOString(), stale: false, items: [{ id: 'gpt-run', label: 'GPT run' }, { id: 'gpt-image-2', label: 'Image' }, { id: 'whisper-1', label: 'Audio' }] }, usage: { status: 'available', fetchedAt: new Date().toISOString(), accounts: [{ label: 'Account 1', windows: [{ id: 'primary', label: '5-hour window', usedPercent: 0, durationSeconds: 18000, resetsAt: new Date(Date.now() + 60000).toISOString() }, { id: 'weekly', label: 'Weekly window', usedPercent: 45 }, { id: 'limit', label: 'Additional limit', usedPercent: 100 }, { id: 'unknown', label: 'Unknown window', usedPercent: null }] }, { label: 'Account 2', windows: [{ id: 'secondary', label: 'Other account', usedPercent: 12 }] }] } }, claude: { connected: false, models: { status: 'not_connected', items: [] }, usage: { status: 'not_connected', accounts: [] } } } };
       await win.CitadelGatewaySettings.init({ escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), showToast: msg => notices.push(msg),
         api: async (url, opts = {}) => {
           calls.push({ url, ...opts });
@@ -255,6 +255,10 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(calls.find(call => call.url.endsWith('/callback')).body.redirectUrl, callback);
       assert.equal(win.document.getElementById('gateway-callback'), null);
       assert.ok(!win.document.body.textContent.includes('private-fixture-code'));
+      assert.ok(win.document.getElementById('gateway-body').textContent.includes('3. Choose your tools'));
+      assert.equal(win.document.getElementById('gateway-models-codex').open, false);
+      assert.ok(!Array.from(win.document.getElementById('gateway-execution').options).some(option => /image|whisper/.test(option.value)));
+      assert.equal(win.document.getElementById('gateway-limits-codex-0').open, false);
       assert.equal(win.document.getElementById('gateway-planning').value, 'gpt-plan', 'model choices preserve saved IDs even outside the live catalog');
       const gatewayBody = win.document.getElementById('gateway-body');
       assert.match(gatewayBody.textContent, /0% used/);
@@ -266,6 +270,12 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(gatewayBody.querySelector('[role="meter"][aria-valuenow="0"]').getAttribute('aria-valuemin'), '0');
       assert.equal(gatewayBody.querySelector('[role="meter"][aria-valuenow="100"]').getAttribute('aria-valuemax'), '100');
       assert.equal(gatewayBody.querySelectorAll('.gateway-account').length, 2, 'provider accounts remain separate');
+      const claudeTool = win.document.getElementById('gateway-claude');
+      assert.equal(claudeTool.checked, true);
+      claudeTool.checked = false; claudeTool.dispatchEvent(new win.Event('change', { bubbles: true }));
+      const codex = win.document.getElementById('gateway-codex');
+      assert.ok(codex);
+      codex.checked = true; codex.dispatchEvent(new win.Event('change', { bubbles: true }));
       const opencode = win.document.getElementById('gateway-opencode');
       assert.ok(opencode);
       opencode.checked = true; opencode.dispatchEvent(new win.Event('change', { bubbles: true }));
@@ -274,10 +284,16 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       win.document.getElementById('gateway-save').click(); await sleep(30);
       assert.equal(calls.find(call => call.method === 'PUT').body.mode, 'auto');
       assert.equal(calls.find(call => call.method === 'PUT').body.opencodeEnabled, true);
+      assert.equal(calls.find(call => call.method === 'PUT').body.codexEnabled, true);
+      assert.equal(calls.find(call => call.method === 'PUT').body.claudeEnabled, false);
       assert.equal(calls.find(call => call.method === 'PUT').body.contextTokens, 1000000, 'the explicit draft restoration is applied only by Save');
+      win.document.getElementById('gateway-models-codex').open = true;
+      win.document.getElementById('gateway-advanced').open = true;
       const planning = win.document.getElementById('gateway-planning');
       planning.value = 'gpt-run'; planning.dispatchEvent(new win.Event('change', { bubbles: true }));
       const enabled = win.document.getElementById('gateway-enabled'); enabled.checked = false; enabled.dispatchEvent(new win.Event('change', { bubbles: true })); await sleep(30);
+      assert.equal(win.document.getElementById('gateway-models-codex').open, true, 'expanded model controls survive status redraws');
+      assert.equal(win.document.getElementById('gateway-advanced').open, true, 'advanced controls survive status redraws');
       const toggle = calls.filter(call => call.method === 'PUT').at(-1);
       assert.deepEqual(Object.keys(toggle.body), ['enabled'], 'the activation switch sends no other configuration fields');
       assert.equal(toggle.body.enabled, false, 'the activation switch sends its new state');

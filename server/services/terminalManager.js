@@ -399,7 +399,7 @@ class TerminalManager {
     };
 
     if (projectId && !command) {
-      const gateway = require('./gatewayService').launchOptions();
+      const gateway = require('./gatewayService').launchOptions('shell');
       if (gateway) {
         // Run the shell through the same scoped environment as agent launches.
         // A tmux server may predate this client, so client env alone is not enough.

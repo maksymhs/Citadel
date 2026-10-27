@@ -1,4 +1,4 @@
-/** Normalize provider model catalogs and subscription usage for Claude Code Gateway Settings. */
+/** Normalize provider model catalogs and subscription usage for AI Gateway Settings. */
 const MODEL = /^[a-zA-Z0-9][a-zA-Z0-9._:/+()-]{0,159}$/;
 const MAX_MODELS = 256;
 

@@ -1,10 +1,27 @@
-# Claude Code Gateway
+# AI Gateway
 
-Open **Settings → Claude Code Gateway** as an administrator. The API, stored configuration key and internal feature IDs retain their historical `gateway` names for compatibility. This optional integration
+Open **Settings → AI Gateway** as an administrator. The API, stored configuration key and internal feature IDs retain their historical `gateway` names for compatibility. This optional integration
 runs pinned CLIProxyAPI 8.0.43 locally and routes Claude Code to your explicitly
 connected Claude and/or ChatGPT accounts. It is experimental: availability,
 subscription entitlement and third-party protocol compatibility must be checked
 with your accounts. It does not import existing CLI login caches.
+
+## Configure the three tools
+
+The screen follows three steps: **Connect your accounts**, **Choose a route**,
+and **Choose your tools**. Expand **Models** on an account card to edit its
+planning, execution and background models. Known image/audio/embedding model
+families are hidden from these coding selectors; saved selections are retained
+even when outside that list. Standard 5-hour and 7-day usage windows stay visible;
+other provider-reported limits are available under **Additional limits**, without
+inventing their meaning. A single account does not need an extra account heading.
+
+Claude Code, OpenCode and Codex CLI each have an independent checkbox. Existing
+configurations keep Claude Code selected; OpenCode and Codex remain opt-in.
+Unselected tools use their native configuration. Save client/model edits with
+**Save changes**, then open a new project terminal. The separate **Enable gateway**
+power switch applies immediately and does not save pending edits. Context and
+port settings are under **Advanced settings**; saved context budgets are preserved.
 
 ## Connect accounts
 
@@ -62,10 +79,10 @@ catalog and usage. **Test saved configuration** sends a small execution-role
 request and consumes your allowance. Test each provider separately before relying
 on Auto; Auto requires both accounts connected.
 
-The **Use in new terminals** switch applies immediately to the saved
-configuration and does not save other pending edits. Use **Save configuration**
+The **Enable gateway** switch applies immediately to the saved
+configuration and does not save other pending edits. Use **Save changes**
 to apply model or mode changes; pending edits are kept separate from activation.
-Open a new project terminal and type `claude`. The terminal prints **Claude Code Gateway
+Open a new project terminal and type `claude`. The terminal prints **AI Gateway
 active**. Project agent launches use the same configuration.
 
 ### Changing routes without restarting Claude
@@ -95,20 +112,20 @@ The shared context budget defaults to 1,000,000 tokens and is declared with
 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, avoiding the unknown-alias context warning.
 Settings shows the saved budget (including a lower value retained from an older
 configuration); **Restore 1M context in draft** changes only the unsaved draft,
-and takes effect only after **Save configuration**. The
+and takes effect only after **Save changes**. The
 current built-in Claude defaults and GPT-6.1 Sol / GPT-6 Luna defaults support at
 least 1M tokens, but discovered or previously saved custom model IDs may have
 smaller windows. Set a budget supported by **every** eligible model, including Auto's
 fallback; this is operator configuration, not verified model capacity. Previously
-saved budgets are preserved and can be changed in Advanced options. Context
+saved budgets are preserved and can be changed in **Advanced settings**. Context
 changes require a new terminal. Requests already emitted and arbitrary tool side
 effects are not guaranteed replayable; streaming/live subscription interoperability
 still needs real-account tests.
 
 ## OpenCode as a shared terminal client
 
-Enable **Use this gateway in OpenCode (experimental)**, select **Save configuration**, and enable
-**Use in new terminals**. Open a new project terminal and run `opencode`, or launch
+Select **OpenCode** under **3. Choose your tools**, select **Save changes**, and turn on
+**Enable gateway**. Open a new project terminal and run `opencode`, or launch
 OpenCode from the project's agent selector. OpenCode must be installed separately
 through Machines → Tools. The switch defaults off; disabling it leaves new OpenCode
 launches in native mode. Existing terminals keep their launch environment.
@@ -150,9 +167,36 @@ upstream request); OpenCode 1.2.27 also timed out. OpenCode 2.2.0 was inspected 
 its conversation path was not validated. No live subscriptions were exercised,
 so this client integration remains experimental.
 
-Codex CLI continues to use native configuration. Its custom provider requires the
-Responses protocol; accepting a custom URL is insufficient evidence of streaming,
-tool and cross-provider compatibility, so it is not enabled through this launcher.
+## Codex CLI through AI Gateway
+
+Select **Codex CLI** under **3. Choose your tools** and **Save changes**.
+With the gateway enabled, open a new project terminal and run `codex`, or launch
+Codex from the project agent selector. Install the native Codex CLI first through
+Machines → Tools. The option defaults off; leaving it off preserves native Codex.
+
+Codex receives a custom `citadel` provider using `/v1/responses`, the execution
+alias (`citadel-execution`) and the shared context budget. Overrides are passed as
+structured `-c` arguments; the local gateway key is referenced through a separate
+environment variable and never placed in arguments. WebSockets are disabled for
+this provider so requests use the validated HTTP/SSE Responses path. Native
+login, global configuration, history and sandbox settings remain untouched.
+Codex does not inherit OpenCode's Plan/Build model switching or Claude's opusplan.
+
+New project shells put a private Codex shim first in PATH. The shim resolves the
+native executable from the original PATH and invokes the same launcher used by
+the panel. If the native executable or private runtime settings are unavailable,
+it fails explicitly instead of silently using another provider. Do not use an
+absolute Codex executable path or reset PATH if you want this shell routing.
+System terminals and headless task jobs retain their existing setup. Reopen a
+project terminal after changing client activation, port or context budget.
+
+Validation used Codex CLI 0.163.0 and checksum-verified CLIProxyAPI 8.0.43: real
+CLI conversations reached both simulated Claude and OpenAI-compatible upstreams,
+Responses streaming completed, and function-call results survived protocol
+conversion. Native-mode preservation, administrator checks, direct launch and
+shell/tmux routing are tested. No live subscription, cache savings or automatic
+Codex planning/execution switching is claimed; real-account interoperability
+remains experimental.
 
 ## Disable and disconnect
 

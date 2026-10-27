@@ -2855,3 +2855,31 @@ label.mon-row:hover { border-color: var(--border-hover); }
   .modal-content.settings-alert-modal { display: flex; flex-direction: column; max-height: calc(var(--app-height, 100vh) - 16px); }
   .settings-alert-modal .modal-body { min-height: 0; overflow-y: auto; }
 }
+
+/* Guided AI Gateway setup: accounts, routing, then client selection. */
+.gateway-step { display: grid; gap: 12px; min-width: 0; }
+.gateway-step > h3 { margin: 0; font-size: 15px; }
+.gateway-power { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; align-items: center; }
+.gateway-power > .gateway-muted { grid-column: 1 / -1; }
+.gateway-power > div { display: grid; gap: 4px; }
+.gateway-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.gateway-tool { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; }
+.gateway-tool:has(input:checked) { border-color: var(--accent-color); }
+.gateway-tool:focus-within { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+.gateway-tool > input { margin-top: 3px; flex-shrink: 0; }
+.gateway-tool > span { display: grid; gap: 5px; min-width: 0; flex: 1; }
+.gateway-tool strong { font-size: 13px; }
+.gateway-tool small { color: var(--text-secondary); line-height: 1.5; }
+.gateway-tool code { margin-left: 23px; font-size: 12px; }
+.gateway-model-editor { display: grid; gap: 10px; }
+.gateway-model-editor > summary { overflow-wrap: anywhere; }
+.gateway-model-editor > summary .gateway-muted { display: block; margin-top: 4px; font-weight: normal; }
+.gateway-model-editor .gateway-model-grid { margin-top: 12px; }
+.gateway-extra-limits { display: grid; gap: 10px; }
+.gateway-extra-limits > summary { color: var(--text-secondary); font-size: 12px; }
+.gateway-extra-limits > .gateway-usage-row { margin-top: 10px; }
+@media (max-width: 900px) { .gateway-tools { grid-template-columns: 1fr; } }
+@media (max-width: 480px) {
+  .gateway-power { grid-template-columns: 1fr; }
+  .gateway-power > .gateway-muted { grid-column: auto; }
+}

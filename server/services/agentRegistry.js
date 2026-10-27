@@ -204,7 +204,7 @@ class AgentRegistry {
     const safeExtraArgs = Array.isArray(extraArgs) ? extraArgs.filter((a) => typeof a === 'string') : [];
     const commandArgs = [...agent.defaultArgs, ...safeExtraArgs];
 
-    const gateway = ['claude', 'opencode'].includes(agent.id) ? require('./gatewayService').launchOptions(agent.id) : null;
+    const gateway = ['claude', 'opencode', 'codex'].includes(agent.id) ? require('./gatewayService').launchOptions(agent.id) : null;
 
     // Create session
     const sessionName = `${agent.name} — ${project.name}`;

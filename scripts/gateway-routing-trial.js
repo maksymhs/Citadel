@@ -11,6 +11,8 @@ async function main() {
   const binary = process.env.GATEWAY_TRIAL_BINARY;
   if (!binary || !path.isAbsolute(binary)) throw new Error('Set GATEWAY_TRIAL_BINARY to CLIProxyAPI v8.0.43 (absolute path).');
   const atomic = process.env.GATEWAY_TRIAL_ATOMIC === '1';
+  const codexBinary = process.env.GATEWAY_TRIAL_CODEX_BINARY;
+  if (codexBinary && !path.isAbsolute(codexBinary)) throw new Error('Codex trial binary must be an absolute path.');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-routing-trial-'));
   const seen = [];
   let primaryQuota = false, secondaryQuota = false, releaseHeld = null, child;
@@ -90,6 +92,27 @@ async function main() {
       assert.equal(response.status, 200, JSON.stringify(data));
       return data.choices?.[0]?.message?.content;
     }
+    async function responsesRequest(input = [{ role: 'user', content: 'Codex protocol fixture' }]) {
+      const response = await fetch(`${base}/v1/responses`, { method: 'POST', headers: { authorization: 'Bearer fixture-client-key', 'content-type': 'application/json' }, body: JSON.stringify({ model: stableAlias, input, stream: true }), signal: AbortSignal.timeout(10000) });
+      const body = await response.text();
+      assert.equal(response.status, 200, body);
+      assert.match(body, /response.completed/);
+      return body;
+    }
+    async function codexRequest(expected) {
+      if (!codexBinary) return;
+      const home = path.join(root, 'codex-home'); fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+      const { codexLaunch } = require('./gateway-launch');
+      const launch = codexLaunch({ ...process.env, CODEX_HOME: home }, { baseUrl: base, token: 'fixture-client-key', contextTokens: 64000 }, ['exec', '--skip-git-repo-check', '--json', 'Reply with the fixture model.']);
+      const cli = spawn(codexBinary, launch.args, { cwd: root, env: launch.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = ''; cli.stdout.on('data', chunk => { output += chunk; }); cli.stderr.resume();
+      const timer = setTimeout(() => cli.kill('SIGKILL'), 30000);
+      try {
+        const [code] = await once(cli, 'exit');
+        assert.equal(code, 0, 'Codex fixture conversation must complete');
+        assert.ok(output.includes(expected), 'Codex must receive the routed fixture response');
+      } finally { clearTimeout(timer); }
+    }
     configure('claude');
     child = spawn(binary, ['--config', configFile, '--local-model'], { cwd: root, env: { PATH: process.env.PATH, HOME: root }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.on('error', () => {});
@@ -97,6 +120,8 @@ async function main() {
     const originalPid = child.pid;
     await until(async () => { try { return (await request()).text === 'MODEL:claude-fixture'; } catch { return false; } });
     assert.equal(await chatRequest(), 'MODEL:claude-fixture', 'OpenCode-compatible requests reach Claude');
+    assert.match(await responsesRequest(), /MODEL:claude-fixture/);
+    await codexRequest('MODEL:claude-fixture');
     await pause(500);
     const held = request('HOLD_FIXTURE');
     held.catch(() => {});
@@ -104,6 +129,10 @@ async function main() {
     configure('chatgpt');
     await until(async () => (await request()).text === 'MODEL:gpt-fixture');
     assert.equal(await chatRequest(), 'MODEL:gpt-fixture', 'OpenCode-compatible requests reach ChatGPT');
+    assert.match(await responsesRequest(), /MODEL:gpt-fixture/);
+    await codexRequest('MODEL:gpt-fixture');
+    await responsesRequest([{ role: 'user', content: 'Codex tool fixture' }, { type: 'function_call', call_id: 'codex-tool', name: 'shell_command', arguments: '{}' }, { type: 'function_call_output', call_id: 'codex-tool', output: 'fixture codex result' }]);
+    assert.ok(seen.some(r => !r.primary && r.messages?.some(m => m.role === 'tool' && m.tool_call_id === 'codex-tool')), 'Codex tool results must reach the upstream');
     releaseHeld(); releaseHeld = null;
     assert.equal((await held).text, 'MODEL:claude-fixture', 'an in-flight request must retain its original route');
     const messages = [
@@ -125,7 +154,7 @@ async function main() {
     const exhausted = await request('Both exhausted.', 'sticky-auto');
     assert.ok(exhausted.status >= 400, 'all-exhausted must fail explicitly');
     assert.equal(child.pid, originalPid); assert.equal(child.exitCode, null);
-    console.log(JSON.stringify({ passed: true, gatewayVersion: '8.0.43', stableClientAlias: stableAlias, openaiCompatibleClients: true, hotSwap: true, inFlightRoutePreserved: true, toolResultPreserved: true, priorityFallback429: true, exhaustedPrimarySkipped: true, bothExhaustedFails: true, gatewayRestarted: false, atomicConfigWrites: atomic, liveSubscriptions: false }));
+    console.log(JSON.stringify({ passed: true, gatewayVersion: '8.0.43', stableClientAlias: stableAlias, openaiCompatibleClients: true, responsesClients: true, codexClient: Boolean(codexBinary), hotSwap: true, inFlightRoutePreserved: true, toolResultPreserved: true, priorityFallback429: true, exhaustedPrimarySkipped: true, bothExhaustedFails: true, gatewayRestarted: false, atomicConfigWrites: atomic, liveSubscriptions: false }));
   } finally {
     if (releaseHeld) releaseHeld();
     if (child && child.exitCode === null && child.signalCode === null) {

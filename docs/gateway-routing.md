@@ -93,3 +93,16 @@ The routing trial also checks `/v1/chat/completions`, the OpenCode adapter path,
 against Claude and OpenAI-compatible fixture upstreams. The fixtures emit SSE when
 the gateway requests streaming. This validates protocol conversion with CLIProxyAPI
 8.0.43, not a live subscription or a complete OpenCode conversation.
+
+For the Codex Responses path, the trial checks streaming and function-call result
+conversion against both fixture upstreams. To exercise the real Codex client too:
+
+```bash
+GATEWAY_TRIAL_BINARY=/absolute/path/to/cli-proxy-api \
+GATEWAY_TRIAL_CODEX_BINARY=/absolute/path/to/codex \
+node scripts/gateway-routing-trial.js
+```
+
+The optional Codex run uses a temporary CODEX_HOME, fixture credentials and a
+custom provider, and does not use native login caches. Validation used Codex
+0.163.0; this does not verify live account entitlement or cache behavior.

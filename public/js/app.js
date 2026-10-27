@@ -3119,7 +3119,7 @@
   function connectSourceNote(...args) { return window.CitadelDeployments.connectSourceNote(...args); }
 
   const SETTINGS_SECTIONS = {
-    gateway: { title: 'Claude Code Gateway', desc: 'Connect Claude and ChatGPT, choose models, and switch the gateway route for your Claude Code sessions.' },
+    gateway: { title: 'AI Gateway', desc: 'Connect Claude and ChatGPT, choose models, and switch the shared gateway route for Claude Code, OpenCode and Codex CLI.' },
     updates: { title: 'Updates', desc: 'Keep this machine and the machines paired with it on the latest version.' },
     machines: { title: 'Machines', desc: 'Pair other Citadels to reach them from this panel. Live health and alerts are on the Dashboard.' },
     network: { title: 'Network & access', desc: 'The address Citadel advertises to other devices. This only changes the advertised address; it never opens ports or exposes anything by itself.' },

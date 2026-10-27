@@ -101,15 +101,18 @@ Beside the database, `DATA_DIR` holds `secret.key` (AES-256-GCM key, mode 0600, 
 
 ## Optional developer tools
 
-Claude Code Gateway settings supervise one optional local CLIProxyAPI process. Credentials
+AI Gateway settings supervise one optional local CLIProxyAPI process. Credentials
 persist encrypted in the existing app_config store; a private runtime directory
-supplies the external process and scoped Claude/project-shell launcher. Stable
+supplies the external process and scoped Claude/OpenCode/Codex project launchers.
+OpenCode uses inline custom-provider configuration. Codex uses per-process
+Responses provider overrides; a private PATH shim in project shells resolves the
+native executable without rewriting user config or login caches. Stable
 role aliases allow the proxy to hot-reload Claude/ChatGPT/Auto mappings while
 keeping client names fixed. A private loopback management key drives Claude
 OAuth without a separate callback listener; user callbacks pass through the
 admin-authenticated panel. System shells and headless jobs keep their existing
 setup. Internal API paths and persisted keys retain the `gateway` name for
-compatibility. See [Claude Code Gateway](ai-gateway.md).
+compatibility. See [AI Gateway](ai-gateway.md).
 
 Browser VS Code uses an optional pinned code-server distribution, started on
 demand. An administrator-only HTTP/WebSocket bridge forwards to its protected
