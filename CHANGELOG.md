@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.55.0](https://github.com/maksymhs/Citadel/releases/tag/v0.55.0) · 2026-10-27
+
+### Added
+
+- **gateway**: Simplify AI Gateway setup and add optional Codex routing
+
 ## [0.54.0](https://github.com/maksymhs/Citadel/releases/tag/v0.54.0) · 2026-10-27
 
 ### Added
