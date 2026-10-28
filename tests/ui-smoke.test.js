@@ -449,6 +449,14 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(query('#terminal').isConnected, true);
       assert.equal(query('#terminal').hasAttribute('inert'), true);
       assert.equal(calls.filter(call => call.method === 'POST').length, 0);
+      assert.match(query('.chat-welcome h2').textContent, /help you build/);
+      assert.equal(query('.chat-suggestions').children.length, 4);
+      assert.ok(query('.chat-box textarea'));
+      const postsBeforeSuggestion = calls.filter(call => call.method === 'POST').length;
+      query('.chat-suggestion').click();
+      assert.match(query('textarea').value, /project is structured/);
+      assert.equal(win.document.activeElement, query('textarea'));
+      assert.equal(calls.filter(call => call.method === 'POST').length, postsBeforeSuggestion);
       click('New chat'); await sleep(10);
       assert.equal(sources[0].closed, true);
       assert.equal(query('.chat-sessions').value, 'ses_2');

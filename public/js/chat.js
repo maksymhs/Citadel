@@ -13,10 +13,33 @@
     if (className) element.className = className;
     return element;
   }
-  function button(text, run) {
-    const element = node('button', text, 'btn btn-secondary btn-sm');
+  function button(text, run, className) {
+    const element = node('button', text, className || 'btn btn-secondary btn-sm');
     element.type = 'button'; element.onclick = run;
     return element;
+  }
+  function fit(view) {
+    const element = view.input;
+    element.style.height = 'auto';
+    if (element.scrollHeight) element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
+  }
+  const SUGGESTIONS = [
+    ['Explain this project', 'Explain how this project is structured and where I should start reading.'],
+    ['Find bugs', 'Review the most recent changes and point out bugs or risky code.'],
+    ['Write tests', 'Suggest and write missing tests for the core modules.'],
+    ['Plan a feature', 'Help me plan a new feature: ask what you need and outline the steps.']
+  ];
+  function renderWelcome(view, hasSession) {
+    const welcome = node('div', undefined, 'chat-welcome');
+    welcome.append(node('span', 'C', 'chat-mark'), node('h2', 'What can I help you build?'), node('p', hasSession ? `Working in ${view.project.name}` : 'Start a new chat to begin.', 'chat-welcome-sub'));
+    welcome.firstChild.setAttribute('aria-hidden', 'true');
+    const grid = node('div', undefined, 'chat-suggestions');
+    for (const [title, text] of SUGGESTIONS) {
+      const suggestion = button(title, () => { view.input.value = text; fit(view); controls(view); view.input.focus(); }, 'chat-suggestion');
+      grid.append(suggestion);
+    }
+    welcome.append(grid);
+    view.log.replaceChildren(welcome);
   }
   function stopSelection(view) {
     const selection = view.selection;
@@ -64,31 +87,38 @@
     view.observer = new MutationObserver(() => { if (active === view && !panel.isConnected) close(); });
     view.observer.observe(content, { childList: true });
     const header = node('header', undefined, 'chat-header');
-    const back = button('Return to Terminal', close);
-    view.sessions = node('select', undefined, 'form-input chat-sessions');
+    const back = button('Return to Terminal', close, 'chat-back');
+    view.sessions = node('select', undefined, 'chat-sessions');
     view.sessions.setAttribute('aria-label', 'Chat session');
     view.sessions.onchange = () => select(view, view.sessions.value);
-    view.newButton = button('New chat', () => create(view));
-    header.append(back, node('strong', `${project.name} · Chat`), view.sessions, view.newButton);
-    const notices = node('div', undefined, 'chat-notices');
+    view.newButton = button('New chat', () => create(view), 'chat-new');
+    const title = node('div', undefined, 'chat-title');
+    title.append(node('strong', project.name), node('span', 'Chat'));
+    const tools = node('div', undefined, 'chat-header-tools');
+    tools.append(view.sessions, view.newButton);
+    header.append(back, title, tools);
+    view.notices = node('div', undefined, 'chat-notices');
     view.notice = node('p', 'Checking Chat…'); view.notice.setAttribute('role', 'status');
-    notices.append(view.notice, button('Settings', () => ctx.openSettingsAt('gateway')), button('Reconnect', () => load(view)));
+    view.notices.append(view.notice, button('Settings', () => ctx.openSettingsAt('gateway'), 'chat-link'), button('Reconnect', () => load(view), 'chat-link'));
     view.log = node('div', undefined, 'chat-log'); view.log.setAttribute('role', 'log'); view.log.setAttribute('aria-label', 'Messages');
     view.prompts = node('div', undefined, 'chat-prompts');
     const composer = node('form', undefined, 'chat-composer');
-    view.input = node('textarea', undefined, 'form-input'); view.input.rows = 3; view.input.maxLength = 32000;
-    view.input.placeholder = 'Message · Enter for a new line, Ctrl+Enter to send'; view.input.setAttribute('aria-label', 'Message');
-    view.input.oninput = () => controls(view);
+    const box = node('div', undefined, 'chat-box');
+    view.input = node('textarea', undefined, 'chat-input'); view.input.rows = 1; view.input.maxLength = 32000;
+    view.input.placeholder = 'Message Chat'; view.input.setAttribute('aria-label', 'Message');
+    view.input.oninput = () => { fit(view); controls(view); };
     view.input.onkeydown = event => {
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) { event.preventDefault(); composer.requestSubmit(); }
     };
-    view.role = node('select', undefined, 'form-input'); view.role.setAttribute('aria-label', 'Agent mode');
+    view.role = node('select', undefined, 'chat-role'); view.role.setAttribute('aria-label', 'Agent mode');
     for (const role of ['build', 'plan']) { const option = node('option', role === 'build' ? 'Build' : 'Plan'); option.value = role; view.role.append(option); }
-    view.send = button('Send', () => {}); view.send.type = 'submit';
-    view.stop = button('Stop', () => action(view, view.selection, 'cancel', {}));
-    const actions = node('div', undefined, 'chat-composer-actions'); actions.append(view.role, view.send, view.stop);
-    composer.append(view.input, actions); composer.onsubmit = event => { event.preventDefault(); send(view); };
-    panel.append(header, notices, view.log, view.prompts, composer);
+    view.send = button('Send', () => {}, 'chat-send'); view.send.type = 'submit';
+    view.stop = button('Stop', () => action(view, view.selection, 'cancel', {}), 'chat-stop');
+    const actions = node('div', undefined, 'chat-composer-actions'); actions.append(view.role, node('span', 'Ctrl+Enter to send', 'chat-hint'), view.stop, view.send);
+    box.append(view.input, actions);
+    composer.append(box); composer.onsubmit = event => { event.preventDefault(); send(view); };
+    panel.append(header, view.notices, view.log, view.prompts, composer);
+    renderWelcome(view, false);
     view.onOffline = () => {
       if (!present(view)) return;
       view.offline = true;
@@ -125,6 +155,9 @@
     view.role.disabled = Boolean(locked || selection?.status === 'busy');
     view.sessions.disabled = view.loading;
     view.newButton.disabled = !view.ready || view.loading;
+    view.panel.classList.toggle('chat-busy', Boolean(selection?.fresh && selection.status === 'busy'));
+    view.notices.classList.toggle('chat-ok', Boolean(view.ready && !view.offline && selection?.fresh && selection.status !== 'error'));
+    fit(view);
   }
   async function load(view) {
     if (!present(view) || view.loading) return;
@@ -142,7 +175,7 @@
       if (previous && [...view.sessions.options].some(option => option.value === previous)) view.sessions.value = previous;
       view.notice.textContent = 'Chat uses AI Gateway only. Choose a session or start a new chat.';
       if (view.sessions.value) select(view, view.sessions.value);
-      else { view.log.replaceChildren(); view.prompts.replaceChildren(); }
+      else { renderWelcome(view, false); view.prompts.replaceChildren(); }
     } catch (err) { if (present(view)) view.notice.textContent = err.message; }
     finally { if (present(view)) { view.loading = false; controls(view); } }
   }
@@ -162,7 +195,8 @@
   }
   function select(view, id) {
     stopSelection(view); view.log.replaceChildren(); view.prompts.replaceChildren();
-    if (!id || !present(view)) { controls(view); return; }
+    if (!id || !present(view)) { renderWelcome(view, false); controls(view); return; }
+    renderWelcome(view, true);
     const selection = { id, loaded: false, fresh: false, revision: 0, pending: false, dirty: false, fetching: false, timer: null, status: 'idle', prompts: '' };
     view.selection = selection; controls(view);
     try {
@@ -198,14 +232,31 @@
       selection.loaded = true; selection.fresh = snapshot.status !== 'error'; selection.status = snapshot.status;
       const nearBottom = view.log.scrollHeight - view.log.scrollTop - view.log.clientHeight < 100;
       view.log.replaceChildren();
-      for (const message of snapshot.messages || []) {
-        const article = node('article', undefined, `chat-message chat-${message.role === 'user' ? 'user' : 'assistant'}`);
-        article.append(node('strong', message.role === 'user' ? 'You' : 'Assistant'));
+      const messages = (snapshot.messages || []).filter(message => (message.parts || []).some(part => part.type === 'text' || part.type === 'tool'));
+      if (!messages.length) renderWelcome(view, true);
+      const thread = node('div', undefined, 'chat-thread');
+      for (const message of messages) {
+        const user = message.role === 'user';
+        const article = node('article', undefined, `chat-message chat-${user ? 'user' : 'assistant'}`);
+        const avatar = node('span', user ? 'You' : 'C', 'chat-avatar'); avatar.setAttribute('aria-hidden', 'true');
+        const body = node('div', undefined, 'chat-body');
+        body.append(node('strong', user ? 'You' : 'Assistant', 'chat-author'));
+        let tools;
         for (const part of message.parts || []) {
-          if (part.type === 'text') safeText(article, part.text);
-          else if (part.type === 'tool') article.append(node('p', `Tool: ${part.text || 'tool'} · ${part.state?.status || 'pending'}`, 'mon-muted'));
+          if (part.type === 'text') { tools = null; safeText(body, part.text); }
+          else if (part.type === 'tool') {
+            if (!tools) { tools = node('details', undefined, 'chat-tools'); tools.append(node('summary', 'Tool activity')); body.append(tools); }
+            tools.append(node('div', `${part.text || 'tool'} · ${part.state?.status || 'pending'}`, 'chat-tool'));
+          }
         }
-        view.log.append(article);
+        article.append(avatar, body); thread.append(article);
+      }
+      if (messages.length) {
+        if (snapshot.status === 'busy' && !snapshot.permissions?.length && !snapshot.questions?.length) {
+          const typing = node('div', undefined, 'chat-typing'); typing.setAttribute('aria-hidden', 'true');
+          typing.append(node('i'), node('i'), node('i')); thread.append(typing);
+        }
+        view.log.append(thread);
       }
       if (nearBottom) view.log.scrollTop = view.log.scrollHeight;
       const option = [...view.sessions.options].find(item => item.value === selection.id);

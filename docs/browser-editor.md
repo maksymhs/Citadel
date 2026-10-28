@@ -23,6 +23,11 @@ status, SSE, permission and question endpoints. Other versions or missing API
 operations fail explicitly. This API check does not depend on an OpenCode frontend
 bundle and is not a guarantee that every 1.19.x build works end to end.
 
+Chat uses Citadel's dark/light theme colors, a centered conversation with avatars,
+collapsed tool activity and a rounded, auto-growing composer. The welcome screen
+suggestions fill a draft only; they never submit a prompt automatically. The composer
+stays visible on mobile while messages scroll independently.
+
 Use **New chat** or select a previous session. **Build** uses the execution alias;
 **Plan** uses the planning alias and denies edit, bash, task and external-directory
 permissions. Other permissions default to **ask**. Chat displays **Allow once** or
