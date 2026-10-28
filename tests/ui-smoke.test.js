@@ -332,7 +332,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     await sleep(800);
     assert.ok(w.document.querySelector('.proj-name').textContent.includes('ui-discovered'));
     assert.equal(w.document.querySelector('[data-discover-index]'), null, 'imported folder is not suggested twice');
-    await w.CitadelProjectTools.showEditor({ id: 'fixture-project', name: 'Project', path: '/srv/a # b' });
+    await w.CitadelBrowserEditor.open({ id: 'fixture-project', name: 'Project', path: '/srv/a # b' });
     assert.ok(w.document.getElementById('editor-back'));
     assert.ok(w.document.getElementById('editor-install'));
     assert.equal(w.document.getElementById('editor-ssh-host'), null);
@@ -355,6 +355,10 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     try {
       projectButton.click();
       await sleep(800);
+      assert.ok(w.document.querySelector('.workspace-chooser'));
+      assert.equal(w.document.getElementById('terminal-viewport'), null);
+      w.document.querySelector('[data-workspace-mode="terminal"]').click();
+      await sleep(500);
       const button = w.document.getElementById('ws-editor-btn');
       assert.equal(button.textContent, 'VS Code');
       assert.equal(w.document.getElementById('ws-chat-btn').textContent, 'Chat');
@@ -364,9 +368,16 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.ok(w.document.getElementById('editor-install'));
       assert.ok(w.document.querySelector('.browser-editor').getAttribute('aria-label').includes('ui-discovered'));
       assert.ok(w.document.querySelector(`[data-workspace-context="${projectId}"]`));
+      assert.ok(w.document.querySelector('.workspace-surface > .browser-editor-embedded'));
+      assert.equal(w.getComputedStyle(w.document.querySelector('.sidebar')).visibility, 'visible');
+      assert.equal(w.getComputedStyle(w.document.querySelector('.top-bar')).visibility, 'visible');
+      assert.equal(w.document.getElementById('editor-stop'), null);
       w.document.getElementById('editor-back').click();
       assert.equal(w.document.getElementById('terminal-viewport'), viewport);
       assert.equal(w.document.querySelector('.browser-editor'), null);
+      assert.ok(w.document.querySelector('.workspace-chooser'));
+      w.document.querySelector('[data-workspace-mode="terminal"]').click();
+      assert.equal(w.document.getElementById('terminal-viewport'), viewport);
     } finally {
       w.fetch = originalFetch;
       w.document.querySelector('.nav-item[data-view="projects"]').click();
@@ -454,7 +465,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(creates, before);
       w.document.getElementById('ws-chat-btn').click(); await sleep(0);
       w.document.querySelector('.chat-back').click();
-      assert.equal(w.document.getElementById('ws-terminal-mode').getAttribute('aria-pressed'), 'true');
+      assert.ok(w.document.querySelector('.workspace-chooser'));
+      assert.equal(w.document.getElementById('terminal-viewport'), mountedViewport);
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
       w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
       assert.equal(w.document.querySelector('.chat-panel'), null);
@@ -464,6 +476,193 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     }
   });
 
+  test('workspace chooser, sidebar modes and remembered VS Code share the embedded workspace lifecycle', async () => {
+    const originalFetch = w.fetch;
+    const calls = [];
+    let finishEditor;
+    w.fetch = (url, opts = {}) => {
+      calls.push({ url: String(url), method: opts.method || 'GET' });
+      if (String(url) === '/api/editor') return Promise.resolve({ ok: true, json: async () => ({ editor: { installed: true } }) });
+      if (String(url).endsWith('/editor') && opts.method === 'POST') return new Promise(resolve => { finishEditor = () => resolve({ ok: true, json: async () => ({ url: `/editor/${projectId}/?folder=test` }) }); });
+      if (String(url) === '/api/chat/status') return Promise.resolve({ ok: true, json: async () => ({ ready: false, error: 'Fixture gateway unavailable' }) });
+      if (String(url) === '/api/terminals' && opts.method === 'POST') return Promise.reject(new Error('Fixture terminal disabled'));
+      return originalFetch(url, opts);
+    };
+    const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
+    const tools = w.CitadelProjectTools;
+    tools.workspacePreference(projectId, { mode: 'invalid', terminalId: 'saved-terminal', chatSessionId: 'saved-chat' });
+    const enter = async () => { w.document.querySelector('.open-workspace-btn').click(); await sleep(350); };
+    const leave = async () => { w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300); };
+    const sidebar = label => {
+      w.document.querySelector(`[data-ws-menu-context="${projectId}"]`).click();
+      const button = [...w.document.querySelectorAll('.ctx-item')].find(item => item.textContent === label);
+      assert.ok(button); button.click();
+    };
+    try {
+      await enter();
+      assert.equal(w.document.querySelectorAll('.workspace-mode-card').length, 3);
+      assert.equal(w.document.activeElement.dataset.workspaceMode, 'chat');
+      assert.equal(calls.some(call => call.method === 'POST' || call.url === '/api/chat/status' || call.url === '/api/editor' || call.url.includes('/api/terminals?projectId=')), false);
+      sidebar('VS Code'); await sleep(30);
+      assert.equal(tools.workspacePreference(projectId).mode, 'vscode');
+      assert.ok(w.document.querySelector('.workspace-surface > .browser-editor-embedded'));
+      w.document.getElementById('ws-close-mode').click();
+      finishEditor(); await sleep(20);
+      assert.equal(w.document.querySelector('.browser-editor-frame'), null);
+      assert.ok(w.document.querySelector('.workspace-chooser'));
+      assert.equal(tools.workspacePreference(projectId).mode, null);
+      assert.equal(tools.workspacePreference(projectId).terminalId, 'saved-terminal');
+      assert.equal(tools.workspacePreference(projectId).chatSessionId, 'saved-chat');
+      w.document.querySelector('[data-workspace-mode="vscode"]').click(); await sleep(20);
+      finishEditor(); await sleep(20);
+      assert.ok(w.document.querySelector('.workspace-surface iframe'));
+      assert.equal(w.getComputedStyle(w.document.querySelector('.browser-editor')).position, 'absolute');
+      await leave(); assert.equal(w.document.querySelector('.browser-editor'), null);
+      await enter(); await sleep(20); finishEditor(); await sleep(20);
+      assert.equal(w.document.getElementById('ws-vscode-mode').getAttribute('aria-pressed'), 'true');
+      assert.ok(w.document.querySelector('.workspace-surface iframe'));
+      sidebar('Chat'); await sleep(30);
+      assert.equal(w.document.querySelector('.browser-editor'), null);
+      assert.ok(w.document.querySelector('.chat-panel'));
+      await leave(); await enter();
+      assert.ok(w.document.querySelector('.chat-panel'));
+      sidebar('Open terminal'); await sleep(100);
+      const viewport = w.document.getElementById('terminal-viewport');
+      assert.ok(viewport);
+      const creates = calls.filter(call => call.url === '/api/terminals' && call.method === 'POST').length;
+      for (let i = 0; i < 3; i++) {
+        w.document.getElementById('ws-close-mode').click();
+        w.document.querySelector('[data-workspace-mode="terminal"]').click();
+        assert.equal(w.document.getElementById('terminal-viewport'), viewport);
+      }
+      assert.equal(calls.filter(call => call.url === '/api/terminals' && call.method === 'POST').length, creates);
+      await leave(); await enter();
+      assert.equal(w.document.getElementById('ws-terminal-mode').getAttribute('aria-pressed'), 'true');
+      assert.equal(calls.some(call => call.method === 'DELETE' || call.url.endsWith('/cancel')), false);
+      w.document.getElementById('ws-close-mode').click();
+      await leave(); await enter();
+      assert.ok(w.document.querySelector('.workspace-chooser'));
+    } finally {
+      w.fetch = originalFetch; await leave();
+    }
+    assert.deepEqual(errors, []);
+  });
+
+  test('pending terminal creation is serialized across workspace navigation and mode switches', async () => {
+    const originalFetch = w.fetch;
+    const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
+    let finishCreate, creates = 0, live = false;
+    w.CitadelProjectTools.workspacePreference(projectId, { mode: 'terminal' });
+    w.fetch = (url, opts = {}) => {
+      if (String(url).includes('/api/terminals?projectId=')) return Promise.resolve({ ok: true, json: async () => ({ sessions: live ? [{ id: 'serialized-terminal', name: 'Fixture', isAlive: true }] : [] }) });
+      if (String(url) === '/api/terminals' && opts.method === 'POST') {
+        creates++;
+        return new Promise(resolve => { finishCreate = () => { live = true; resolve({ ok: true, json: async () => ({ session: { sessionId: 'serialized-terminal', name: 'Fixture' } }) }); }; });
+      }
+      return originalFetch(url, opts);
+    };
+    try {
+      w.document.querySelector('.open-workspace-btn').click(); await sleep(350);
+      assert.equal(creates, 1);
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+      w.document.querySelector('.open-workspace-btn').click(); await sleep(350);
+      assert.equal(creates, 1, 're-entry must wait for the previous POST');
+      w.document.getElementById('ws-close-mode').click();
+      w.document.querySelector('[data-workspace-mode="terminal"]').click(); await sleep(30);
+      assert.equal(creates, 1);
+      finishCreate(); await sleep(350);
+      assert.equal(creates, 1, 'the new view restores the newly created session instead of spawning again');
+      assert.equal(w.CitadelProjectTools.workspacePreference(projectId).terminalId, 'serialized-terminal');
+      assert.ok(w.document.getElementById('terminal-viewport'));
+    } finally {
+      w.fetch = originalFetch;
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+    }
+  });
+
+  test('editor stale stop and install handlers cannot affect replacement views', async () => {
+    const isolated = new JSDOM('<main></main>', { runScripts: 'dangerously', url: base });
+    const win = isolated.window;
+    try {
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/browser-editor.js'), 'utf8'));
+      const state = { user: { id: 'alice' }, activeHostId: 'local' };
+      const notices = [], calls = [];
+      let finishStop, failStop, installed = true;
+      win.CitadelBrowserEditor.init({ state, escapeHtml: String, showToast: text => notices.push(text), api: async (url, opts = {}) => {
+        calls.push([url, opts.method]);
+        if (opts.method === 'DELETE') return new Promise((resolve, reject) => { finishStop = resolve; failStop = reject; });
+        if (url === '/api/editor') return { editor: { installed, supported: true } };
+        return { url: '/editor/project/?folder=test' };
+      } });
+      const project = { id: 'project', name: 'Project' };
+      for (const failure of [false, true]) {
+        await win.CitadelBrowserEditor.open(project);
+        const stop = win.document.getElementById('editor-stop');
+        const back = win.document.getElementById('editor-back');
+        const stopping = stop.onclick();
+        await win.CitadelBrowserEditor.open(project);
+        const replacement = win.document.querySelector('.browser-editor');
+        if (failure) failStop(new Error('Late stop failure'));
+        else finishStop({});
+        await stopping;
+        assert.equal(win.document.querySelector('.browser-editor'), replacement);
+        const before = calls.length;
+        await stop.onclick(); back.onclick();
+        assert.equal(win.document.querySelector('.browser-editor'), replacement);
+        assert.equal(calls.length, before, 'detached stop handler cannot stop a new editor');
+        assert.deepEqual(notices, []);
+      }
+      installed = false;
+      await win.CitadelBrowserEditor.open(project);
+      const install = win.document.getElementById('editor-install');
+      win.CitadelBrowserEditor.close();
+      const before = calls.length;
+      await install.onclick({ currentTarget: install });
+      assert.equal(calls.length, before, 'detached install handler cannot start installation');
+      assert.deepEqual(notices, []);
+    } finally { win.CitadelBrowserEditor.close(); isolated.window.close(); }
+  });
+
+  test('embedded editor ignores stale owner, host, project and closed-view startup responses', async () => {
+    const isolated = new JSDOM('<main id="surface"><div id="terminal">Mounted terminal</div></main>', { runScripts: 'dangerously', url: base });
+    const win = isolated.window;
+    try {
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/browser-editor.js'), 'utf8'));
+      const state = { user: { id: 'alice' }, activeHostId: 'local', hostIdentity: { instanceId: 'one' } };
+      const calls = [], notices = [];
+      let finish;
+      win.CitadelBrowserEditor.init({ state, escapeHtml: text => String(text), showToast: text => notices.push(text), api: async (url, options) => {
+        calls.push({ url, options });
+        if (url === '/api/editor') return { editor: { installed: true } };
+        return new Promise(resolve => { finish = resolve; });
+      } });
+      const content = win.document.getElementById('surface');
+      for (const change of ['close', 'host', 'owner', 'instance', 'project']) {
+        state.activeHostId = 'local'; state.user = { id: 'alice' }; state.hostIdentity = { instanceId: 'one' };
+        const opening = win.CitadelBrowserEditor.open({ id: 'old', name: 'Old' }, { content });
+        await sleep(0);
+        const resolveOld = finish;
+        if (change === 'close') win.CitadelBrowserEditor.close();
+        if (change === 'host') state.activeHostId = 'peer';
+        if (change === 'owner') state.user = { id: 'bob' };
+        if (change === 'instance') state.hostIdentity = { instanceId: 'two' };
+        let next;
+        if (change === 'project') { next = win.CitadelBrowserEditor.open({ id: 'next', name: 'Next' }, { content }); await sleep(0); }
+        resolveOld({ url: '/editor/old/?folder=test' }); await opening;
+        assert.equal(content.querySelector('iframe'), null);
+        if (next) { finish({ url: '/editor/next/?folder=test' }); await next; assert.match(content.querySelector('iframe').src, /\/editor\/next\//); }
+        win.CitadelBrowserEditor.close();
+        assert.equal(content.querySelector('#terminal').hasAttribute('inert'), false);
+      }
+      state.activeHostId = 'peer';
+      const before = calls.length;
+      await win.CitadelBrowserEditor.open({ id: 'remote', name: 'Remote' }, { content });
+      assert.equal(calls.length, before);
+      assert.match(notices.at(-1), /machine’s own Citadel panel/);
+      assert.equal(calls.some(call => call.options?.method === 'DELETE'), false);
+    } finally { win.CitadelBrowserEditor.close(); isolated.window.close(); }
+  });
+
   test('workspace preferences and Chat drafts isolate project, owner and host', async () => {
     const isolated = new JSDOM('<main id="main-content"></main>', { runScripts: 'dangerously', url: base });
     const win = isolated.window;
@@ -471,9 +670,13 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       for (const file of ['project-tools.js', 'chat.js']) win.eval(fs.readFileSync(path.join(ROOT, 'public/js', file), 'utf8'));
       const state = { activeHostId: 'local', user: { id: 'alice' }, hostIdentity: { instanceId: 'one' } };
       const tools = win.CitadelProjectTools;
-      tools.init({ state, api() {}, escapeHtml() {}, renderProjectsView() {}, showToast() {} });
+      const launches = [];
+      tools.init({ state, api() {}, escapeHtml() {}, renderProjectsView() {}, showToast() {}, openWorkspace: (...args) => launches.push(args) });
+      tools.showEditor({ id: 'editor' }); tools.showChat({ id: 'a' });
+      assert.deepEqual(launches, [['editor', 'vscode'], ['a', 'chat']]);
       tools.workspacePreference('a', { mode: 'chat', terminalId: 'term-a' });
       tools.workspacePreference('b', { mode: 'terminal', terminalId: 'term-b' });
+      tools.workspacePreference('editor', { mode: 'vscode' });
       assert.equal(tools.workspacePreference('a').mode, 'chat');
       assert.equal(tools.workspacePreference('b').terminalId, 'term-b');
       win.CitadelChat.init({ state, showToast() {}, openSettingsAt() {}, workspacePreference: tools.workspacePreference, api: async url => {
@@ -495,6 +698,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         const original = state[field];
         state[field] = field === 'user' ? { id: 'bob' } : field === 'activeHostId' ? 'peer' : { instanceId: 'two' };
         assert.equal(tools.workspacePreference('a').mode, undefined);
+        assert.equal(tools.workspacePreference('editor').mode, undefined);
         if (field !== 'activeHostId') { await open('a'); assert.equal(win.document.querySelector('.chat-input').value, ''); }
         state[field] = original;
       }
@@ -631,7 +835,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       click('Settings'); assert.deepEqual(settings, ['gateway']);
       click('Reconnect'); await sleep(10);
       assert.equal(query('.chat-notices').hidden, true);
-      query('.chat-menu summary').click(); click('Return to Terminal');
+      query('.chat-menu summary').click(); click('Choose workspace mode');
       assert.equal(query('.chat-panel'), null);
     } finally { win.CitadelChat.close(); isolated.window.close(); }
   });

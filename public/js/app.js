@@ -399,7 +399,7 @@
       if (it.sep) return '<div class="ctx-sep"></div>';
       if (it.header) return `<div class="ctx-header">${escapeHtml(it.header)}</div>`;
       if (it.status) return hostMenuItemHtml(it, i);
-      return `<button type="button" class="ctx-item${it.danger ? ' ctx-danger' : ''}" data-ctx-idx="${i}">${escapeHtml(it.label)}${it.detail ? `<span class="ctx-detail" title="${escapeHtml(it.detail)}">${escapeHtml(it.detail)}</span>` : ''}</button>`;
+      return `<button type="button" class="ctx-item${it.danger ? ' ctx-danger' : ''}" data-ctx-idx="${i}" ${it.disabled ? 'disabled' : ''}>${escapeHtml(it.label)}${it.detail ? `<span class="ctx-detail" title="${escapeHtml(it.detail)}">${escapeHtml(it.detail)}</span>` : ''}</button>`;
     }).join('');
     document.body.appendChild(menu);
     contextMenuEl = menu;
@@ -415,7 +415,7 @@
       if (!btn) return;
       const it = items[Number(btn.getAttribute('data-ctx-idx'))];
       closeContextMenu();
-      if (it && it.onSelect) it.onSelect();
+      if (it && !it.disabled && it.onSelect) it.onSelect();
     };
     setTimeout(() => {
       document.addEventListener('mousedown', onContextMenuOutside, true);
@@ -988,7 +988,7 @@
     const running = Boolean(session);
     return `<a class="nav-item nav-subitem${activeClass}" data-workspace-context="${context}" title="${escapeHtml(subtitle || label)}">
       <span class="nav-dot${running ? ' nav-dot-on' : ''}"></span><span class="nav-label">${escapeHtml(label)}</span>
-      ${running ? `<button class="nav-item-menu" data-ws-menu-context="${context}" title="Terminal menu" aria-label="Terminal menu">&#8942;</button>` : ''}</a>`;
+      <button class="nav-item-menu" data-ws-menu-context="${context}" title="Workspace menu" aria-label="Workspace menu">&#8942;</button></a>`;
   }
 
   // Live terminal sessions belonging to a workspace context ('system' = host).
@@ -1033,8 +1033,12 @@
         e.stopPropagation();
         const context = menu.getAttribute('data-ws-menu-context');
         openContextMenu(menu, [
-          { label: 'Open terminal', onSelect: () => openWorkspace(context) },
-          { label: 'Close terminal', danger: true, onSelect: () => closeWorkspaceTerminal(context) },
+          { label: 'Open terminal', onSelect: () => openWorkspace(context, 'terminal') },
+          ...(context === 'system' ? [] : [
+            { label: 'Chat', disabled: state.activeHostId !== 'local', onSelect: () => openWorkspace(context, 'chat') },
+            { label: 'VS Code', disabled: state.activeHostId !== 'local', onSelect: () => openWorkspace(context, 'vscode') },
+          ]),
+          { label: 'Stop terminal', danger: true, disabled: !sessionForContext(context), onSelect: () => closeWorkspaceTerminal(context) },
         ]);
         return;
       }
@@ -1162,7 +1166,10 @@
 
   function navigateTo(view) {
     window.CitadelChat.close();
+    window.CitadelBrowserEditor.close();
     workspaceGeneration++;
+    chooseWorkspaceMode = null;
+    workspaceMode = null;
     view = resolveView(view);
     state.terminalSelectionGeneration += 1;
     const from = state.currentView;
@@ -2150,7 +2157,10 @@
   function teardownSession() {
     workspaceGeneration++;
     window.CitadelChat.reset();
+    window.CitadelBrowserEditor.close();
     window.CitadelProjectTools.reset();
+    chooseWorkspaceMode = null;
+    workspaceMode = null;
     stopHostStatusPolling();
     if (state.dashboardTimer) {
       clearInterval(state.dashboardTimer);
@@ -2367,7 +2377,19 @@
   }
 
   // Open a workspace section (System or a project) from the sidebar/overview.
-  function openWorkspace(context) {
+  function openWorkspace(context, mode) {
+    if (mode && context !== 'system') {
+      if (!['terminal', 'chat', 'vscode'].includes(mode)) return;
+      if (mode !== 'terminal' && state.activeHostId !== 'local') {
+        showToast('Open this machine’s own Citadel panel to use Chat or VS Code.', 'error');
+        return;
+      }
+      if (state.currentView === 'workspace' && state.workspaceContext === context && chooseWorkspaceMode) {
+        chooseWorkspaceMode(mode);
+        return;
+      }
+      window.CitadelProjectTools.workspacePreference(context, { mode });
+    }
     state.workspaceContext = context;
     state.activeRepoId = null;
     if (!(state.workspaceNavContexts || []).includes(context)) {
@@ -2406,6 +2428,8 @@
 
   let workspaceGeneration = 0;
   let workspaceMode = null;
+  let chooseWorkspaceMode = null;
+  let workspaceTerminalTask = Promise.resolve();
 
   async function renderWorkspaceView() {
     const generation = workspaceGeneration;
@@ -2434,42 +2458,77 @@
 
     const currentProject = state.projects.find((p) => p.id === context);
     if (!currentProject) return renderWorkspaceOverview();
-    content.innerHTML = '<div class="workspace-project"><div class="workspace-modes" role="group" aria-label="Workspace mode"><button type="button" class="btn btn-secondary btn-sm" id="ws-terminal-mode" aria-pressed="false">Terminal</button><button type="button" class="btn btn-secondary btn-sm" id="ws-chat-btn" aria-pressed="false">Chat</button></div><div class="workspace-surface"></div></div>';
+    content.innerHTML = '<div class="workspace-project"><div class="workspace-modes" role="group" aria-label="Workspace mode"><button type="button" class="btn btn-secondary btn-sm" id="ws-terminal-mode" aria-pressed="false">Terminal</button><button type="button" class="btn btn-secondary btn-sm" id="ws-chat-btn" aria-pressed="false">Chat</button><button type="button" class="btn btn-secondary btn-sm" id="ws-vscode-mode" aria-pressed="false">VS Code</button><button type="button" class="btn btn-secondary btn-sm" id="ws-close-mode">Close view / Choose mode</button></div><div class="workspace-surface"></div></div>';
     const surface = content.querySelector('.workspace-surface');
     const terminalButton = document.getElementById('ws-terminal-mode');
     const chatButton = document.getElementById('ws-chat-btn');
+    const editorButton = document.getElementById('ws-vscode-mode');
+    const closeButton = document.getElementById('ws-close-mode');
+    for (const button of [chatButton, editorButton]) {
+      button.disabled = state.activeHostId !== 'local';
+      if (button.disabled) button.title = 'Open this machine’s own Citadel panel';
+    }
+    const chooser = document.createElement('section');
+    chooser.className = 'workspace-chooser';
+    chooser.setAttribute('aria-label', 'Choose workspace mode');
+    chooser.innerHTML = `<div><h2>How do you want to work?</h2><p>${escapeHtml(currentProject.name)} · Choose a mode. Running work is kept when you switch.</p><div class="workspace-mode-cards">${[['chat', 'Chat', 'Talk to an AI agent'], ['terminal', 'Terminal', 'Open a persistent shell'], ['vscode', 'VS Code', 'Edit in your browser']].map(([mode, label, description]) => `<button type="button" class="card workspace-mode-card" data-workspace-mode="${mode}" ${mode !== 'terminal' && state.activeHostId !== 'local' ? 'disabled' : ''}><strong>${label}</strong><span>${mode !== 'terminal' && state.activeHostId !== 'local' ? 'Open this machine’s own Citadel panel' : description}</span></button>`).join('')}</div></div>`;
     const title = document.getElementById('top-bar-title');
     if (title) title.textContent = `Workspace — ${currentProject.name}`;
     let terminalStarted = false, terminalReady = false, terminalAttempt = 0;
     const choose = (mode, remember = true) => {
       if (generation !== workspaceGeneration || !surface.isConnected) return;
-      if (mode === 'chat' && state.activeHostId !== 'local') {
-        showToast('Open this machine’s own Citadel panel to use Chat.', 'error');
+      if (mode && workspaceMode === mode) return;
+      if (mode && mode !== 'terminal' && state.activeHostId !== 'local') {
+        showToast('Open this machine’s own Citadel panel to use Chat or VS Code.', 'error');
         return;
       }
       workspaceMode = mode;
       const attempt = ++terminalAttempt;
       if (remember) window.CitadelProjectTools.workspacePreference(context, { mode });
       terminalButton.setAttribute('aria-pressed', String(mode === 'terminal'));
+      editorButton.setAttribute('aria-pressed', String(mode === 'vscode'));
       chatButton.setAttribute('aria-pressed', String(mode === 'chat'));
+      closeButton.hidden = !mode;
       state.terminalSelectionGeneration++;
-      if (mode === 'chat') {
+      window.CitadelChat.close();
+      window.CitadelBrowserEditor.close();
+      chooser.remove();
+      surface.classList.toggle('workspace-selecting', !mode);
+      const terminal = surface.querySelector('.workspace-container');
+      if (terminal) terminal.toggleAttribute('inert', !mode);
+      if (!mode) {
         if (!terminalReady) terminalStarted = false;
-        window.CitadelChat.open(currentProject, { content: surface, onClose: () => choose('terminal') });
+        surface.append(chooser);
+        chooser.querySelector('button:not(:disabled)').focus();
+      } else if (mode === 'chat' || mode === 'vscode') {
+        if (!terminalReady) terminalStarted = false;
+        const options = { content: surface, onClose: () => choose(null) };
+        if (mode === 'chat') window.CitadelChat.open(currentProject, options);
+        else window.CitadelBrowserEditor.open(currentProject, options);
       } else {
-        window.CitadelChat.close();
         if (!terminalStarted) {
           terminalStarted = true;
           const present = () => generation === workspaceGeneration && surface.isConnected && workspaceMode === 'terminal' && terminalAttempt === attempt;
-          renderProjectTerminals(currentProject, surface, present).then(() => {
-            if (present()) terminalReady = true;
+          workspaceTerminalTask = workspaceTerminalTask.catch(() => {}).then(async () => {
+            if (!present()) return;
+            try {
+              await renderProjectTerminals(currentProject, surface, present);
+              if (present()) terminalReady = true;
+            } catch (err) {
+              if (present()) { terminalStarted = false; showToast(err.message, 'error'); }
+            }
           });
         } else refitActiveTerminals();
       }
     };
     terminalButton.onclick = () => { if (workspaceMode !== 'terminal') choose('terminal'); };
     chatButton.onclick = () => { if (workspaceMode !== 'chat') choose('chat'); };
-    choose(state.activeHostId === 'local' && window.CitadelProjectTools.workspacePreference(context).mode === 'chat' ? 'chat' : 'terminal', false);
+    editorButton.onclick = () => { if (workspaceMode !== 'vscode') choose('vscode'); };
+    closeButton.onclick = () => choose(null);
+    chooser.querySelectorAll('[data-workspace-mode]').forEach(button => { button.onclick = () => choose(button.dataset.workspaceMode); });
+    chooseWorkspaceMode = choose;
+    const remembered = window.CitadelProjectTools.workspacePreference(context).mode;
+    choose(['terminal', 'chat', 'vscode'].includes(remembered) && (remembered === 'terminal' || state.activeHostId === 'local') ? remembered : null, false);
   }
 
   // Landing selector shown when the "Workspace" parent is opened.
@@ -2558,7 +2617,8 @@
       </div>
     `;
 
-    document.getElementById('ws-editor-btn').onclick = () => window.CitadelBrowserEditor.open(currentProject);
+    document.getElementById('ws-editor-btn').onclick = () => openWorkspace(currentProject.id, 'vscode');
+    document.getElementById('ws-editor-btn').disabled = state.activeHostId !== 'local';
     document.getElementById('ws-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
     };
@@ -2641,7 +2701,7 @@
       const activeName = (alive.find((s) => s.id === activeId) || {}).name || 'Terminal';
       await activateTerminalSession(activeId, activeName);
     } catch (err) {
-      showToast(err.message, 'error');
+      if (present()) showToast(err.message, 'error');
     }
   }
 
@@ -2659,7 +2719,7 @@
       if (generation !== workspaceGeneration || !present()) return;
       await activateTerminalSession(res.session.sessionId, res.session.name);
     } catch (err) {
-      showToast(`Failed to create terminal: ${err.message}`, 'error');
+      if (present()) showToast(`Failed to create terminal: ${err.message}`, 'error');
     }
   }
 
@@ -4064,7 +4124,7 @@
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
   window.CitadelChat.init({ api, state, openSettingsAt, showToast, workspacePreference: (...args) => window.CitadelProjectTools.workspacePreference(...args) });
   window.CitadelBrowserEditor.init({ api, escapeHtml, showToast, state });
-  window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state });
+  window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state, openWorkspace });
   window.CitadelRepos.init({ api, escapeHtml, loadProjects, openModal, renderProjectsView, showToast });
   window.CitadelFiles.init({ api, escapeHtml, formatBytes, hostApiPath, openContextMenu, openModal, showToast, state });
   window.CitadelPairing.init({ api, escapeHtml, loadHosts, openModal, refreshHostStatus, renderSidebarNav, showToast, state, switchHost });

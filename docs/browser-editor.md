@@ -2,12 +2,17 @@
 
 ## Native Chat
 
-Choose **Projects → More actions → Chat**, or the independent **Terminal / Chat**
-mode buttons in a project workspace. The mode buttons remain available in Chat;
-entering a workspace remembered in Chat does not create or attach a terminal.
-An already mounted terminal stays mounted when switching modes.
-The compact **Chat options** menu beside the composer contains **Return to Terminal**,
-which restores it without restarting it. There is no Chat toolbar above the conversation.
+On first opening a project, choose a centered **Chat**, **Terminal** or **VS Code**
+card. No terminal, Chat session or editor starts until you select a mode. The selection
+is remembered per signed-in owner, panel instance, selected host and project, including
+existing Terminal/Chat preferences. Use the compact workspace buttons, the sidebar's
+three-dot workspace menu, or **Projects → More actions** to switch modes.
+An already mounted terminal stays mounted when switching modes. Entering a workspace
+remembered in Chat or VS Code does not create or attach a terminal.
+**Close view / Choose mode**, **Chat options → Choose workspace mode**, and the editor's
+**Choose workspace mode** button clear only the mode preference and return to the cards;
+terminal and Chat session selections, drafts and running work are retained. Navigating
+away closes the view but remembers the mode. There is no Chat toolbar above the conversation.
 This is not an embedded
 OpenCode GUI: the old GUI, bundle adapter, `/opencode/*`, `/api/opencode-web` and
 root API proxies have been removed. VS Code and native terminal agents remain available.
@@ -89,10 +94,10 @@ implementation; no real model prompt or browser validation is claimed for native
 
 From **Projects → More actions → Open VS Code in browser**, Citadel opens an
 optional [code-server](https://github.com/coder/code-server) editor inside the
-same browser. You can also click **VS Code** directly in a project terminal
-toolbar. No desktop VS Code installation or SSH configuration is required.
-The **Back to Citadel** button remains above the editor and restores the panel
-exactly where you left it.
+project workspace, not a fullscreen overlay. You can also choose **VS Code** from
+the workspace cards, mode buttons, terminal toolbar or sidebar three-dot menu.
+The Citadel sidebar and global header remain visible and mounted terminals are preserved.
+No desktop VS Code installation or SSH configuration is required.
 
 On first use, click **Install browser editor and open project**. Citadel downloads
 the pinned code-server 4.143.1 release for Linux/macOS x64/arm64, verifies its
@@ -111,9 +116,12 @@ demand and opens the selected registered folder. VS Code workspace trust prompts
 still apply. User settings, extensions and editor state persist under
 `DATA_DIR/editor`; this data is not removed by stopping the editor.
 
-**Back to Citadel** hides the editor without killing ongoing work. **Stop editor**
-terminates the IDE and its process group, including its extension hosts and
-integrated terminals. Save work before stopping it. The editor also stops after
+Closing the workspace editor, navigating away, switching machines or logging out
+removes its iframe; late startup responses cannot reattach it. Closing the view never
+requests an editor stop.
+The standalone fullscreen API still supports **Back to Citadel** and a separate explicit
+**Stop editor** action. Stopping terminates the IDE process group, including extension
+hosts and integrated terminals; save work first. The editor also stops after
 15 minutes without requests or connected editor sockets and on clean Citadel
 shutdown. A later project action starts it again.
 

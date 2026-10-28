@@ -102,7 +102,7 @@
     view.menu = node('details', undefined, 'chat-menu');
     const summary = node('summary', 'Chat options');
     const tools = node('div', undefined, 'chat-menu-items');
-    const back = button('Return to Terminal', () => close({ explicit: true }), 'chat-back');
+    const back = button('Choose workspace mode', () => close({ explicit: true }), 'chat-back');
     view.sessions = node('select', undefined, 'chat-sessions');
     view.sessions.setAttribute('aria-label', 'Chat session history');
     view.sessions.onchange = () => { select(view, view.sessions.value); view.menu.open = false; view.input.focus(); };

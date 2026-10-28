@@ -3,13 +3,13 @@
  */
 (function () {
   'use strict';
-  const REQUIRED = ['api', 'escapeHtml', 'renderProjectsView', 'showToast', 'state'];
-  let api, escapeHtml, renderProjectsView, showToast, state;
+  const REQUIRED = ['api', 'escapeHtml', 'renderProjectsView', 'showToast', 'state', 'openWorkspace'];
+  let api, escapeHtml, renderProjectsView, showToast, state, openWorkspace;
 
   function init(ctx) {
     const missing = REQUIRED.filter((key) => ctx[key] === undefined);
     if (missing.length) throw new Error(`project-tools.js: missing ${missing.join(', ')}`);
-    ({ api, escapeHtml, renderProjectsView, showToast, state } = ctx);
+    ({ api, escapeHtml, renderProjectsView, showToast, state, openWorkspace } = ctx);
   }
 
   async function mountDiscovery(content) {
@@ -52,7 +52,7 @@
     }
   }
 
-  function showEditor(project) { return window.CitadelBrowserEditor.open(project); }
+  function showEditor(project) { return openWorkspace(project.id, 'vscode'); }
   function scopeKey(projectId) {
     return JSON.stringify([state.user?.id ?? state.user?.username ?? null, state.hostIdentity?.instanceId ?? location.origin, state.activeHostId, projectId]);
   }
@@ -73,7 +73,7 @@
   }
 
   function reset() { preferences.clear(); }
-  function showChat(project) { return window.CitadelChat.open(project); }
+  function showChat(project) { return openWorkspace(project.id, 'chat'); }
 
   window.CitadelProjectTools = { init, mountDiscovery, showEditor, showChat, scopeKey, workspacePreference, reset };
 })();

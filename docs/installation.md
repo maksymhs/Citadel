@@ -146,10 +146,13 @@ suggestions and never recurse or execute repository code. Use **Import folder**
 for other folders or to choose a different project name.
 
 A project's **More actions** menu offers **Open VS Code in browser** and **Chat**;
-the project terminal toolbar also offers **VS Code** and **Chat**. VS Code retains
-its optional first-use code-server install and **Back to Citadel** action. Chat is
-Citadel's native panel, not the retired embedded OpenCode GUI; **Return to Terminal**
-restores the mounted terminal without stopping agent work.
+the workspace cards, compact mode controls and sidebar three-dot menu offer
+**Chat / Terminal / VS Code**. First entry waits for a choice, then remembers it per
+owner/panel/host/project. VS Code embeds inside the workspace with the Citadel sidebar
+and header visible and retains its optional first-use code-server install. Chat is
+Citadel's native panel, not the retired embedded OpenCode GUI. **Close view / Choose mode**
+returns to the cards and clears only the mode selection, preserving mounted terminals,
+Chat session selection and running work; navigating away remembers the mode.
 
 Fresh installs still include the OpenCode CLI, without auto-starting it. For Chat,
 install/update OpenCode through Tools as needed: **1.19.x** with the required
