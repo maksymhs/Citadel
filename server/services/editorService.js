@@ -156,7 +156,7 @@ function createEditorService({ dataDir = DATA_DIR, spawnImpl = spawn, execFileIm
   return { status, install, open, target, close, socketOpened };
 }
 function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectService.getProject, registry = agentRegistry } = {}) {
-  let child = null, port = null, starting = null, lastError = null, auth = null, processGroup = null, activeProjectPath = null;
+  let child = null, port = null, starting = null, lastError = null, auth = null, processGroup = null, activeProjectPath = null, activeProjectId = null;
   function status() { return { installed: Boolean(registry.findBinary('opencode')), running: Boolean(child), error: lastError }; }
   async function open(id) {
     const found = getProject(id);
@@ -169,6 +169,7 @@ function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectServi
     if (!child) {
       starting = (async () => {
         activeProjectPath = projectPath;
+        activeProjectId = id;
         const reservation = net.createServer();
         await new Promise((resolve, reject) => { reservation.once('error', reject); reservation.listen(0, '127.0.0.1', resolve); });
         port = reservation.address().port;
@@ -180,7 +181,7 @@ function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectServi
         child = spawnImpl(binary, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], { cwd: projectPath, env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
         processGroup = child.pid;
         child.once('error', () => { child = null; processGroup = null; lastError = 'OpenCode web failed to start.'; });
-        child.once('close', () => { child = null; processGroup = null; activeProjectPath = null; auth = null; });
+        child.once('close', () => { child = null; processGroup = null; activeProjectPath = null; activeProjectId = null; auth = null; });
         for (let i = 0; i < 100; i++) {
           if (!child) break;
           try {
@@ -201,8 +202,12 @@ function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectServi
     if (!getProject(id) || !child) throw new Error('OpenCode web is stopped.');
     return { port, auth };
   }
+  function currentTarget() {
+    if (!activeProjectId || !child) throw new Error('OpenCode web is stopped.');
+    return { port, auth, projectId: activeProjectId };
+  }
   async function close() {
-    const current = child, group = processGroup; child = null; processGroup = null; auth = null; activeProjectPath = null;
+    const current = child, group = processGroup; child = null; processGroup = null; auth = null; activeProjectPath = null; activeProjectId = null;
     if (current && current.exitCode === null && !current.signalCode) {
       const signal = name => { if (group) { try { process.kill(-group, name); } catch { /* process group exited */ } } else current.kill(name); };
       signal('SIGTERM');
@@ -210,6 +215,6 @@ function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectServi
       signal('SIGKILL');
     }
   }
-  return { status, open, target, close };
+  return { status, open, target, currentTarget, close };
 }
 module.exports = { ...createEditorService(), createEditorService, createOpenCodeWebService, openCodeWeb: createOpenCodeWebService(), VERSION };

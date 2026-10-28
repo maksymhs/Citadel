@@ -7,6 +7,7 @@ const editor = require('../services/editorService');
 const openCodeWeb = editor.openCodeWeb;
 const audit = require('../services/auditService');
 const DROP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'authorization', 'cookie', 'set-cookie']);
+const OPENCODE_ABSOLUTE_PATHS = new Set(['/assets', '/api', '/global', '/event']);
 function filtered(headers) { return Object.fromEntries(Object.entries(headers).filter(([key]) => !DROP.has(key.toLowerCase()))); }
 async function editorRoutes(fastify) {
   fastify.addHook('onRequest', async (request, reply) => {
@@ -53,14 +54,30 @@ async function editorRoutes(fastify) {
       const query = request.raw.url.includes('?') ? request.raw.url.slice(request.raw.url.indexOf('?')) : '';
       return { ...target, isOpenCode, path: `/${rest}${query}` };
     }
+    function routeAbsoluteOpenCode(request) {
+      const target = openCodeWeb.currentTarget();
+      const requestUrl = request.raw.url;
+      const rawPath = requestUrl.split('?')[0];
+      const route = [...OPENCODE_ABSOLUTE_PATHS].find(prefix => rawPath === prefix || rawPath.startsWith(`${prefix}/`));
+      if (!route) throw new Error('OpenCode route is not allowed.');
+      if (route !== '/assets') {
+        const referer = request.headers.referer || '';
+        if (!referer.includes(`/opencode/${encodeURIComponent(target.projectId)}/`)) throw new Error('OpenCode route is not associated with the active project.');
+      }
+      return { ...target, isOpenCode: true, projectId: target.projectId, path: requestUrl };
+    }
+    function isAbsoluteOpenCodePath(request) {
+      const pathname = request.raw.url.split('?')[0];
+      return [...OPENCODE_ABSOLUTE_PATHS].some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
+    }
     async function forward(request, reply) {
-      const isOpenCode = request.raw.url.startsWith('/opencode/');
       let target;
-      try { target = routeTarget(request); } catch (err) { return reply.status(503).send({ error: err.message }); }
+      try { target = isAbsoluteOpenCodePath(request) ? routeAbsoluteOpenCode(request) : routeTarget(request); } catch (err) { return reply.status(503).send({ error: err.message }); }
       const headers = { ...filtered(request.headers), ...(target.cookie ? { cookie: target.cookie } : {}), ...(target.auth ? { authorization: target.auth } : {}) };
       const upstream = http.request({ hostname: '127.0.0.1', port: target.port, path: target.path, method: request.method, headers, timeout: 30000 }, response => {
         const outgoing = filtered(response.headers);
-        if (outgoing.location?.startsWith('/')) outgoing.location = `/${isOpenCode ? 'opencode' : 'editor'}/${encodeURIComponent(request.params.projectId)}${outgoing.location}`;
+        if (outgoing.location?.startsWith('/') && request.raw.url.startsWith('/opencode/')) outgoing.location = `/opencode/${encodeURIComponent(request.params.projectId)}${outgoing.location}`;
+        if (outgoing.location?.startsWith('/') && request.raw.url.startsWith('/editor/')) outgoing.location = `/editor/${encodeURIComponent(request.params.projectId)}${outgoing.location}`;
         if (outgoing.location && /^https?:/i.test(outgoing.location)) {
           response.destroy(); reply.status(502).send({ error: 'Unexpected editor redirect.' }); return;
         }
@@ -81,8 +98,8 @@ async function editorRoutes(fastify) {
     }
     function forwardSocket(socket, request) {
       let target;
-      try { target = routeTarget(request); } catch { socket.close(1008, 'Editor unavailable.'); return; }
-      const isOpenCode = request.raw.url.startsWith('/opencode/');
+      try { target = isAbsoluteOpenCodePath(request) ? routeAbsoluteOpenCode(request) : routeTarget(request); } catch { socket.close(1008, 'Editor unavailable.'); return; }
+      const isOpenCode = target.isOpenCode;
       const protocols = String(request.headers['sec-websocket-protocol'] || '').split(',').map(v => v.trim()).filter(Boolean);
       const upstream = new WebSocket(`ws://127.0.0.1:${target.port}${target.path}`, protocols, { headers: { ...(target.cookie ? { cookie: target.cookie } : {}), ...(target.auth ? { authorization: target.auth } : {}), host: request.headers.host, ...(request.headers.origin ? { origin: request.headers.origin } : {}) }, handshakeTimeout: 10000, maxPayload: 16 * 1024 * 1024 });
       const release = isOpenCode ? () => {} : editor.socketOpened();
@@ -112,7 +129,10 @@ async function editorRoutes(fastify) {
     proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: '/opencode/:projectId/*', ...options, handler: forward });
     proxy.route({ method: 'GET', url: '/opencode/:projectId', ...options, handler: forward });
     proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: '/opencode/:projectId', ...options, handler: forward });
-
+    for (const route of ['/assets/*', '/api/*', '/global/*', '/event', '/event/*', '/assets', '/api', '/global']) {
+      proxy.route({ method: 'GET', url: route, ...options, handler: forward, wsHandler: forwardSocket });
+      proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: route, ...options, handler: forward });
+    }
   });
 }
 module.exports = editorRoutes;

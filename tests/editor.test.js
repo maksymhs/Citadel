@@ -50,7 +50,11 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
   wss.on('connection', (socket, request) => { seen = { headers: request.headers }; socket.on('message', (data, binary) => socket.send(data, { binary })); });
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
   const original = editor.target;
+  const originalOpenCodeTarget = editor.openCodeWeb.target;
+  const originalCurrentOpenCodeTarget = editor.openCodeWeb.currentTarget;
   editor.target = id => { assert.equal(id, project.id); return { port: upstream.address().port, cookie: 'backend=fixture' }; };
+  editor.openCodeWeb.target = id => { assert.equal(id, project.id); return { port: upstream.address().port, auth: 'Basic private' }; };
+  editor.openCodeWeb.currentTarget = () => ({ port: upstream.address().port, auth: 'Basic private', projectId: project.id });
   let socket;
   try {
     const response = await app.inject({ method: 'POST', url: `/editor/${project.id}/some/path?x=1`, cookies, headers: { 'content-type': 'application/json' }, payload: '{"x":"unchanged"}' });
@@ -61,6 +65,15 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
     assert.equal(seen.headers.authorization, undefined);
     assert.equal(seen.url, '/some/path?x=1');
     assert.equal(seen.text, '{"x":"unchanged"}');
+    const asset = await app.inject({ url: '/assets/index-B5F0ExSs.js', cookies, headers: { referer: `${base}/opencode/${project.id}/` } });
+    assert.equal(asset.statusCode, 200);
+    assert.equal(seen.url, '/assets/index-B5F0ExSs.js');
+    assert.equal(seen.headers.authorization, 'Basic private');
+    const api = await app.inject({ url: '/global/health', cookies, headers: { referer: `${base}/opencode/${project.id}/` } });
+    assert.equal(api.statusCode, 200);
+    assert.equal(seen.url, '/global/health');
+    const denied = await app.inject({ url: '/global/health', cookies });
+    assert.equal(denied.statusCode, 503);
     socket = new WebSocket(`${base.replace('http:', 'ws:')}/editor/${project.id}/socket`, { headers: { cookie: `session_id=${cookies.session_id}`, origin: base } });
     await once(socket, 'open');
     socket.send(Buffer.from([0, 1, 2, 255]));
@@ -72,6 +85,8 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
   } finally {
     socket?.terminate(); for (const s of wss.clients) s.terminate();
     editor.target = original;
+    editor.openCodeWeb.target = originalOpenCodeTarget;
+    editor.openCodeWeb.currentTarget = originalCurrentOpenCodeTarget;
     await new Promise(resolve => wss.close(resolve));
     await new Promise(resolve => upstream.close(resolve));
   }
