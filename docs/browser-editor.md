@@ -11,6 +11,13 @@ Citadel service account's file and command privileges and is not a sandbox.
 OpenCode's root-level API routes (including `/provider`, `/path`, `/session` and
 `/project`) are forwarded only for the active project's GUI Referer and an
 administrator session; unrelated Citadel routes retain their normal handling.
+The GUI adapter keeps routing, API requests and assets under the project URL.
+It accepts only the reviewed frontend bundle observed with OpenCode server 1.19.3
+(frontend 1.19.2); other builds show a compatibility error instead of an empty
+screen. Recheck compatibility before updating OpenCode independently. Desktop
+and emulated mobile navigation, drafts, session reloads, workers and SSE were
+verified with that build. Native new-tab/middle-click session links and live model
+conversations remain unverified; use ordinary in-frame navigation for now.
 
 From **Projects → More actions → Open VS Code in browser**, Citadel opens an
 optional [code-server](https://github.com/coder/code-server) editor inside the

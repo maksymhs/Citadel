@@ -5,6 +5,7 @@ const { requireAuth } = require('../security/auth');
 const { isAllowedOrigin } = require('../security/guard');
 const editor = require('../services/editorService');
 const openCodeWeb = editor.openCodeWeb;
+const openCodeGui = require('../services/openCodeGuiAdapter');
 const audit = require('../services/auditService');
 const DROP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'authorization', 'cookie', 'set-cookie']);
 const OPENCODE_ABSOLUTE_PATHS = new Set([
@@ -81,24 +82,59 @@ async function editorRoutes(fastify) {
         if (isAbsoluteOpenCodePath(request)) return reply.callNotFound();
         return reply.status(503).send({ error: err.message });
       }
+      const adapting = target.isOpenCode && request.raw.url.startsWith('/opencode/');
+      const prefix = adapting ? openCodeGui.prefixFor(request.params.projectId) : null;
+      if (adapting && request.raw.url.split('?')[0] === prefix) {
+        const query = request.raw.url.includes('?') ? request.raw.url.slice(request.raw.url.indexOf('?')) : '';
+        return reply.code(308).header('location', `${prefix}/${query}`).send();
+      }
       const headers = { ...filtered(request.headers), ...(target.cookie ? { cookie: target.cookie } : {}), ...(target.auth ? { authorization: target.auth } : {}) };
-      const upstream = http.request({ hostname: '127.0.0.1', port: target.port, path: target.path, method: request.method, headers, timeout: 30000 }, response => {
-        const outgoing = filtered(response.headers);
-        if (outgoing.location?.startsWith('/') && request.raw.url.startsWith('/opencode/')) outgoing.location = `/opencode/${encodeURIComponent(request.params.projectId)}${outgoing.location}`;
-        if (outgoing.location?.startsWith('/') && request.raw.url.startsWith('/editor/')) outgoing.location = `/editor/${encodeURIComponent(request.params.projectId)}${outgoing.location}`;
-        if (outgoing.location && /^https?:/i.test(outgoing.location)) {
-          response.destroy(); reply.status(502).send({ error: 'Unexpected editor redirect.' }); return;
+      if (adapting) {
+        headers['accept-encoding'] = 'identity';
+        for (const key of ['if-none-match', 'if-modified-since', 'if-match', 'if-unmodified-since', 'if-range', 'range']) delete headers[key];
+      }
+      const adaptationAbort = new AbortController();
+      const upstream = http.request({ hostname: '127.0.0.1', port: target.port, path: target.path, method: request.method, headers, timeout: 30000 }, async response => {
+        try {
+          const outgoing = filtered(response.headers);
+          if (outgoing.location && /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(outgoing.location)) throw new Error('Unexpected editor redirect.');
+          if (outgoing.location && adapting) {
+            const resolved = new URL(outgoing.location, `http://localhost${target.path}`);
+            outgoing.location = openCodeGui.prefixUrl(resolved.pathname + resolved.search + resolved.hash, prefix);
+          }
+          if (outgoing.location?.startsWith('/') && request.raw.url.startsWith('/editor/')) outgoing.location = `/editor/${encodeURIComponent(request.params.projectId)}${outgoing.location}`;
+          const kind = adapting ? openCodeGui.resourceKind(target.path, outgoing['content-type']) : null;
+          let body = response;
+          if (kind) {
+            if (response.statusCode === 206 || response.statusCode === 304) throw new Error('Unexpected partial OpenCode GUI response.');
+            const source = await openCodeGui.readText(response);
+            body = await openCodeGui.adaptText(source, { kind, path: target.path, prefix, target, signal: adaptationAbort.signal });
+            for (const key of ['content-length', 'content-encoding', 'etag', 'last-modified', 'content-range', 'accept-ranges', 'content-md5', 'digest']) delete outgoing[key];
+            outgoing['content-type'] = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', manifest: 'application/manifest+json; charset=utf-8' }[kind];
+          }
+          reply.code(response.statusCode || 502);
+          for (const [key, value] of Object.entries(outgoing)) if (value !== undefined) reply.header(key, value);
+          reply.header('cache-control', 'no-store');
+          if (target.isOpenCode) reply.header('referrer-policy', 'same-origin');
+          reply.send(body);
+        } catch {
+          response.destroy();
+          if (!reply.sent) {
+            reply.code(502).header('cache-control', 'no-store');
+            if (adapting) reply.type('text/html; charset=utf-8').send(openCodeGui.ERROR_PAGE);
+            else reply.send({ error: 'Browser editor response failed.' });
+          }
         }
-        reply.code(response.statusCode || 502);
-        for (const [key, value] of Object.entries(outgoing)) if (value !== undefined) reply.header(key, value);
-        reply.header('cache-control', 'no-store');
-        if (target.isOpenCode) reply.header('referrer-policy', 'same-origin');
-        reply.send(response);
       });
       upstream.on('timeout', () => upstream.destroy());
-      upstream.on('error', () => { if (!reply.sent) reply.status(502).send({ error: 'Browser editor connection failed.' }); });
-      request.raw.on('aborted', () => upstream.destroy());
-      reply.raw.on('close', () => { if (!reply.raw.writableEnded) upstream.destroy(); });
+      upstream.on('error', () => {
+        if (reply.sent) return;
+        reply.status(502).header('cache-control', 'no-store');
+        if (adapting) reply.type('text/html; charset=utf-8').send(openCodeGui.ERROR_PAGE);
+        else reply.send({ error: 'Browser editor connection failed.' });
+      });
+      request.raw.on('aborted', () => { adaptationAbort.abort(); upstream.destroy(); });
+      reply.raw.on('close', () => { if (!reply.raw.writableEnded) { adaptationAbort.abort(); upstream.destroy(); } });
       if (Buffer.isBuffer(request.body)) upstream.write(request.body);
       upstream.end();
       // Response arrives on the stream callback, rather than through Fastify's

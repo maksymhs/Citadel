@@ -80,10 +80,11 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
     assert.equal(seen.text, '{"x":"unchanged"}');
     const documentUrl = `${base}/opencode/${project.id}/`;
     const document = await app.inject({ url: `/opencode/${project.id}/`, cookies });
-    assert.equal(document.statusCode, 200);
-    assert.equal(document.headers['referrer-policy'], 'same-origin');
+    assert.equal(document.statusCode, 502);
+    assert.match(document.body, /OpenCode GUI compatibility check failed/);
+    assert.equal(document.headers['cache-control'], 'no-store');
     assert.equal(document.headers['x-frame-options'], undefined);
-    assert.equal(document.headers['content-security-policy'], "default-src 'self'; frame-ancestors 'self'");
+    assert.ok(!document.body.includes('Basic private'));
     const panel = await app.inject({ url: '/', cookies });
     assert.equal(panel.headers['referrer-policy'], 'no-referrer');
     assert.equal(panel.headers['x-frame-options'], 'SAMEORIGIN');
@@ -143,6 +144,89 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
     editor.openCodeWeb.target = originalOpenCodeTarget;
     editor.openCodeWeb.currentTarget = originalCurrentOpenCodeTarget;
     await new Promise(resolve => wss.close(resolve));
+    await new Promise(resolve => upstream.close(resolve));
+  }
+});
+
+test('prefixed OpenCode adaptation bounds text, strips validators, preserves API/SSE and sockets', async () => {
+  const zlib = require('node:zlib');
+  const adapter = require('../server/services/openCodeGuiAdapter');
+  const prefix = `/opencode/${project.id}`;
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    seen.push({ url: req.url, headers: req.headers });
+    res.setHeader('set-cookie', 'private=secret');
+    if (req.url.startsWith('/redirect')) {
+      res.writeHead(302, { location: new URL(req.url, 'http://localhost').searchParams.get('to') }); res.end();
+    } else if (req.url === '/assets/chunk.js') {
+      const bytes = zlib.gzipSync(Buffer.from('const asset="/assets/icon.svg";'));
+      res.writeHead(200, { 'content-type': 'application/javascript', 'content-encoding': 'gzip', 'content-length': bytes.length, etag: '"old"', 'last-modified': new Date().toUTCString(), 'accept-ranges': 'bytes' }); res.end(bytes);
+    } else if (req.url === '/assets/index-unknown.js') {
+      res.writeHead(200, { 'content-type': 'application/javascript' }); res.end('unsupported build');
+    } else if (req.url === '/assets/big.css') {
+      res.writeHead(200, { 'content-type': 'text/css', 'content-encoding': 'gzip' }); res.end(zlib.gzipSync(Buffer.alloc(adapter.MAX_BYTES + 1)));
+    } else if (req.url === '/global/event') {
+      res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write('data: first\n\n');
+      const timer = setInterval(() => res.write(': heartbeat\n\n'), 50);
+      res.on('close', () => clearInterval(timer));
+    } else if (req.url === '/api/raw') {
+      res.writeHead(200, { 'content-type': 'text/html' }); res.end('<html>API unchanged /assets/icon.svg</html>');
+    } else {
+      res.writeHead(200, { 'content-type': 'text/html' }); res.end('<script type="module" src="/assets/index-unknown.js"></script>');
+    }
+  });
+  const wss = new WebSocketServer({ server: upstream });
+  wss.on('connection', (socket, req) => { seen.push({ url: req.url, headers: req.headers }); socket.on('message', data => socket.send(data)); });
+  upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
+  const original = editor.openCodeWeb.target;
+  editor.openCodeWeb.target = () => ({ port: upstream.address().port, auth: 'Basic private' });
+  let socket;
+  try {
+    const headers = { 'accept-encoding': 'br, gzip', 'if-none-match': '"old"', 'if-modified-since': new Date().toUTCString(), range: 'bytes=0-10', authorization: 'Bearer browser-secret' };
+    const chunk = await app.inject({ url: prefix + '/assets/chunk.js', cookies, headers });
+    assert.equal(chunk.statusCode, 200);
+    assert.equal(chunk.body, `const asset="${prefix}/assets/icon.svg";`);
+    assert.equal(chunk.headers['content-type'], 'text/javascript; charset=utf-8');
+    for (const key of ['content-encoding', 'etag', 'last-modified', 'accept-ranges', 'set-cookie']) assert.equal(chunk.headers[key], undefined);
+    assert.equal(Number(chunk.headers['content-length']), Buffer.byteLength(chunk.body));
+    assert.equal(seen.at(-1).headers['accept-encoding'], 'identity');
+    for (const key of ['if-none-match', 'if-modified-since', 'range', 'cookie']) assert.equal(seen.at(-1).headers[key], undefined);
+    assert.equal(seen.at(-1).headers.authorization, 'Basic private');
+    for (const path of ['/assets/index-unknown.js', '/directory/session/42?x=1', '/assets/big.css']) {
+      const failure = await app.inject({ url: prefix + path, cookies });
+      assert.equal(failure.statusCode, 502);
+      assert.match(failure.body, /OpenCode GUI compatibility check failed/);
+      assert.ok(!failure.body.includes('Basic private'));
+    }
+    const raw = await app.inject({ url: prefix + '/api/raw', cookies });
+    assert.equal(raw.body, '<html>API unchanged /assets/icon.svg</html>');
+    for (const [to, expected] of [['/session/42?x=1#hash', prefix + '/session/42?x=1#hash'], [prefix + '/session', prefix + '/session'], ['next?x=2', prefix + '/next?x=2']]) {
+      const redirect = await app.inject({ url: prefix + '/redirect?to=' + encodeURIComponent(to), cookies });
+      assert.equal(redirect.statusCode, 302);
+      assert.equal(redirect.headers.location, expected);
+    }
+    assert.equal((await app.inject({ url: prefix + '/redirect?to=%2F%2Fevil.example', cookies })).statusCode, 502);
+    const slash = await app.inject({ url: prefix + '?x=1', cookies });
+    assert.equal(slash.statusCode, 308);
+    assert.equal(slash.headers.location, prefix + '/?x=1');
+    const controller = new AbortController();
+    try {
+      const response = await fetch(base + prefix + '/global/event', { headers: { cookie: `session_id=${cookies.session_id}` }, signal: controller.signal });
+      assert.equal(response.headers.get('content-type'), 'text/event-stream');
+      assert.match(Buffer.from((await response.body.getReader().read()).value).toString(), /data: first/);
+    } finally { controller.abort(); }
+    socket = new WebSocket(`${base.replace('http:', 'ws:')}${prefix}/pty/42/connect`, { headers: { cookie: `session_id=${cookies.session_id}`, origin: base } });
+    await once(socket, 'open');
+    socket.send('terminal');
+    assert.equal((await once(socket, 'message'))[0].toString(), 'terminal');
+    assert.equal(seen.at(-1).url, '/pty/42/connect');
+    assert.equal(seen.at(-1).headers.authorization, 'Basic private');
+    assert.equal(seen.at(-1).headers.cookie, undefined);
+  } finally {
+    socket?.terminate(); for (const client of wss.clients) client.terminate();
+    editor.openCodeWeb.target = original;
+    await new Promise(resolve => wss.close(resolve));
+    upstream.closeAllConnections();
     await new Promise(resolve => upstream.close(resolve));
   }
 });
