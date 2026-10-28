@@ -357,6 +357,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await sleep(800);
       const button = w.document.getElementById('ws-editor-btn');
       assert.equal(button.textContent, 'VS Code');
+      assert.equal(w.document.getElementById('ws-opencode-btn').textContent, 'OpenCode');
       const viewport = w.document.getElementById('terminal-viewport');
       button.click();
       await sleep(300);

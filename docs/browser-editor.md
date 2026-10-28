@@ -1,4 +1,13 @@
-# Browser VS Code
+# Browser VS Code and OpenCode web
+
+From **Projects → More actions → Open OpenCode in browser**, or the **OpenCode**
+button in a project terminal, Citadel starts OpenCode's web interface in that
+project. Fresh Citadel installs include the OpenCode CLI; it is not auto-started.
+Citadel runs `opencode serve` on loopback with a generated password and proxies
+HTTP and WebSocket traffic through the authenticated panel. **Stop OpenCode**
+terminates that process; clean shutdown also stops it. Only local projects are
+supported; for paired machines, open that machine's panel. OpenCode shares the
+Citadel service account's file and command privileges and is not a sandbox.
 
 From **Projects → More actions → Open VS Code in browser**, Citadel opens an
 optional [code-server](https://github.com/coder/code-server) editor inside the

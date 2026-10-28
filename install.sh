@@ -84,6 +84,7 @@ UNINSTALL=false
 #   --lan / --host=ADDR      also bind on the local network (QR from phone)
 #   --no-tunnel              keep the panel off the public internet
 #   --no-24-7                allow the host to suspend normally
+# Fresh installs include the OpenCode CLI for optional browser workspace use.
 # The legacy flags (--no-admin-terminal, --no-updater, --local, --no-tunnel) keep
 # working; --local implies --no-tunnel.
 DEFAULT_ADMIN_USER="${SUDO_USER:-}"
@@ -529,6 +530,19 @@ EOF
     if [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1 && [ "$HAS_SUDO" = true ] \
        && [ -f /etc/systemd/system/citadel.service.d/bind.conf ]; then
       $SUDO rm -f /etc/systemd/system/citadel.service.d/bind.conf
+    fi
+  fi
+
+  # Install OpenCode on fresh installs only; updates preserve the existing agent set.
+  if [ "$UPDATE_MODE" = false ] && [ "$CHECK_ONLY" = false ] && [ -x "$AGENTS_DIR/bin/opencode" ]; then
+    detail "      OpenCode is already installed."
+  elif [ "$UPDATE_MODE" = false ] && [ "$CHECK_ONLY" = false ]; then
+    detail "      Installing OpenCode CLI for the web workspace..."
+    RUN_USER="${RUN_USER:-$(id -un)}"
+    if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ]; then
+      $SUDO -u "$RUN_USER" env CITADEL_AGENTS_DIR="$AGENTS_DIR" HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)" node "$APP_DIR/scripts/manage-agent.js" install opencode
+    else
+      CITADEL_AGENTS_DIR="$AGENTS_DIR" node "$APP_DIR/scripts/manage-agent.js" install opencode
     fi
   fi
 

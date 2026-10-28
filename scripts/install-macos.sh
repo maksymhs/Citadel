@@ -139,6 +139,10 @@ fi
 cd "$APP_DIR"
 step "Installing dependencies"
 quiet_run npm install --omit=dev --no-fund --no-audit --loglevel=error
+if [ "$UPDATE_MODE" = false ] && [ ! -x "$AGENTS_DIR/bin/opencode" ]; then
+  step "Installing OpenCode CLI"
+  quiet_run env CITADEL_AGENTS_DIR="$AGENTS_DIR" node "$APP_DIR/scripts/manage-agent.js" install opencode
+fi
 
 NODE_BIN="$(command -v node)"
 plist_escape() {

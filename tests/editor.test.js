@@ -30,7 +30,7 @@ test('editor setup and proxy reject unauthenticated, viewer and untrusted-origin
   for (const url of ['/api/editor', `/editor/${project.id}/`]) assert.equal((await app.inject({ url })).statusCode, 401);
   getDatabase().prepare("UPDATE users SET role = 'viewer'").run();
   try {
-    for (const [method, url] of [['GET', '/api/editor'], ['POST', '/api/editor/install'], ['POST', `/api/projects/${project.id}/editor`], ['GET', `/editor/${project.id}/`]]) {
+    for (const [method, url] of [['GET', '/api/editor'], ['GET', '/api/opencode-web'], ['POST', '/api/editor/install'], ['POST', `/api/projects/${project.id}/editor`], ['POST', `/api/projects/${project.id}/opencode-web`], ['GET', `/editor/${project.id}/`], ['GET', `/opencode/${project.id}/`]]) {
       assert.equal((await app.inject({ method, url, cookies })).statusCode, 403);
     }
   } finally { getDatabase().prepare("UPDATE users SET role = 'admin'").run(); }

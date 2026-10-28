@@ -115,11 +115,10 @@ setup. Internal API paths and persisted keys retain the `gateway` name for
 compatibility. See [AI Gateway](ai-gateway.md).
 
 Browser VS Code uses an optional pinned code-server distribution, started on
-demand. An administrator-only HTTP/WebSocket bridge forwards to its protected
-loopback listener without passing browser/peer credentials. The browser keeps a
-return action outside the editor iframe. Stop/shutdown terminates its process
-group; persistent editor settings and extensions remain under DATA_DIR/editor.
-See [browser editor](browser-editor.md).
+demand. OpenCode web starts the installed `opencode serve` CLI on demand. Both use
+administrator-only HTTP/WebSocket bridges to protected loopback listeners and do
+not pass browser/peer credentials. The browser keeps a return action outside the
+iframe; Citadel stops both process groups on shutdown. See [browser editor](browser-editor.md).
 
 ## Retired project management
 

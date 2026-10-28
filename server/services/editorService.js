@@ -11,6 +11,7 @@ const { validateSafePath } = require('../security/guard');
 const projectService = require('./projectService');
 const { downloadRelease } = require('./releaseDownload');
 const { isInternalSecret } = require('../../scripts/sentinelEnv');
+const agentRegistry = require('./agentRegistry');
 const VERSION = '4.143.1';
 // Pinned GitHub release asset SHA-256 digests, not hashes supplied by the client.
 const HASHES = {
@@ -154,4 +155,61 @@ function createEditorService({ dataDir = DATA_DIR, spawnImpl = spawn, execFileIm
   }
   return { status, install, open, target, close, socketOpened };
 }
-module.exports = { ...createEditorService(), createEditorService, VERSION };
+function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectService.getProject, registry = agentRegistry } = {}) {
+  let child = null, port = null, starting = null, lastError = null, auth = null, processGroup = null, activeProjectPath = null;
+  function status() { return { installed: Boolean(registry.findBinary('opencode')), running: Boolean(child), error: lastError }; }
+  async function open(id) {
+    const found = getProject(id);
+    if (!found) throw new Error('Project not found.');
+    const projectPath = validateSafePath(found.path);
+    const binary = registry.findBinary('opencode');
+    if (!binary) throw new Error('OpenCode is not installed.');
+    if (starting) await starting;
+    if (child && activeProjectPath !== projectPath) { await close(); return open(id); }
+    if (!child) {
+      starting = (async () => {
+        activeProjectPath = projectPath;
+        const reservation = net.createServer();
+        await new Promise((resolve, reject) => { reservation.once('error', reject); reservation.listen(0, '127.0.0.1', resolve); });
+        port = reservation.address().port;
+        await new Promise(resolve => reservation.close(resolve));
+        const password = crypto.randomBytes(32).toString('hex');
+        const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !isInternalSecret(key)));
+        env.OPENCODE_PASSWORD = password;
+        auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`;
+        child = spawnImpl(binary, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], { cwd: projectPath, env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
+        processGroup = child.pid;
+        child.once('error', () => { child = null; processGroup = null; lastError = 'OpenCode web failed to start.'; });
+        child.once('close', () => { child = null; processGroup = null; activeProjectPath = null; auth = null; });
+        for (let i = 0; i < 100; i++) {
+          if (!child) break;
+          try {
+            const response = await fetch(`http://127.0.0.1:${port}/global/health`, { headers: { authorization: auth }, signal: AbortSignal.timeout(300) });
+            if (response.ok) { await response.body?.cancel(); lastError = null; return; }
+            await response.body?.cancel();
+          } catch { /* OpenCode is still starting */ }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        await close();
+        throw new Error('OpenCode web did not become ready.');
+      })();
+      try { await starting; } finally { starting = null; }
+    }
+    return { url: `/opencode/${encodeURIComponent(id)}/`, project: { id: found.id, name: found.name } };
+  }
+  function target(id) {
+    if (!getProject(id) || !child) throw new Error('OpenCode web is stopped.');
+    return { port, auth };
+  }
+  async function close() {
+    const current = child, group = processGroup; child = null; processGroup = null; auth = null; activeProjectPath = null;
+    if (current && current.exitCode === null && !current.signalCode) {
+      const signal = name => { if (group) { try { process.kill(-group, name); } catch { /* process group exited */ } } else current.kill(name); };
+      signal('SIGTERM');
+      await new Promise(resolve => { const timer = setTimeout(() => { signal('SIGKILL'); resolve(); }, 2000); current.once('close', () => { clearTimeout(timer); resolve(); }); });
+      signal('SIGKILL');
+    }
+  }
+  return { status, open, target, close };
+}
+module.exports = { ...createEditorService(), createEditorService, createOpenCodeWebService, openCodeWeb: createOpenCodeWebService(), VERSION };

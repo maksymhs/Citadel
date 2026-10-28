@@ -136,7 +136,7 @@ running `opencode` or `codex`. Native CLI installations are still required.
 Exit Claude and reopen an existing project terminal after activation. It binds only to loopback,
 requires no sudo and remains off by default. This experimental integration offers opt-in Auto fallback after both providers are connected. See [setup and limitations](ai-gateway.md).
 
-### Project folders and VS Code
+### Project folders, VS Code and OpenCode web
 
 Opening **Projects**, or clicking **Refresh**, scans immediate non-hidden folders
 under `PROJECTS_DIR`. Suggestions are read-only; choose **Import folder** to
@@ -145,15 +145,14 @@ are directory symlinks and `node_modules`. Scans stop after 500 entries or 100
 suggestions and never recurse or execute repository code. Use **Import folder**
 for other folders or to choose a different project name.
 
-A project's **More actions → Open VS Code in browser** opens the optional web
-editor inside Citadel. On first use, choose **Install browser editor and open
-project**; afterwards the project action opens it directly. **Back to Citadel**
-restores the panel. The project terminal toolbar also has a **VS Code** button.
-New editor profiles start in dark mode; existing theme preferences are preserved.
-No desktop app or SSH setup is required. The editor is
-administrator-only, runs on demand and consumes additional resources. It
-currently supports the machine serving this panel; for paired machines, use
-that machine's own panel. See [browser editor setup](browser-editor.md).
+A project's **More actions** menu offers **Open VS Code in browser** and
+**Open OpenCode in browser**. The project terminal toolbar also offers **VS Code**
+and **OpenCode**. VS Code installs its optional editor on first use. OpenCode's
+CLI is installed by default on fresh Citadel installs; it starts `opencode serve`
+only when requested. Both run on demand, through Citadel authentication and a
+loopback-only backend, and **Back to Citadel** restores the panel. These actions
+are administrator-only and currently work on the machine serving the panel;
+paired machines require their own panel. See [browser editor setup](browser-editor.md).
 
 ## Updating an existing installation
 
