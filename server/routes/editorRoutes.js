@@ -72,7 +72,10 @@ async function editorRoutes(fastify) {
     }
     async function forward(request, reply) {
       let target;
-      try { target = isAbsoluteOpenCodePath(request) ? routeAbsoluteOpenCode(request) : routeTarget(request); } catch (err) { return reply.status(503).send({ error: err.message }); }
+      try { target = isAbsoluteOpenCodePath(request) ? routeAbsoluteOpenCode(request) : routeTarget(request); } catch (err) {
+        if (isAbsoluteOpenCodePath(request)) return reply.callNotFound();
+        return reply.status(503).send({ error: err.message });
+      }
       const headers = { ...filtered(request.headers), ...(target.cookie ? { cookie: target.cookie } : {}), ...(target.auth ? { authorization: target.auth } : {}) };
       const upstream = http.request({ hostname: '127.0.0.1', port: target.port, path: target.path, method: request.method, headers, timeout: 30000 }, response => {
         const outgoing = filtered(response.headers);

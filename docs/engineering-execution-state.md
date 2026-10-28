@@ -661,3 +661,8 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Packages the AI Gateway routing modes from feature commit `5dce5ed`: ChatGPT-first Auto, By role and Balanced, rebased onto v0.55.0 (guided setup, independent Claude/OpenCode/Codex clients).
 - Bumps package metadata to `0.56.0`, asset cache-busters to `v0560` and README Latest. The changelog is generated from the local v0.56.0 tag during release finalization.
 - Full tests passed after merging with v0.55.0 (550 passed, 1 skipped, 0 failed), lint and `git diff --check` passed. Failover and Balanced switching were verified only with fixture binaries; no real Claude or ChatGPT account, usage endpoint or macOS host was exercised.
+
+## 152. Verify OpenCode web asset delivery and server authentication
+- Isolated OpenCode 1.19.3 and Citadel at `678fa44` served the reported root JS and CSS assets with 200 and correct MIME types, including public Host and HTTPS referer headers. Loading the pre-fix route reproduced the reported 404 JSON responses. Live deployment freshness and reverse-proxy configuration remain unverified; no live service was restarted.
+- Fixed server credentials to use `OPENCODE_SERVER_PASSWORD` and explicit `OPENCODE_SERVER_USERNAME=opencode`; `OPENCODE_PASSWORD` did not enable Basic authentication in the installed version.
+- Added executable fixture coverage for protected health checks, secret-free status and process cleanup; proxy fixtures now assert actual JavaScript/CSS MIME types and bodies. Restored 404 handling for unrelated missing API routes caught by the OpenCode wildcard. Final full suite: 551 passed, 1 skipped, 0 failed; lint and diff checks passed. Real browser execution, conversations, SSE and macOS remain untested.

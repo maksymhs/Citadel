@@ -176,7 +176,8 @@ function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectServi
         await new Promise(resolve => reservation.close(resolve));
         const password = crypto.randomBytes(32).toString('hex');
         const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !isInternalSecret(key)));
-        env.OPENCODE_PASSWORD = password;
+        env.OPENCODE_SERVER_PASSWORD = password;
+        env.OPENCODE_SERVER_USERNAME = 'opencode';
         auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`;
         child = spawnImpl(binary, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], { cwd: projectPath, env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
         processGroup = child.pid;

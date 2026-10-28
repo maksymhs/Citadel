@@ -43,8 +43,16 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
     let text = ''; for await (const chunk of req) text += chunk;
     seen = { headers: req.headers, url: req.url, text };
     res.setHeader('set-cookie', 'backend=never-expose');
-    res.setHeader('content-type', 'text/html');
-    res.end('<html>Browser editor fixture</html>');
+    if (req.url === '/assets/index-B5F0ExSs.js') {
+      res.setHeader('content-type', 'application/javascript');
+      res.end('window.editorFixture = true;');
+    } else if (req.url === '/assets/index-B5F0ExSs.css') {
+      res.setHeader('content-type', 'text/css');
+      res.end('body { color: red; }');
+    } else {
+      res.setHeader('content-type', 'text/html');
+      res.end('<html>Browser editor fixture</html>');
+    }
   });
   const wss = new WebSocketServer({ server: upstream });
   wss.on('connection', (socket, request) => { seen = { headers: request.headers }; socket.on('message', (data, binary) => socket.send(data, { binary })); });
@@ -67,13 +75,21 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
     assert.equal(seen.text, '{"x":"unchanged"}');
     const asset = await app.inject({ url: '/assets/index-B5F0ExSs.js', cookies, headers: { referer: `${base}/opencode/${project.id}/` } });
     assert.equal(asset.statusCode, 200);
+    assert.equal(asset.headers['content-type'], 'application/javascript');
+    assert.equal(asset.body, 'window.editorFixture = true;');
     assert.equal(seen.url, '/assets/index-B5F0ExSs.js');
+    assert.equal(seen.headers.authorization, 'Basic private');
+    const css = await app.inject({ url: '/assets/index-B5F0ExSs.css', cookies, headers: { referer: `${base}/opencode/${project.id}/` } });
+    assert.equal(css.statusCode, 200);
+    assert.equal(css.headers['content-type'], 'text/css');
+    assert.equal(css.body, 'body { color: red; }');
+    assert.equal(seen.url, '/assets/index-B5F0ExSs.css');
     assert.equal(seen.headers.authorization, 'Basic private');
     const api = await app.inject({ url: '/global/health', cookies, headers: { referer: `${base}/opencode/${project.id}/` } });
     assert.equal(api.statusCode, 200);
     assert.equal(seen.url, '/global/health');
     const denied = await app.inject({ url: '/global/health', cookies });
-    assert.equal(denied.statusCode, 503);
+    assert.equal(denied.statusCode, 404);
     socket = new WebSocket(`${base.replace('http:', 'ws:')}/editor/${project.id}/socket`, { headers: { cookie: `session_id=${cookies.session_id}`, origin: base } });
     await once(socket, 'open');
     socket.send(Buffer.from([0, 1, 2, 255]));
@@ -126,6 +142,50 @@ http.createServer(async (req, res) => {
   assert.equal(s.status().running, false);
   const escaping = editor.createEditorService({ dataDir: instance, getProject: () => ({ id: 'bad', path: os.tmpdir() }) });
   await assert.rejects(escaping.open('bad'), /Path traversal/);
+});
+
+test('OpenCode web starts a protected server with private credentials and closes it', async () => {
+  const instance = fs.mkdtempSync(path.join(root, 'opencode-'));
+  const binary = path.join(instance, 'opencode');
+  fs.writeFileSync(binary, `#!/usr/bin/env node
+const http = require('node:http');
+if (!process.env.OPENCODE_SERVER_PASSWORD || process.env.OPENCODE_SERVER_USERNAME !== 'opencode') process.exit(1);
+const auth = 'Basic ' + Buffer.from('opencode:' + process.env.OPENCODE_SERVER_PASSWORD).toString('base64');
+http.createServer((req, res) => {
+  if (req.headers.authorization !== auth) { res.writeHead(401); res.end(); return; }
+  if (req.url === '/global/health') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ healthy: true })); }
+  else if (req.url === '/assets/index.js') { res.setHeader('content-type', 'application/javascript'); res.end('window.opencodeFixture = true;'); }
+  else if (req.url === '/assets/index.css') { res.setHeader('content-type', 'text/css'); res.end('body { color: blue; }'); }
+  else { res.writeHead(404); res.end(); }
+}).listen(Number(process.argv[process.argv.indexOf('--port') + 1]), process.argv[process.argv.indexOf('--hostname') + 1]);
+`, { mode: 0o700 });
+  const s = editor.createOpenCodeWebService({
+    registry: { findBinary: name => { assert.equal(name, 'opencode'); return binary; } },
+    getProject: id => { assert.equal(id, project.id); return projects.getProject(id); },
+  });
+  try {
+    const opened = await s.open(project.id);
+    assert.equal(opened.url, `/opencode/${project.id}/`);
+    const target = s.target(project.id);
+    const upstream = `http://127.0.0.1:${target.port}`;
+    assert.equal((await fetch(`${upstream}/global/health`)).status, 401);
+    const health = await fetch(`${upstream}/global/health`, { headers: { authorization: target.auth } });
+    assert.equal(health.status, 200);
+    assert.equal(health.headers.get('content-type'), 'application/json');
+    assert.deepEqual(await health.json(), { healthy: true });
+    for (const [asset, mime, body] of [['index.js', 'application/javascript', 'window.opencodeFixture = true;'], ['index.css', 'text/css', 'body { color: blue; }']]) {
+      const response = await fetch(`${upstream}/assets/${asset}`, { headers: { authorization: target.auth } });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), mime);
+      assert.equal(await response.text(), body);
+    }
+    const password = Buffer.from(target.auth.slice('Basic '.length), 'base64').toString().slice('opencode:'.length);
+    assert.ok(password);
+    assert.deepEqual(s.status(), { installed: true, running: true, error: null });
+    assert.ok(!JSON.stringify(s.status()).includes(target.auth));
+    assert.ok(!JSON.stringify(s.status()).includes(password));
+  } finally { await s.close(); }
+  assert.equal(s.status().running, false);
 });
 
 test('release downloads stream with checksum verification and reject unsafe redirects', async () => {
