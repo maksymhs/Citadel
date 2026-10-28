@@ -656,3 +656,8 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Balanced evaluates best-effort subscription usage every 5 minutes while the gateway runs: headroom is the free percentage of the tightest window on the best account; it switches only with a 15 point gap and 30 minutes since the last switch, and never on missing, failed, stale or older-than-10-minute data. It rewrites priorities only, so open conversations keep their provider. State is exposed as `status().balance` and shown in Settings. Timer is cleared on disable, close and proxy exit.
 - Extracted `usageStateFor` so discovery and balancing share one usage reader. Added injectable `now` and `balanceIntervalMs` for tests.
 - Verified with fixture binary only: routing unit tests, role validation and in-place alias rewrite, balanced switch/hysteresis/fallback on failed usage, and jsdom UI for role selectors and the balanced status line. No real Claude or ChatGPT account, real usage endpoint, streaming failover or macOS run was exercised.
+
+## 151. Release v0.56.0
+- Packages the AI Gateway routing modes from feature commit `5dce5ed`: ChatGPT-first Auto, By role and Balanced, rebased onto v0.55.0 (guided setup, independent Claude/OpenCode/Codex clients).
+- Bumps package metadata to `0.56.0`, asset cache-busters to `v0560` and README Latest. The changelog is generated from the local v0.56.0 tag during release finalization.
+- Full tests passed after merging with v0.55.0 (550 passed, 1 skipped, 0 failed), lint and `git diff --check` passed. Failover and Balanced switching were verified only with fixture binaries; no real Claude or ChatGPT account, usage endpoint or macOS host was exercised.
