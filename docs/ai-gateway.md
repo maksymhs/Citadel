@@ -51,7 +51,35 @@ A setup-only proxy stops once Claude authorization finishes.
 | --- | --- |
 | ChatGPT only | ChatGPT/Codex supplies all three model roles |
 | Claude only | Your gateway-connected Claude account supplies all three roles |
-| Auto | Claude has priority; ChatGPT is the fallback on eligible quota/availability failures |
+| Auto: Claude first, then ChatGPT | Claude has priority; ChatGPT is the fallback on eligible quota/availability failures |
+| Auto: ChatGPT first, then Claude | ChatGPT has priority; Claude is the fallback on eligible quota/availability failures |
+| By role | Each role (planning, execution, background) is pinned to Claude or ChatGPT, with no fallback |
+| Balanced | Auto whose first provider follows remaining subscription headroom |
+
+### By role
+
+Choose **By role** to pick a provider for each role, for example Claude for
+planning and ChatGPT for execution and background work (the default
+assignment). Each stable alias is published on exactly one provider, so there
+is no cross-provider fallback: if that provider is out of quota, requests for
+that role fail explicitly. Only the providers assigned to a role must be
+connected. The models used are the ones selected in each provider card. Changes
+apply in place, like any other route edit.
+
+### Balanced
+
+**Balanced** is an opt-in Auto mode. While the gateway runs, Citadel reads each
+connected provider's best-effort usage windows every 5 minutes (the same
+subscription endpoints used by the usage meters) and computes its headroom: the
+free percentage of the tightest window on the best account. The provider with
+more headroom gets priority 100 and the other 50. To avoid flapping it switches
+only when the other provider has at least 15 points more headroom and at least
+30 minutes have passed since the last switch. Missing, failed or older-than-10-
+minute readings never cause a switch. Claude is the initial primary. Only
+priorities are rewritten: conversations already running stay on their provider
+through session affinity, and new ones prefer the current primary. Settings
+shows the current primary, both headrooms, the last check time and the reason.
+Usage endpoints are not stable public contracts, so treat this as a heuristic.
 
 The compact Settings screen has one card per provider. Each card contains its
 connection status and actions, three model selectors (planning, execution and
@@ -100,10 +128,11 @@ controlled by the role aliases. After adopting them, ordinary route/model edits
 do not require reopening Claude. Changing the shared context budget or local
 port still requires a new terminal; disable the gateway before changing ports.
 
-Auto uses priority 100 for Claude, 50 for ChatGPT, fill-first selection and
+Auto gives the first provider priority 100 and the second 50 (Claude first by
+default; the stored mode `auto-chatgpt` reverses it), with fill-first selection and
 session affinity. A conversation on its fallback can stay there even when
-Claude recovers; a new conversation prefers the available primary. Select
-**Claude only** to force a return. This avoids switching providers on every
+the primary recovers; a new conversation prefers the available primary. Select
+a single-provider mode to force a return. This avoids switching providers on every
 message. Quota and transient availability failures can fail over; invalid
 requests, authentication, billing and policy-denial statuses are surfaced.
 If all eligible accounts are exhausted, the request fails explicitly.

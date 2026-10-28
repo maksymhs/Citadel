@@ -63,7 +63,10 @@ if (process.argv.includes('--codex-device-login')) {
       else if (req.url === '/v8/management/routing/model-definitions/codex' || req.url === '/v8/management/routing/model-definitions/claude') res.end(JSON.stringify({ models: [{ id: 'catalog-fixture' }] }));
       else if (req.url === '/v8/management/requests/api-call') {
         const call = JSON.parse(raw);
-        const payload = call.url.includes('anthropic.com') ? { five_hour: { utilization: 0, resets_at: new Date(Date.now() + 3600000).toISOString() }, seven_day: { utilization: 25, resets_at: new Date(Date.now() + 86400000).toISOString() } } : { rate_limit: { primary_window: { used_percent: 5, limit_window_seconds: 18000, reset_after_seconds: 1200 }, secondary_window: { used_percent: 40, limit_window_seconds: 604800, reset_after_seconds: 7200 } } };
+        let override = {}; try { override = JSON.parse(fs.readFileSync(path.join(process.env.HOME, 'usage-override.json'), 'utf8')); } catch { /* default fixture */ }
+        const used = call.url.includes('anthropic.com') ? override.claude : override.codex;
+        if (used === 'fail') { res.end(JSON.stringify({ status_code: 500, body: '{}', header: {} })); return; }
+        const payload = typeof used === 'number' ? (call.url.includes('anthropic.com') ? { five_hour: { utilization: used, resets_at: new Date(Date.now() + 3600000).toISOString() } } : { rate_limit: { primary_window: { used_percent: used, limit_window_seconds: 18000, reset_after_seconds: 1200 } } }) : call.url.includes('anthropic.com') ? { five_hour: { utilization: 0, resets_at: new Date(Date.now() + 3600000).toISOString() }, seven_day: { utilization: 25, resets_at: new Date(Date.now() + 86400000).toISOString() } } : { rate_limit: { primary_window: { used_percent: 5, limit_window_seconds: 18000, reset_after_seconds: 1200 }, secondary_window: { used_percent: 40, limit_window_seconds: 604800, reset_after_seconds: 7200 } } };
         res.end(JSON.stringify({ status_code: 200, body: JSON.stringify(payload), header: {} }));
       } else res.end(JSON.stringify({ status: authStatus }));
       return;
@@ -356,6 +359,12 @@ test('separate Claude authorization validates callbacks and hot policy changes p
   proxy = JSON.parse(fs.readFileSync(configFile));
   assert.equal(proxy.oauth['model-alias'].codex, undefined);
   assert.equal(proxy.oauth['model-alias'].claude[1].name, 'claude-fixture-updated');
+  await s.save({ enabled: true, mode: 'auto-chatgpt' });
+  proxy = JSON.parse(fs.readFileSync(configFile));
+  assert.ok(proxy.oauth['model-alias'].claude && proxy.oauth['model-alias'].codex);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(authDir, 'claude-fixture.json'))).priority, 50);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(authDir, 'codex-fixture.json'))).priority, 100);
+  await s.save({ enabled: true, mode: 'claude' });
   const after = gatewayEnvironment({}, JSON.parse(fs.readFileSync(settingsFile)));
   assert.equal(before.ANTHROPIC_DEFAULT_SONNET_MODEL, after.ANTHROPIC_DEFAULT_SONNET_MODEL);
   assert.equal(after.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1000000');
@@ -486,4 +495,113 @@ test('Claude activation is independent and disabling it preserves OpenCode proje
   });
   assert.deepEqual(JSON.parse(output), { claude: false, opencode: true });
   await s.close();
+});
+
+const routing = require('../server/services/gatewayRouting');
+
+test('role mode publishes each alias on exactly one provider and needs only the assigned accounts', () => {
+  const base = { ...routing.DEFAULTS, mode: 'roles', planningModel: 'gpt-p', executionModel: 'gpt-e', smallModel: 'gpt-s' };
+  const aliases = routing.aliasesFor(base);
+  assert.deepEqual(aliases.claude.map(a => a.alias), ['citadel-planning']);
+  assert.deepEqual(aliases.codex.map(a => [a.alias, a.name]), [['citadel-execution', 'gpt-e'], ['citadel-small', 'gpt-s']]);
+  const swapped = routing.aliasesFor({ ...base, planningProvider: 'codex', executionProvider: 'claude', smallProvider: 'claude' });
+  assert.deepEqual(swapped.codex.map(a => a.alias), ['citadel-planning']);
+  assert.deepEqual(swapped.claude.map(a => a.alias), ['citadel-execution', 'citadel-small']);
+  const allCodex = routing.aliasesFor({ ...base, planningProvider: 'codex' });
+  assert.equal(allCodex.claude, undefined, 'a provider with no role is not published');
+  assert.doesNotThrow(() => routing.requireConnections({ ...base, planningProvider: 'codex' }, { codex: true, claude: false }));
+  assert.throws(() => routing.requireConnections(base, { codex: true, claude: false }), /Connect Claude/);
+  assert.throws(() => routing.requireConnections(base, { codex: false, claude: true }), /Connect ChatGPT/);
+});
+
+test('balanced decision uses hysteresis and never switches on missing or stale data', () => {
+  const now = Date.now(), old = now - 3600000;
+  const pick = (headroom, current = 'claude', switchedAt = 0) => routing.chooseBalancedPrimary({ headroom, current, switchedAt, now });
+  assert.equal(pick({ claude: 50, codex: 60 }).primary, 'claude', 'a 10 point gap is below the threshold');
+  assert.equal(pick({ claude: 20, codex: 80 }).primary, 'codex');
+  assert.equal(pick({ claude: 20, codex: 80 }).switched, true);
+  assert.equal(pick({ claude: 20, codex: 80 }, 'claude', now - 60000).primary, 'claude', 'recent switch blocks another change');
+  assert.equal(pick({ claude: 20, codex: 80 }, 'claude', old).primary, 'codex');
+  assert.equal(pick({ claude: 80, codex: 20 }, 'codex', old).primary, 'claude', 'switches back when roles reverse');
+  assert.equal(pick({ claude: null, codex: 80 }).primary, 'claude');
+  assert.equal(pick({ claude: 10 }).primary, 'claude');
+  assert.equal(pick(null).switched, false);
+  const fresh = { fetchedAt: new Date(now).toISOString(), accounts: [{ windows: [{ usedPercent: 30 }, { usedPercent: 90 }] }, { windows: [{ usedPercent: 50 }] }] };
+  assert.equal(routing.headroomFrom(fresh, now), 50, 'tightest window per account, best account wins');
+  assert.equal(routing.headroomFrom({ ...fresh, fetchedAt: new Date(old).toISOString() }, now), null, 'old readings are ignored');
+  assert.equal(routing.headroomFrom({ ...fresh, stale: true }, now), null);
+  assert.equal(routing.headroomFrom({ fetchedAt: fresh.fetchedAt, accounts: [{ windows: [{ usedPercent: null }] }] }, now), null);
+  assert.equal(routing.priorityFor('roles', 'claude'), 100);
+  assert.equal(routing.priorityFor('balanced', 'codex', 'codex'), 100);
+  assert.equal(routing.priorityFor('balanced', 'claude', 'codex'), 50);
+});
+
+async function connectBoth(s, dir) {
+  fakeBinary(dir);
+  await s.loginStart(); await until(() => s.status().connected);
+  await s.save({ enabled: false, port: await port() });
+  await s.loginStart('claude');
+  await s.callback('http://localhost:54545/callback?state=fixture-state&code=fixture-code');
+  await s.refreshLogin();
+  assert.deepEqual(s.status().connections, { codex: true, claude: true });
+}
+
+test('role mode validates providers and rewrites aliases in place', async () => {
+  const { dir, service: s } = fresh(); await connectBoth(s, dir);
+  await assert.rejects(s.save({ enabled: false, mode: 'roles', planningProvider: 'gemini' }), /Role provider/);
+  await assert.rejects(s.save({ enabled: false, mode: 'nonsense' }), /Mode must be/);
+  const saved = await s.save({ enabled: true, mode: 'roles', port: await port() });
+  assert.deepEqual([saved.planningProvider, saved.executionProvider, saved.smallProvider], ['claude', 'codex', 'codex']);
+  const settingsFile = s.launchOptions().args[1];
+  const configFile = path.join(path.dirname(settingsFile), 'config.json');
+  let proxy = JSON.parse(fs.readFileSync(configFile));
+  assert.deepEqual(proxy.oauth['model-alias'].claude.map(a => a.alias), ['citadel-planning']);
+  assert.deepEqual(proxy.oauth['model-alias'].codex.map(a => a.alias), ['citadel-execution', 'citadel-small']);
+  await s.save({ enabled: true, planningProvider: 'codex', executionProvider: 'claude' });
+  proxy = JSON.parse(fs.readFileSync(configFile));
+  assert.deepEqual(proxy.oauth['model-alias'].codex.map(a => a.alias), ['citadel-planning', 'citadel-small']);
+  assert.deepEqual(proxy.oauth['model-alias'].claude.map(a => a.alias), ['citadel-execution']);
+  assert.equal(s.launchOptions().args[1], settingsFile, 'role changes need no restart or new launch file');
+  await s.disconnect();
+});
+
+test('balanced mode moves the primary by remaining headroom and survives missing usage', async () => {
+  const getNow = (() => { let t = Date.now(); const f = () => t; f.advance = ms => { t += ms; }; return f; })();
+  getDatabase().prepare("DELETE FROM app_config WHERE key LIKE 'ai.gateway%'").run();
+  const dir = fs.mkdtempSync(path.join(root, 'instance-'));
+  const s = createGatewayService({ dataDir: dir, now: getNow, balanceIntervalMs: 3600000 }); services.push(s);
+  await connectBoth(s, dir);
+  await s.save({ enabled: true, mode: 'balanced', port: await port() });
+  const runtimeDir = path.dirname(s.launchOptions().args[1]);
+  const proxy = () => JSON.parse(fs.readFileSync(path.join(runtimeDir, 'config.json')));
+  const priority = name => JSON.parse(fs.readFileSync(path.join(proxy().oauth['auth-dir'], name))).priority;
+  const usage = value => fs.writeFileSync(path.join(runtimeDir, 'usage-override.json'), JSON.stringify(value));
+  assert.ok(proxy().oauth['model-alias'].claude && proxy().oauth['model-alias'].codex, 'balanced publishes both providers');
+  assert.equal(s.status().balance.primary, 'claude', 'Claude is the initial primary');
+  assert.equal(priority('claude-fixture.json'), 100);
+  usage({ claude: 95, codex: 10 });
+  let balance = await s.balanceNow();
+  assert.equal(balance.primary, 'codex');
+  assert.equal(balance.headroom.claude, 5);
+  assert.equal(balance.headroom.codex, 90);
+  assert.equal(priority('codex-fixture.json'), 100);
+  assert.equal(priority('claude-fixture.json'), 50);
+  assert.match(balance.reason, /ChatGPT has more headroom/);
+  usage({ claude: 5, codex: 95 });
+  balance = await s.balanceNow();
+  assert.equal(balance.primary, 'codex', 'a recent switch is not reversed immediately');
+  getNow.advance(31 * 60000);
+  balance = await s.balanceNow();
+  assert.equal(balance.primary, 'claude');
+  assert.equal(priority('claude-fixture.json'), 100);
+  getNow.advance(31 * 60000);
+  usage({ claude: 'fail', codex: 0 });
+  balance = await s.balanceNow();
+  assert.equal(balance.primary, 'claude', 'unavailable usage keeps the current primary');
+  assert.equal(balance.headroom.claude, null);
+  assert.match(balance.reason, /unavailable/);
+  assert.ok(!JSON.stringify(s.status()).includes('fixture-claude-secret'));
+  await s.save({ enabled: true, mode: 'chatgpt' });
+  assert.equal(s.status().balance, null, 'balance state is hidden outside balanced mode');
+  await s.disconnect();
 });

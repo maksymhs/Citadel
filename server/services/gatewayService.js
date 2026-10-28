@@ -9,7 +9,7 @@ const { promisify } = require('node:util');
 const { DATA_DIR } = require('../config');
 const { getDatabase } = require('../database/db');
 const { encrypt, decrypt } = require('../security/secrets');
-const { ALIASES, DEFAULTS, providerOf, aliasesFor, errorRules, requireConnections } = require('./gatewayRouting');
+const { ALIASES, DEFAULTS, MODES, ROLES, ROLE_PROVIDERS, BALANCE, priorityFor, providerOf, aliasesFor, errorRules, requireConnections, headroomFrom, chooseBalancedPrimary } = require('./gatewayRouting');
 const { normalizeModels, normalizeClaudeUsage, normalizeCodexUsage, safeProviderSnapshot } = require('./gatewayDiscoveryService');
 
 const VERSION = '8.0.43';
@@ -18,9 +18,11 @@ const MODEL = /^[a-zA-Z0-9][a-zA-Z0-9._:/+()-]{0,159}$/;
 const KEY = 'ai.gateway';
 const AUTH_KEY = 'ai.gateway.credentials';
 
-function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetchImpl = fetch, spawnImpl = spawn, execFileImpl = promisify(execFile), platform = process.platform, arch = process.arch } = {}) {
+function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetchImpl = fetch, spawnImpl = spawn, execFileImpl = promisify(execFile), platform = process.platform, arch = process.arch, now = Date.now, balanceIntervalMs = 5 * 60 * 1000 } = {}) {
   const root = path.join(dataDir, 'gateway');
   const binary = path.join(root, 'cli-proxy-api');
+  let balanceTimer = null;
+  const balance = { evaluatedAt: null, reason: null, headroom: null };
   let runtime = null, processHandle = null, loginHandle = null, login = null, lastError = null, busy = false, credentialTimer = null, loginTimer = null, managementKey = null, pollingLogin = false;
   const discoveryCache = new Map();
   const discoveryGeneration = { value: 0 };
@@ -128,7 +130,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       try {
         const metadata = JSON.parse(fs.readFileSync(file, 'utf8'));
         const provider = providerOf(name, metadata);
-        const priority = provider === 'claude' ? 100 : 50;
+        const priority = priorityFor(c.mode, provider, c.balancedPrimary === 'codex' ? 'codex' : BALANCE.defaultPrimary);
         if (provider && metadata.priority !== priority) { metadata.priority = priority; fs.writeFileSync(file, JSON.stringify(metadata), { mode: 0o600 }); }
       } catch { /* temporary or unrelated files do not become credentials */ }
     }
@@ -227,6 +229,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     return { version: VERSION, supported: supported(), installed: installed(), enabled: c.enabled, running: Boolean(processHandle), connected: connected(), port: c.port,
       planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel,
       mode: c.mode, claudeEnabled: c.claudeEnabled !== false, opencodeEnabled: Boolean(c.opencodeEnabled), codexEnabled: Boolean(c.codexEnabled), contextTokens: c.contextTokens, claudePlanningModel: c.claudePlanningModel, claudeExecutionModel: c.claudeExecutionModel, claudeSmallModel: c.claudeSmallModel, connections: connections(), aliases: ALIASES,
+      planningProvider: c.planningProvider, executionProvider: c.executionProvider, smallProvider: c.smallProvider, balance: balanceStatus(),
       busy, error: lastError, login: login ? { state: login.state, provider: login.provider, url: login.url, code: login.code, expiresAt: login.expiresAt } : null };
   }
   async function loginStart(provider = 'codex') {
@@ -340,7 +343,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     child.on('close', () => {
       if (processHandle !== child) return;
       processHandle = null;
-      clearInterval(credentialTimer);
+      clearInterval(credentialTimer); clearBalanceTimer();
       lastError = lastError || 'Gateway stopped. Disable and enable it to restart.';
       try { persistCredentials(); } catch { /* report safe status only */ }
       releaseIdleRuntime();
@@ -374,13 +377,19 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
         }
       }
       if (input.mode !== undefined) {
-        if (!['chatgpt', 'claude', 'auto'].includes(input.mode)) throw new Error('Mode must be Claude, ChatGPT or Auto.');
+        if (!MODES.includes(input.mode)) throw new Error('Mode must be Claude, ChatGPT, Auto, By role or Balanced.');
         c.mode = input.mode;
       }
       for (const key of ['claudeEnabled', 'opencodeEnabled', 'codexEnabled']) {
         if (input[key] !== undefined) {
           if (typeof input[key] !== 'boolean') throw new Error(`${key} must be a boolean.`);
           c[key] = input[key];
+        }
+      }
+      for (const role of ROLES) {
+        if (input[role.provider] !== undefined) {
+          if (!ROLE_PROVIDERS.includes(input[role.provider])) throw new Error('Role provider must be Claude or ChatGPT.');
+          c[role.provider] = input[role.provider];
         }
       }
       if (input.contextTokens !== undefined) {
@@ -398,8 +407,9 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       c.enabled = false;
       write(KEY, JSON.stringify(c));
       try {
-        if (enabled) { await start(); c.clientKey = config().clientKey; c.enabled = true; write(KEY, JSON.stringify(c)); if (runtime) writeRuntime(); }
+        if (enabled) { await start(); c.clientKey = config().clientKey; c.enabled = true; write(KEY, JSON.stringify(c)); if (runtime) writeRuntime(); syncBalanceTimer(); }
         else {
+          clearBalanceTimer();
           if (login?.provider === 'claude' && ['waiting_callback', 'exchanging'].includes(login.state)) { clearInterval(loginTimer); login = { provider: 'claude', state: 'failed' }; }
           clearInterval(credentialTimer); const child = processHandle; processHandle = null; await stopChild(child); if (runtime) persistCredentials(); releaseIdleRuntime(); }
       } catch (err) { lastError = err.message; throw err; }
@@ -437,6 +447,70 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       },
     }, { management: true });
     return parseManagementBody(result);
+  }
+  async function usageStateFor(provider, files) {
+    const credentials = files.filter(file => String(file.provider || file.type || '').toLowerCase() === provider && (typeof file.auth_index === 'string' || Number.isSafeInteger(file.auth_index)) && String(file.auth_index).length <= 128 && !file.disabled).slice(0, 8);
+    const accounts = await Promise.all(credentials.map(async (_, index) => {
+      try {
+        const payload = await upstreamUsage(credentials[index].auth_index, provider);
+        const windows = provider === 'claude' ? normalizeClaudeUsage(payload) : normalizeCodexUsage(payload);
+        return { label: `Account ${index + 1}`, status: windows.length ? 'available' : 'unavailable', windows };
+      } catch { return { label: `Account ${index + 1}`, status: 'unavailable', windows: [] }; }
+    }));
+    return { status: accounts.some(account => account.status === 'available') ? (accounts.every(account => account.status === 'available') ? 'available' : 'partial') : 'unavailable', fetchedAt: new Date(now()).toISOString(), expiresAt: new Date(now() + DISCOVERY_TTL.usage).toISOString(), stale: false, accounts };
+  }
+  function balanceState() {
+    const c = config();
+    return { primary: c.balancedPrimary === 'codex' ? 'codex' : BALANCE.defaultPrimary, switchedAt: Number(c.balancedSwitchedAt) || 0 };
+  }
+  function clearBalanceTimer() { clearTimeout(balanceTimer); balanceTimer = null; }
+  function syncBalanceTimer() {
+    clearBalanceTimer();
+    const c = config();
+    if (!processHandle || !c.enabled || c.mode !== 'balanced') { balance.reason = null; balance.evaluatedAt = null; return; }
+    const tick = (delay) => {
+      balanceTimer = setTimeout(() => { balanceNow().catch(() => {}).finally(() => { if (balanceTimer) tick(balanceIntervalMs); }); }, delay);
+      balanceTimer.unref();
+    };
+    tick(Math.min(10000, balanceIntervalMs));
+  }
+  // Reads each connected provider's usage windows and moves the Auto priority to
+  // the provider with more headroom. It only rewrites priorities; running
+  // conversations keep their provider through session affinity.
+  async function balanceNow() {
+    if (busy) return balanceStatus();
+    busy = true;
+    try {
+      const c = config();
+      if (c.mode !== 'balanced' || !c.enabled || !processHandle) return balanceStatus();
+      const connectedProviders = connections();
+      const headroom = {};
+      try {
+        const authFiles = await api('/v8/management/credentials', null, { management: true });
+        const files = Array.isArray(authFiles.files) ? authFiles.files.slice(0, 64) : [];
+        for (const provider of ['claude', 'codex']) {
+          headroom[provider] = connectedProviders[provider] ? headroomFrom(await usageStateFor(provider, files), now()) : null;
+        }
+      } catch { headroom.claude = null; headroom.codex = null; }
+      const current = balanceState();
+      const decision = chooseBalancedPrimary({ headroom, current: current.primary, switchedAt: current.switchedAt, now: now() });
+      balance.evaluatedAt = new Date(now()).toISOString();
+      balance.reason = decision.reason;
+      balance.headroom = { claude: headroom.claude ?? null, codex: headroom.codex ?? null };
+      if (decision.switched) {
+        const next = config();
+        next.balancedPrimary = decision.primary; next.balancedSwitchedAt = now();
+        write(KEY, JSON.stringify(next));
+        if (runtime) writeRuntime();
+      }
+      return balanceStatus();
+    } finally { busy = false; }
+  }
+  function balanceStatus() {
+    const c = config();
+    if (c.mode !== 'balanced') return null;
+    const current = balanceState();
+    return { primary: current.primary, switchedAt: current.switchedAt ? new Date(current.switchedAt).toISOString() : null, evaluatedAt: balance.evaluatedAt, reason: balance.reason, headroom: balance.headroom || null };
   }
   async function refreshDiscovery({ provider: onlyProvider } = {}) {
     return exclusive(async () => {
@@ -481,15 +555,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
             modelState = { status: items.length ? 'available' : 'unavailable', source: items.length ? source : null, fetchedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + DISCOVERY_TTL.models).toISOString(), stale: false, items };
           } catch { modelError = true; }
           try {
-            const credentials = files.filter(file => String(file.provider || file.type || '').toLowerCase() === provider && (typeof file.auth_index === 'string' || Number.isSafeInteger(file.auth_index)) && String(file.auth_index).length <= 128 && !file.disabled).slice(0, 8);
-            const accounts = await Promise.all(credentials.map(async (_, index) => {
-              try {
-                const payload = await upstreamUsage(credentials[index].auth_index, provider);
-                const windows = provider === 'claude' ? normalizeClaudeUsage(payload) : normalizeCodexUsage(payload);
-                return { label: `Account ${index + 1}`, status: windows.length ? 'available' : 'unavailable', windows };
-              } catch { return { label: `Account ${index + 1}`, status: 'unavailable', windows: [] }; }
-            }));
-            usageState = { status: accounts.some(account => account.status === 'available') ? (accounts.every(account => account.status === 'available') ? 'available' : 'partial') : 'unavailable', fetchedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + DISCOVERY_TTL.usage).toISOString(), stale: false, accounts };
+            usageState = await usageStateFor(provider, files);
             usageError = usageState.status === 'unavailable';
           } catch { usageError = true; }
           if (generation === discoveryGeneration.value) {
@@ -521,7 +587,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     return { command: process.execPath, args: [path.resolve(__dirname, '../../scripts/gateway-launch.js'), path.join(runtime, 'launch.json'), ...(!['shell', 'claude'].includes(client) ? ['--client', client] : [])] };
   }
   async function close() {
-    clearInterval(credentialTimer); clearInterval(loginTimer);
+    clearInterval(credentialTimer); clearInterval(loginTimer); clearBalanceTimer();
     login = login && ['connected', 'failed'].includes(login.state) ? login : null;
     const children = [loginHandle, processHandle]; loginHandle = null; processHandle = null;
     await Promise.all(children.map(stopChild));
@@ -540,7 +606,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       return status();
     });
   }
-  async function resume() { if (config().enabled) { try { await start(); } catch { lastError = 'AI Gateway could not resume. Open Settings → AI Gateway.'; } } }
-  return { status, install, loginStart, save, models, discovery: discoverySnapshot, refreshDiscovery, testConnection, launchOptions, close, disconnect, resume, callback, refreshLogin };
+  async function resume() { if (config().enabled) { try { await start(); syncBalanceTimer(); } catch { lastError = 'AI Gateway could not resume. Open Settings → AI Gateway.'; } } }
+  return { status, install, loginStart, save, models, discovery: discoverySnapshot, refreshDiscovery, testConnection, launchOptions, close, disconnect, resume, callback, refreshLogin, balanceNow };
 }
 module.exports = { ...createGatewayService(), createGatewayService, VERSION };

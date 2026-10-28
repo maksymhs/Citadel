@@ -65,13 +65,15 @@ Keep Claude Code pointed at one local endpoint and fixed, descriptive aliases:
 actual models inside the gateway, rather than changing CLI environment variables
 for each model switch or disguising GPT as a known Claude model.
 
-Settings exposes three modes:
+Settings exposes these modes:
 
 | Mode | Route policy |
 | --- | --- |
 | Claude | Only the explicitly connected Claude provider |
 | ChatGPT | Only the explicitly connected Codex/ChatGPT provider |
-| Auto | Prefer Claude; fall back to ChatGPT on eligible failures; keep a session on its fallback while it continues |
+| Auto | Prefer Claude (or ChatGPT in the reversed variant); fall back on eligible failures; keep a session on its fallback while it continues |
+| By role | Each stable alias is published on one provider only; no fallback |
+| Balanced | Auto whose primary follows remaining usage headroom, re-evaluated every 5 minutes with hysteresis |
 
 The selected model pair controls planning and execution independently. Priorities
 select the initial provider; session affinity prevents repeated oscillation.

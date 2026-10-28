@@ -221,7 +221,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       win.eval(fs.readFileSync(path.join(ROOT, 'public/js/settings-gateway.js'), 'utf8'));
       const calls = [], notices = [];
       let unsafeAuthUrl = false;
-      let gateway = { installed: true, supported: true, running: true, connected: true, enabled: true, port: 8317, version: 'fixture', mode: 'chatgpt', contextTokens: 200000,
+      let gateway = { installed: true, supported: true, running: true, connected: true, enabled: true, port: 8317, version: 'fixture', mode: 'chatgpt', contextTokens: 200000, planningProvider: 'claude', executionProvider: 'codex', smallProvider: 'codex',
         planningModel: 'gpt-plan', executionModel: 'gpt-run', smallModel: 'gpt-small', claudePlanningModel: 'claude-plan', claudeExecutionModel: 'claude-run', claudeSmallModel: 'claude-small', connections: { codex: true, claude: false } };
       const discovery = { providers: { codex: { connected: true, models: { status: 'available', source: 'credential_catalog', fetchedAt: new Date().toISOString(), stale: false, items: [{ id: 'gpt-run', label: 'GPT run' }, { id: 'gpt-image-2', label: 'Image' }, { id: 'whisper-1', label: 'Audio' }] }, usage: { status: 'available', fetchedAt: new Date().toISOString(), accounts: [{ label: 'Account 1', windows: [{ id: 'primary', label: '5-hour window', usedPercent: 0, durationSeconds: 18000, resetsAt: new Date(Date.now() + 60000).toISOString() }, { id: 'weekly', label: 'Weekly window', usedPercent: 45 }, { id: 'limit', label: 'Additional limit', usedPercent: 100 }, { id: 'unknown', label: 'Unknown window', usedPercent: null }] }, { label: 'Account 2', windows: [{ id: 'secondary', label: 'Other account', usedPercent: 12 }] }] } }, claude: { connected: false, models: { status: 'not_connected', items: [] }, usage: { status: 'not_connected', accounts: [] } } } };
       await win.CitadelGatewaySettings.init({ escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), showToast: msg => notices.push(msg),
@@ -298,7 +298,23 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.deepEqual(Object.keys(toggle.body), ['enabled'], 'the activation switch sends no other configuration fields');
       assert.equal(toggle.body.enabled, false, 'the activation switch sends its new state');
       assert.equal(win.document.getElementById('gateway-planning').value, 'gpt-run', 'pending model edit survives an activation update');
+      const modeSelect = () => win.document.getElementById('gateway-mode');
+      assert.equal(win.document.getElementById('gateway-role-planning'), null, 'role selectors are hidden outside By role');
+      modeSelect().value = 'roles'; modeSelect().dispatchEvent(new win.Event('change', { bubbles: true }));
+      assert.equal(win.document.getElementById('gateway-role-planning').value, 'claude');
+      assert.equal(win.document.getElementById('gateway-role-execution').value, 'codex');
+      const roleSelect = win.document.getElementById('gateway-role-execution'); roleSelect.value = 'claude'; roleSelect.dispatchEvent(new win.Event('change', { bubbles: true }));
+      win.document.getElementById('gateway-save').click(); await sleep(30);
+      const roleSave = calls.filter(call => call.method === 'PUT').at(-1).body;
+      assert.equal(roleSave.mode, 'roles'); assert.equal(roleSave.executionProvider, 'claude'); assert.equal(roleSave.planningProvider, 'claude');
+      modeSelect().value = 'balanced'; modeSelect().dispatchEvent(new win.Event('change', { bubbles: true }));
+      assert.equal(win.document.getElementById('gateway-role-planning'), null);
+      assert.match(win.document.getElementById('gateway-body').textContent, /most headroom|Balanced is opt-in/);
+      win.document.getElementById('gateway-save').click(); await sleep(30);
+      assert.equal(calls.filter(call => call.method === 'PUT').at(-1).body.mode, 'balanced');
+      gateway = { ...gateway, balance: { primary: 'codex', switchedAt: null, evaluatedAt: new Date().toISOString(), reason: 'ChatGPT has more headroom (90% free vs 5%).', headroom: { claude: 5, codex: 90 } } };
       win.document.getElementById('gateway-test').click(); await sleep(30);
+      assert.match(win.document.getElementById('gateway-body').textContent, /Balanced primary: ChatGPT.*Claude 5% free, ChatGPT 90% free/);
       assert.ok(notices.some(message => message.includes('actual-fixture-model')));
       assert.ok(calls.every(call => !call.url.includes('private-fixture-code')));
       unsafeAuthUrl = true;
