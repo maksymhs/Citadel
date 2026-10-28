@@ -5,7 +5,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { EventEmitter } = require('node:events');
 const root = fs.mkdtempSync(path.join(fs.existsSync('/dev/shm') ? '/dev/shm' : require('node:os').tmpdir(), 'citadel-chat-test-'));
-Object.assign(process.env, { DATA_DIR: root, DATABASE_PATH: path.join(root, 'panel.sqlite'), PROJECTS_DIR: path.join(root, 'projects'), LOGS_DIR: path.join(root, 'logs'), DOTENV_CONFIG_PATH: '/dev/null', CITADEL_SELF_UPDATE: '0' });
+Object.assign(process.env, { HOME: root, XDG_CONFIG_HOME: path.join(root, 'config'), XDG_DATA_HOME: path.join(root, 'data'), XDG_STATE_HOME: path.join(root, 'state'), XDG_CACHE_HOME: path.join(root, 'cache'), DATA_DIR: root, DATABASE_PATH: path.join(root, 'panel.sqlite'), PROJECTS_DIR: path.join(root, 'projects'), LOGS_DIR: path.join(root, 'logs'), DOTENV_CONFIG_PATH: '/dev/null', CITADEL_SELF_UPDATE: '0' });
 const { createChatService, getChildEnv } = require('../server/services/chatService');
 const { initDatabase, closeDatabase, getDatabase } = require('../server/database/db');
 const auth = require('../server/security/auth');
@@ -17,11 +17,11 @@ const sessions = new Map(), requests = [];
 const launchFile = path.join(root, 'launch.json');
 const settings = { token: 'isolated-test-only', baseUrl: 'http://127.0.0.1:1', opencodeEnabled: true };
 fs.writeFileSync(launchFile, JSON.stringify(settings), { mode: 0o600 });
-let configValid = true, completedPrompt = null, failPrompt = false;
+let configValid = true, completedPrompt = null, failPrompt = false, overrideResponse = null, transformConfig = value => value;
 const projects = { p1: path.join(root, 'projects', 'one'), p2: path.join(root, 'projects', 'two') };
 const requiredPaths = { '/event': ['get'], '/session': ['post'], '/session/status': ['get'], '/session/{sessionID}': ['get', 'patch'], '/session/{sessionID}/message': ['get'], '/session/{sessionID}/prompt_async': ['post'], '/session/{sessionID}/abort': ['post'], '/permission': ['get'], '/question': ['get'], '/permission/{requestID}/reply': ['post'], '/question/{requestID}/reply': ['post'], '/question/{requestID}/reject': ['post'] };
-function service() {
-  return createChatService({ dataDir: root, getProject: id => projects[id] ? { path: projects[id] } : null, validatePath: value => value,
+function service(dataDir = root) {
+  return createChatService({ dataDir, getProject: id => projects[id] ? { path: projects[id] } : null, validatePath: value => value,
     registry: { findBinary: () => '/fake/opencode' }, gateway: { status: () => ({ enabled, opencodeEnabled: enabled, running: enabled }), launchOptions: () => enabled ? { command: 'wrapper', args: ['launch', launchFile, '--client', 'opencode'] } : null },
     spawnImpl(command, args, options) {
       launchSeen = { command, args, options };
@@ -40,9 +40,11 @@ before(async () => {
     const payload = body ? JSON.parse(body) : undefined;
     requests.push({ method: req.method, path: url.pathname, headers: req.headers, payload });
     res.setHeader('content-type', 'application/json');
+    const override = overrideResponse?.(req, url);
+    if (override) { res.statusCode = override.status || 200; return res.end(override.body || ''); }
     const send = data => res.end(JSON.stringify(data));
     if (url.pathname === '/global/health') return send({ healthy: true, version: '1.19.3' });
-    if (url.pathname === '/config') return send(configValid ? JSON.parse(require('../scripts/gateway-launch').opencodeEnvironment({}, settings).OPENCODE_CONFIG_CONTENT) : { enabled_providers: ['native'] });
+    if (url.pathname === '/config') return send(configValid ? transformConfig(JSON.parse(require('../scripts/gateway-launch').opencodeEnvironment(launchSeen.options.env, settings).OPENCODE_CONFIG_CONTENT)) : { enabled_providers: ['native'] });
     if (url.pathname === '/doc') return send({ paths: Object.fromEntries(Object.entries(requiredPaths).map(([key, methods]) => [key, Object.fromEntries(methods.map(method => [method, {}]))])) });
     if (url.pathname === '/event') { res.setHeader('content-type', 'text/event-stream'); res.write('data: {"type":"server.connected"}\n\n'); streamResponse = res; return; }
     if (url.pathname === '/session/status') return send(statuses);
@@ -117,7 +119,7 @@ test('strict authenticated API rejects browser config and persistent approvals',
   const url = `/api/projects/p1/chat/sessions/${sessionId}`;
   assert.equal((await app.inject({ url })).statusCode, 401);
   assert.equal((await app.inject({ url, cookies: cookie, headers: { origin: 'https://evil.example' } })).statusCode, 403);
-  for (const payload of [{ text: 'hi', role: 'build', requestId: 'r', directory: '/' }, { text: '', role: 'plan', requestId: 'r' }, { text: 'hi', role: 'root', requestId: 'r' }, { text: 'hi', role: 'build', requestId: '../r' }]) assert.equal((await app.inject({ method: 'POST', url: `${url}/messages`, cookies: cookie, payload })).statusCode, 400);
+  for (const payload of [null, [], { text: ' \n ', role: 'build', requestId: 'r' }, { text: 'nul\0text', role: 'plan', requestId: 'r' }, { text: 'x'.repeat(32001), role: 'build', requestId: 'r' }, { text: 'hi', role: 'build', requestId: 'r', directory: '/' }, { text: '', role: 'plan', requestId: 'r' }, { text: 'hi', role: 'root', requestId: 'r' }, { text: 'hi', role: 'build', requestId: '../r' }]) assert.equal((await app.inject({ method: 'POST', url: `${url}/messages`, cookies: cookie, payload })).statusCode, 400);
   assert.equal((await app.inject({ method: 'POST', url: `${url}/permissions/per_test/reply`, cookies: cookie, payload: { reply: 'always' } })).statusCode, 400);
   assert.equal((await app.inject({ url: `${url}?directory=/`, cookies: cookie })).statusCode, 400);
   getDatabase().prepare("UPDATE users SET role = 'viewer' WHERE id = ?").run(user.id);
@@ -198,6 +200,29 @@ test('uncertain submissions stay cancellable and idempotent until explicitly res
   fs.writeFileSync(launchFile, JSON.stringify(settings));
   assert.equal((await chat.snapshot(user.id, 'p1', sessionId)).status, 'idle');
 });
+test('empty acknowledgements work but required JSON and upstream errors are safely diagnosed', async () => {
+  const base = `/api/projects/p1/chat/sessions/${sessionId}`;
+  try {
+    overrideResponse = (req, url) => /\/(prompt_async|abort|reply|reject)$/.test(url.pathname) ? { status: 200 } : null;
+    await chat.message(user.id, 'p1', sessionId, { text: 'fake-only', role: 'build', requestId: 'empty-ack' });
+    await chat.action(user.id, 'p1', sessionId, 'cancel');
+    for (const [status, body, expected] of [[200, '', 'empty response'], [204, '', 'empty response'], [200, 'private prompt token http://secret:password@host', 'invalid JSON'], [502, 'private prompt token http://secret:password@host', 'HTTP 502'], [200, 'x'.repeat(2 * 1024 * 1024 + 1), 'response too large']]) {
+      overrideResponse = (req, url) => url.pathname === '/permission' ? { status, body } : null;
+      const response = await app.inject({ url: base, cookies: cookie });
+      assert.equal(response.statusCode, 503);
+      assert.match(response.json().error, /GET \/permission/);
+      assert.ok(response.json().error.includes(expected));
+      assert.doesNotMatch(response.body, /private prompt|password|http:/);
+    }
+    overrideResponse = (req, url) => url.pathname === `/session/${sessionId}` ? { status: 404, body: 'private upstream' } : null;
+    const missing = await app.inject({ url: base, cookies: cookie });
+    assert.equal(missing.statusCode, 409);
+    assert.match(missing.json().error, /GET \/session\/:id: HTTP 404/);
+    assert.match(missing.json().error, /Create a new chat/);
+    assert.ok(!missing.body.includes(sessionId));
+  } finally { overrideResponse = null; }
+});
+
 test('effective engine config must be gateway-only', async () => {
   await chat.close();
   chat = service();
@@ -207,11 +232,19 @@ test('effective engine config must be gateway-only', async () => {
   assert.equal(chat.status().ready, true);
   await chat.snapshot(user.id, 'p1', sessionId);
 });
-test('installed OpenCode capability, creation and snapshot contract without prompts', { skip: !fs.existsSync('/srv/citadel/.opencode/bin/opencode') }, async () => {
+test('installed OpenCode capability, creation and snapshot contract without prompts', { skip: !fs.existsSync('/srv/citadel/.opencode/bin/opencode') }, async t => {
   const realRoot = path.join(root, 'real'); fs.mkdirSync(realRoot);
   const launchFile = path.join(realRoot, 'launch.json');
   fs.writeFileSync(launchFile, JSON.stringify({ token: 'isolated-test-only', baseUrl: 'http://127.0.0.1:1', opencodeEnabled: true }), { mode: 0o600 });
-  const real = createChatService({ dataDir: realRoot, getProject: () => ({ path: projects.p1 }), validatePath: value => value,
+  const observed = {};
+  const real = createChatService({ fetchImpl: async (url, options) => {
+    const response = await fetch(url, options);
+    if (['/global/health', '/doc'].includes(url.pathname)) {
+      const text = await response.clone().text();
+      observed[url.pathname] = url.pathname === '/doc' ? Buffer.byteLength(text) : JSON.parse(text).version;
+    }
+    return response;
+  }, dataDir: realRoot, getProject: () => ({ path: projects.p1 }), validatePath: value => value,
     registry: { findBinary: () => '/srv/citadel/.opencode/bin/opencode' }, gateway: { status: () => ({ enabled: true, opencodeEnabled: true, running: true }), launchOptions: () => ({ command: process.execPath, args: [path.resolve(__dirname, '../scripts/gateway-launch.js'), launchFile, '--client', 'opencode'] }) } });
   try {
     const created = await real.create(user.id, 'p1');
@@ -220,7 +253,46 @@ test('installed OpenCode capability, creation and snapshot contract without prom
     assert.equal(snapshot.status, 'idle');
     assert.deepEqual(snapshot.permissions, []);
     assert.deepEqual(snapshot.questions, []);
+    assert.equal(observed['/global/health'], '1.19.3');
+    assert.ok(observed['/doc'] < 4 * 1024 * 1024);
+    t.diagnostic(`Installed engine ${observed['/global/health']}; /doc ${observed['/doc']} bytes; no prompts submitted.`);
   } finally { await real.close(); }
+});
+
+test('startup rejects alias drift and unsafe permissions without submitting prompts', async () => {
+  await chat.close();
+  const count = prompts;
+  try {
+    for (const mutate of [value => { value.agent.plan.model = 'citadel/wrong'; return value; }, value => { value.permission = 'allow'; return value; }, value => { value.agent.plan.permission.bash = 'allow'; return value; }]) {
+      transformConfig = mutate;
+      const next = service();
+      try { await assert.rejects(next.create(user.id, 'p1'), /aliases|permission configuration/); }
+      finally { await next.close(); }
+    }
+  } finally { transformConfig = value => value; }
+  assert.equal(prompts, count);
+});
+
+test('canonical data aliases work but symlinked runtime directories fail before spawn', async () => {
+  const home = launchSeen.options.env.HOME;
+  const alias = path.join(root, 'alias');
+  fs.symlinkSync(root, alias);
+  const originalData = path.join(home, 'data');
+  fs.renameSync(originalData, `${originalData}-saved`);
+  fs.symlinkSync(`${originalData}-saved`, originalData);
+  const seen = launchSeen;
+  const next = service();
+  try {
+    await assert.rejects(next.create(user.id, 'p1'), /Invalid chat runtime storage/);
+    assert.equal(launchSeen, seen);
+  } finally {
+    await next.close();
+    fs.unlinkSync(originalData);
+    fs.renameSync(`${originalData}-saved`, originalData);
+  }
+  const aliased = service(alias);
+  try { await aliased.snapshot(user.id, 'p1', sessionId); }
+  finally { await aliased.close(); fs.unlinkSync(alias); }
 });
 
 test('metadata ownership survives service recreation', async () => {

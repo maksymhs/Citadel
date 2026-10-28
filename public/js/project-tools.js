@@ -53,7 +53,27 @@
   }
 
   function showEditor(project) { return window.CitadelBrowserEditor.open(project); }
+  function scopeKey(projectId) {
+    return JSON.stringify([state.user?.id ?? state.user?.username ?? null, state.hostIdentity?.instanceId ?? location.origin, state.activeHostId, projectId]);
+  }
+
+  const preferences = new Map();
+  function workspacePreference(projectId, partial) {
+    const key = `citadel.workspace.${scopeKey(projectId)}`;
+    let value = preferences.get(key) || {};
+    try {
+      if (state.user) value = JSON.parse(localStorage.getItem(key)) || value;
+    } catch {}
+    if (partial) {
+      value = { ...value, ...partial };
+      preferences.set(key, value);
+      try { if (state.user) localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    }
+    return value;
+  }
+
+  function reset() { preferences.clear(); }
   function showChat(project) { return window.CitadelChat.open(project); }
 
-  window.CitadelProjectTools = { init, mountDiscovery, showEditor, showChat };
+  window.CitadelProjectTools = { init, mountDiscovery, showEditor, showChat, scopeKey, workspacePreference, reset };
 })();

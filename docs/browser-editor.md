@@ -2,9 +2,13 @@
 
 ## Native Chat
 
-Choose **Projects → More actions → Chat**, or **Chat** in a project terminal.
-Citadel's own Chat panel opens in the main workspace, keeping the terminal mounted.
-**Return to Terminal** restores it without restarting it. This is not an embedded
+Choose **Projects → More actions → Chat**, or the independent **Terminal / Chat**
+mode buttons in a project workspace. The mode buttons remain available in Chat;
+entering a workspace remembered in Chat does not create or attach a terminal.
+An already mounted terminal stays mounted when switching modes.
+The compact **Chat options** menu beside the composer contains **Return to Terminal**,
+which restores it without restarting it. There is no Chat toolbar above the conversation.
+This is not an embedded
 OpenCode GUI: the old GUI, bundle adapter, `/opencode/*`, `/api/opencode-web` and
 root API proxies have been removed. VS Code and native terminal agents remain available.
 
@@ -14,7 +18,10 @@ explicitly connect your Claude and/or ChatGPT accounts, choose a route, select
 those connected subscriptions and shared planning/execution/background aliases;
 it does not import CLI login caches or fall back to native providers. Account
 entitlement and third-party compatibility remain experimental. A missing or stopped
-gateway produces an error. See [AI Gateway](ai-gateway.md).
+gateway produces an error. Engine failures identify the operation and HTTP status,
+empty/invalid/oversized response or connection/timeout failure without exposing
+upstream bodies, credentials or session IDs. An engine 404 for a saved session asks
+you to create a new chat. See [AI Gateway](ai-gateway.md).
 
 Fresh Citadel installs still include the OpenCode CLI, without auto-starting it;
 install or update it through Settings → Tools if needed. Native Chat requires
@@ -28,7 +35,17 @@ collapsed tool activity and a rounded, auto-growing composer. The welcome screen
 suggestions fill a draft only; they never submit a prompt automatically. The composer
 stays visible on mobile while messages scroll independently.
 
-Use **New chat** or select a previous session. **Build** uses the execution alias;
+Opening Chat resumes the remembered session if it is still in the server's project
+list, otherwise the most recently updated session, or creates one if the list is empty.
+Reconnecting rereads that list. Workspace mode, terminal ID and Chat session ID are
+stored in browser localStorage, scoped to signed-in owner, panel instance, selected
+host and project; stored IDs are selection hints, never authorization. Draft text and
+Plan/Build choice stay in page memory per scope, survive mode/project navigation,
+and are cleared on logout or machine switch (also lost on reload). They are never
+written to localStorage. The project name appears only as subtle welcome context.
+Use **Chat options → New chat** or **Session history** to start another conversation
+or select an older one.
+**Build** uses the execution alias;
 **Plan** uses the planning alias and denies edit, bash, task and external-directory
 permissions. Other permissions default to **ask**. Chat displays **Allow once** or
 **Reject**, plus question choices/custom answers and question rejection; it does
@@ -39,6 +56,8 @@ an agent; it may still be running.
 
 Live updates use session-scoped SSE notifications followed by bounded snapshots,
 not a raw OpenCode event/API proxy. EventSource reconnects and refreshes state;
+inline composer notices appear only for errors or required input, with **Settings**
+and **Reconnect** available there rather than in a persistent status strip.
 **Reconnect** reloads sessions, and online/tab-return handling refreshes the
 selection. Sending and approvals wait for fresh state after a disconnect. The UI
 shows at most the latest 100 messages, with bounded parts/text and tool names/status,

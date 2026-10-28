@@ -704,7 +704,7 @@
     syncThemeChrome();
 
     document.getElementById('logout-btn').onclick = async () => {
-      window.CitadelChat.close();
+      teardownSession();
       await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
       teardownSession();
       state.user = null;
@@ -1162,6 +1162,7 @@
 
   function navigateTo(view) {
     window.CitadelChat.close();
+    workspaceGeneration++;
     view = resolveView(view);
     state.terminalSelectionGeneration += 1;
     const from = state.currentView;
@@ -2116,7 +2117,7 @@
     if (!item) return;
     requestAnimationFrame(() => {
       try {
-        if (item.containerEl.style.display !== 'none') {
+        if (item.containerEl.isConnected && !item.containerEl.closest('[inert]') && item.containerEl.style.display !== 'none') {
           item.fitAddon.fit();
           item.term.focus();
         }
@@ -2147,7 +2148,9 @@
   // poll timer and all open terminal sockets/timers. Called on logout so a
   // signed-out browser stops talking to the server.
   function teardownSession() {
-    window.CitadelChat.close();
+    workspaceGeneration++;
+    window.CitadelChat.reset();
+    window.CitadelProjectTools.reset();
     stopHostStatusPolling();
     if (state.dashboardTimer) {
       clearInterval(state.dashboardTimer);
@@ -2401,8 +2404,13 @@
     }
   }
 
+  let workspaceGeneration = 0;
+  let workspaceMode = null;
+
   async function renderWorkspaceView() {
+    const generation = workspaceGeneration;
     await loadProjects();
+    if (generation !== workspaceGeneration || state.currentView !== 'workspace') return;
     const content = document.getElementById('main-content');
 
     const context = resolveWorkspaceContext();
@@ -2426,7 +2434,42 @@
 
     const currentProject = state.projects.find((p) => p.id === context);
     if (!currentProject) return renderWorkspaceOverview();
-    return renderProjectTerminals(currentProject);
+    content.innerHTML = '<div class="workspace-project"><div class="workspace-modes" role="group" aria-label="Workspace mode"><button type="button" class="btn btn-secondary btn-sm" id="ws-terminal-mode" aria-pressed="false">Terminal</button><button type="button" class="btn btn-secondary btn-sm" id="ws-chat-btn" aria-pressed="false">Chat</button></div><div class="workspace-surface"></div></div>';
+    const surface = content.querySelector('.workspace-surface');
+    const terminalButton = document.getElementById('ws-terminal-mode');
+    const chatButton = document.getElementById('ws-chat-btn');
+    const title = document.getElementById('top-bar-title');
+    if (title) title.textContent = `Workspace — ${currentProject.name}`;
+    let terminalStarted = false, terminalReady = false, terminalAttempt = 0;
+    const choose = (mode, remember = true) => {
+      if (generation !== workspaceGeneration || !surface.isConnected) return;
+      if (mode === 'chat' && state.activeHostId !== 'local') {
+        showToast('Open this machine’s own Citadel panel to use Chat.', 'error');
+        return;
+      }
+      workspaceMode = mode;
+      const attempt = ++terminalAttempt;
+      if (remember) window.CitadelProjectTools.workspacePreference(context, { mode });
+      terminalButton.setAttribute('aria-pressed', String(mode === 'terminal'));
+      chatButton.setAttribute('aria-pressed', String(mode === 'chat'));
+      state.terminalSelectionGeneration++;
+      if (mode === 'chat') {
+        if (!terminalReady) terminalStarted = false;
+        window.CitadelChat.open(currentProject, { content: surface, onClose: () => choose('terminal') });
+      } else {
+        window.CitadelChat.close();
+        if (!terminalStarted) {
+          terminalStarted = true;
+          const present = () => generation === workspaceGeneration && surface.isConnected && workspaceMode === 'terminal' && terminalAttempt === attempt;
+          renderProjectTerminals(currentProject, surface, present).then(() => {
+            if (present()) terminalReady = true;
+          });
+        } else refitActiveTerminals();
+      }
+    };
+    terminalButton.onclick = () => { if (workspaceMode !== 'terminal') choose('terminal'); };
+    chatButton.onclick = () => { if (workspaceMode !== 'chat') choose('chat'); };
+    choose(state.activeHostId === 'local' && window.CitadelProjectTools.workspacePreference(context).mode === 'chat' ? 'chat' : 'terminal', false);
   }
 
   // Landing selector shown when the "Workspace" parent is opened.
@@ -2480,8 +2523,7 @@
   }
 
 
-  async function renderProjectTerminals(currentProject) {
-    const content = document.getElementById('main-content');
+  async function renderProjectTerminals(currentProject, content, present) {
     content.style.padding = '0';
     const titleEl = document.getElementById('top-bar-title');
     if (titleEl) titleEl.textContent = `Workspace — ${currentProject.name}`;
@@ -2492,7 +2534,6 @@
         <div class="terminal-tabs-bar" id="terminal-tabs-container">
           <span class="badge badge-muted ws-context-badge">${escapeHtml(currentProject.name)}</span>
           <button type="button" class="btn btn-secondary btn-sm" id="ws-editor-btn" title="Open this project in browser VS Code">VS Code</button>
-          <button type="button" class="btn btn-secondary btn-sm" id="ws-chat-btn" title="Chat with this project">Chat</button>
           ${fontButtonsHtml('ws')}
           <button class="btn btn-secondary btn-sm select-btn" id="ws-select-btn" title="Select and copy text (screen and history)">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7V5a1 1 0 011-1h2M4 17v2a1 1 0 001 1h2m10-16h2a1 1 0 011 1v2m0 10v2a1 1 0 01-1 1h-2M9 12h6"/></svg>
@@ -2518,7 +2559,6 @@
     `;
 
     document.getElementById('ws-editor-btn').onclick = () => window.CitadelBrowserEditor.open(currentProject);
-    document.getElementById('ws-chat-btn').onclick = () => window.CitadelChat.open(currentProject);
     document.getElementById('ws-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
     };
@@ -2541,6 +2581,7 @@
     // new terminals start in (defaults to the most recently selected/primary).
     try {
       const repoRes = await api(`/api/projects/${currentProject.id}/repos`);
+      if (!present()) return;
       const repos = repoRes.repos || [];
       if (repos.length > 1) {
         if (!state.activeRepoId || !repos.some((r) => r.id === state.activeRepoId)) {
@@ -2567,7 +2608,9 @@
     // Restore all live sessions for this project from the backend (tmux keeps
     // them running server-side), then attach/mount them as tabs.
     try {
+      if (!present()) return;
       const termRes = await api(`/api/terminals?projectId=${currentProject.id}`);
+      if (!present()) return;
       state.tmuxAvailable = !!termRes.tmuxAvailable;
       const alive = (termRes.sessions || []).filter((s) => s.isAlive);
 
@@ -2580,7 +2623,7 @@
       }
 
       if (alive.length === 0) {
-        await spawnNewTerminal(currentProject.id, null, null, state.activeRepoId);
+        await spawnNewTerminal(currentProject.id, null, null, state.activeRepoId, present);
         return;
       }
 
@@ -2592,8 +2635,9 @@
         }
       }
 
-      const keepActive = state.activeTerminalId && alive.some((s) => s.id === state.activeTerminalId);
-      const activeId = keepActive ? state.activeTerminalId : alive[0].id;
+      const remembered = window.CitadelProjectTools.workspacePreference(currentProject.id).terminalId;
+      const keepActive = alive.some((s) => s.id === remembered);
+      const activeId = keepActive ? remembered : alive[0].id;
       const activeName = (alive.find((s) => s.id === activeId) || {}).name || 'Terminal';
       await activateTerminalSession(activeId, activeName);
     } catch (err) {
@@ -2601,15 +2645,18 @@
     }
   }
 
-  async function spawnNewTerminal(projectId, customName = null, agentId = null, repoId = null) {
+  async function spawnNewTerminal(projectId, customName = null, agentId = null, repoId = null, present = () => true) {
     try {
       const body = {
         projectId,
         name: customName || `Terminal ${state.terminals.size + 1}`,
       };
       if (repoId) body.repoId = repoId;
+      const generation = workspaceGeneration;
       const res = await api('/api/terminals', { method: 'POST', body });
+      if (generation !== workspaceGeneration || !present()) return;
       await loadSessions();
+      if (generation !== workspaceGeneration || !present()) return;
       await activateTerminalSession(res.session.sessionId, res.session.name);
     } catch (err) {
       showToast(`Failed to create terminal: ${err.message}`, 'error');
@@ -2623,6 +2670,7 @@
 
     state.activeTerminalId = sessionId;
     saveUiState({ activeTerminalId: sessionId });
+    window.CitadelProjectTools.workspacePreference(state.activeProjectId, { terminalId: sessionId });
     let item = state.terminals.get(sessionId);
     if (!item) {
       item = createTerminalItem({
@@ -2761,6 +2809,7 @@
         && state.terminalSelectionGeneration === generation
         && state.currentView === 'workspace'
         && state.workspaceContext === (item.kind === 'system' ? 'system' : item.projectId)
+        && (item.kind === 'system' || workspaceMode === 'terminal')
         && (item.kind === 'system' ? state.activeSysTerminalId : state.activeTerminalId) === item.sessionId,
     };
   }
@@ -4013,7 +4062,7 @@
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
-  window.CitadelChat.init({ api, state, openSettingsAt, showToast });
+  window.CitadelChat.init({ api, state, openSettingsAt, showToast, workspacePreference: (...args) => window.CitadelProjectTools.workspacePreference(...args) });
   window.CitadelBrowserEditor.init({ api, escapeHtml, showToast, state });
   window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state });
   window.CitadelRepos.init({ api, escapeHtml, loadProjects, openModal, renderProjectsView, showToast });

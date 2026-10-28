@@ -159,7 +159,7 @@ Every extra capability is opt-in:
 
 To just look at the panel without installing anything on the machine, there is a development-only Docker image: `docker compose up --build` (see [docs/installation.md](docs/installation.md#try-it-without-installing-docker)). It is not the supported deployment.
 
-Projects discovers folders under `PROJECTS_DIR`; import a suggestion and use **More actions → Open VS Code in browser** or **Chat**. Fresh installs retain the OpenCode CLI; Chat requires opt-in gateway subscription reuse, with no native-provider fallback. Chat and browser VS Code require the machine's own panel, not paired-machine transport. [Setup and limits](docs/installation.md#project-folders-vs-code-and-chat).
+Projects discovers folders under `PROJECTS_DIR`; import a suggestion and use **More actions → Open VS Code in browser** or **Chat**. Project workspaces have independent **Terminal / Chat** modes with remembered per-owner/machine/project selections; opening remembered Chat does not create a terminal. Fresh installs retain the OpenCode CLI; Chat requires opt-in gateway subscription reuse, with no native-provider fallback. Chat and browser VS Code require the machine's own panel, not paired-machine transport. [Setup and limits](docs/installation.md#project-folders-vs-code-and-chat).
 
 ### Requirements
 

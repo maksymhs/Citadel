@@ -77,7 +77,10 @@ resolved gateway-only provider/model configuration; no native-provider fallback
 or CLI login-cache import is allowed. The engine listens on loopback with random
 Basic authentication held server-side. Browser cookies and engine credentials
 are not exposed through an arbitrary proxy: the embedded GUI and root OpenCode
-API proxies are removed; VS Code's scoped proxy remains.
+API proxies are removed; VS Code's scoped proxy remains. Engine error diagnostics
+expose only normalized operations and status/reason, never upstream response bodies
+or engine session/request IDs. Startup also checks exact gateway aliases and Plan
+deny rules; HOME/XDG runtime directories reject symlinks before launching.
 
 Metadata/request digests live in private `DATA_DIR/chat/metadata.sqlite` (WAL),
 separate from the main schema. Transcripts/state persist in hashed HOME/XDG trees
@@ -89,6 +92,13 @@ allow/reject and question replies/rejection. These are logical/application
 boundaries, **not a sandbox**: the engine and approved tools run as the shared
 Citadel service user and can access files that user can access. Chat does not
 encrypt its metadata/transcripts; treat the whole tree and backups as sensitive.
+
+Browser localStorage remembers only workspace mode and terminal/Chat session IDs,
+scoped by owner, panel instance, selected host and project. These are untrusted
+selection hints; server ownership/canonical-directory checks remain authoritative.
+Draft text and Plan/Build choice are page-memory only and cleared on logout or
+machine switch, not stored durably. Browser storage is not encrypted or a security
+boundary against same-origin scripts or people with access to the browser profile.
 
 Disconnecting or closing the panel does not cancel work. Stop requests engine
 cancellation; clean server shutdown kills its process group. SSE reconnect reloads

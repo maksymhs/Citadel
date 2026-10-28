@@ -2,6 +2,14 @@
   'use strict';
   const REQUIRED = ['api', 'state', 'openSettingsAt', 'showToast'];
   let ctx, active;
+  const drafts = new Map();
+  const sessions = new Map();
+  function ownerKey(project) {
+    return JSON.stringify([ctx.state.user?.id ?? ctx.state.user?.username ?? null, ctx.state.hostIdentity?.instanceId ?? location.origin, ctx.state.activeHostId, project.id]);
+  }
+  function preference(project, partial) {
+    return ctx.workspacePreference ? ctx.workspacePreference(project.id, partial) : {};
+  }
 
   function init(context) {
     for (const key of REQUIRED) if (context[key] === undefined) throw new Error(`chat.js requires ${key}`);
@@ -47,9 +55,10 @@
     selection.source?.close(); clearTimeout(selection.timer);
     view.selection = null;
   }
-  function close() {
+  function close(options = {}) {
     const view = active;
     if (!view) return;
+    drafts.set(view.key, { text: view.input.value, role: view.role.value });
     active = null; stopSelection(view); view.observer.disconnect();
     document.removeEventListener('visibilitychange', view.onVisibility);
     window.removeEventListener('offline', view.onOffline);
@@ -58,9 +67,13 @@
     for (const { element, inert } of view.mounted) if (!inert) element.removeAttribute('inert');
     view.content.scrollTop = view.scrollTop;
     if (view.returnTarget?.isConnected) view.returnTarget.focus({ preventScroll: true });
+    if (options.explicit) view.onClose?.();
+  }
+  function reset() {
+    close(); drafts.clear(); sessions.clear();
   }
   function present(view, selection) {
-    return active === view && view.panel.isConnected && ctx.state.activeHostId === view.host && (!selection || view.selection === selection);
+    return active === view && view.panel.isConnected && ctx.state.activeHostId === view.host && ownerKey(view.project) === view.key && (!selection || view.selection === selection);
   }
   function safeText(parent, text) {
     const chunks = String(text || '').split(/```[^\n`]*\n([\s\S]*?)(?:```|$)/g);
@@ -69,16 +82,16 @@
       else if (chunk) parent.append(node('div', chunk, 'chat-text'));
     });
   }
-  async function open(project) {
+  async function open(project, options = {}) {
     if (ctx.state.activeHostId !== 'local') {
       ctx.showToast('Open this machine’s own Citadel panel to use Chat.', 'error'); return;
     }
     close();
-    const content = document.getElementById('main-content');
+    const content = options.content || document.getElementById('main-content');
     if (!content) return;
     const panel = node('section', undefined, 'chat-panel');
     panel.setAttribute('aria-label', `Chat: ${project.name}`);
-    const view = { panel, content, host: ctx.state.activeHostId, project, selection: null, ready: false, loading: false, offline: window.navigator.onLine === false,
+    const view = { key: ownerKey(project), onClose: options.onClose, panel, content, host: ctx.state.activeHostId, project, selection: null, ready: false, loading: false, offline: window.navigator.onLine === false,
       returnTarget: document.activeElement, scrollTop: content.scrollTop,
       mounted: [...content.children].map(element => ({ element, inert: element.hasAttribute('inert') })) };
     active = view;
@@ -86,19 +99,19 @@
     content.classList.add('chat-host'); content.append(panel); content.scrollTop = 0;
     view.observer = new MutationObserver(() => { if (active === view && !panel.isConnected) close(); });
     view.observer.observe(content, { childList: true });
-    const header = node('header', undefined, 'chat-header');
-    const back = button('Return to Terminal', close, 'chat-back');
+    view.menu = node('details', undefined, 'chat-menu');
+    const summary = node('summary', 'Chat options');
+    const tools = node('div', undefined, 'chat-menu-items');
+    const back = button('Return to Terminal', () => close({ explicit: true }), 'chat-back');
     view.sessions = node('select', undefined, 'chat-sessions');
-    view.sessions.setAttribute('aria-label', 'Chat session');
-    view.sessions.onchange = () => select(view, view.sessions.value);
-    view.newButton = button('New chat', () => create(view), 'chat-new');
-    const title = node('div', undefined, 'chat-title');
-    title.append(node('strong', project.name), node('span', 'Chat'));
-    const tools = node('div', undefined, 'chat-header-tools');
-    tools.append(view.sessions, view.newButton);
-    header.append(back, title, tools);
-    view.notices = node('div', undefined, 'chat-notices');
-    view.notice = node('p', 'Checking Chat…'); view.notice.setAttribute('role', 'status');
+    view.sessions.setAttribute('aria-label', 'Chat session history');
+    view.sessions.onchange = () => { select(view, view.sessions.value); view.menu.open = false; view.input.focus(); };
+    view.newButton = button('New chat', () => { view.menu.open = false; view.input.focus(); create(view); }, 'chat-new');
+    const history = node('label', 'Session history'); history.append(view.sessions);
+    tools.append(back, history, view.newButton);
+    view.menu.append(summary, tools);
+    view.notices = node('div', undefined, 'chat-notices'); view.notices.hidden = true;
+    view.notice = node('p'); view.notice.setAttribute('role', 'status');
     view.notices.append(view.notice, button('Settings', () => ctx.openSettingsAt('gateway'), 'chat-link'), button('Reconnect', () => load(view), 'chat-link'));
     view.log = node('div', undefined, 'chat-log'); view.log.setAttribute('role', 'log'); view.log.setAttribute('aria-label', 'Messages');
     view.prompts = node('div', undefined, 'chat-prompts');
@@ -112,18 +125,20 @@
     };
     view.role = node('select', undefined, 'chat-role'); view.role.setAttribute('aria-label', 'Agent mode');
     for (const role of ['build', 'plan']) { const option = node('option', role === 'build' ? 'Build' : 'Plan'); option.value = role; view.role.append(option); }
+    const draft = drafts.get(view.key);
+    if (draft) { view.input.value = draft.text; view.role.value = draft.role; }
     view.send = button('Send', () => {}, 'chat-send'); view.send.type = 'submit';
     view.stop = button('Stop', () => action(view, view.selection, 'cancel', {}), 'chat-stop');
-    const actions = node('div', undefined, 'chat-composer-actions'); actions.append(view.role, node('span', 'Ctrl+Enter to send', 'chat-hint'), view.stop, view.send);
+    const actions = node('div', undefined, 'chat-composer-actions'); actions.append(view.menu, view.role, node('span', 'Ctrl+Enter to send', 'chat-hint'), view.stop, view.send);
     box.append(view.input, actions);
-    composer.append(box); composer.onsubmit = event => { event.preventDefault(); send(view); };
-    panel.append(header, view.notices, view.log, view.prompts, composer);
+    composer.append(view.notices, box); composer.onsubmit = event => { event.preventDefault(); send(view); };
+    panel.append(view.log, view.prompts, composer);
     renderWelcome(view, false);
     view.onOffline = () => {
       if (!present(view)) return;
       view.offline = true;
       if (view.selection) invalidate(view, view.selection);
-      view.notice.textContent = 'Chat offline. The agent may still be running; Stop cancels it.';
+      notice(view, 'Chat offline. The agent may still be running; Stop cancels it.');
     };
     view.onOnline = () => {
       if (!present(view)) return;
@@ -137,7 +152,11 @@
     document.addEventListener('visibilitychange', view.onVisibility);
     window.addEventListener('offline', view.onOffline);
     window.addEventListener('online', view.onOnline);
-    controls(view); back.focus(); await load(view);
+    controls(view); view.input.focus(); await load(view);
+  }
+  function notice(view, text = '') {
+    view.notice.textContent = text;
+    view.notices.hidden = !text;
   }
   function base(view) { return `/api/projects/${encodeURIComponent(view.project.id)}/chat/sessions`; }
   function path(view, selection) { return `${base(view)}/${encodeURIComponent(selection.id)}`; }
@@ -156,7 +175,6 @@
     view.sessions.disabled = view.loading;
     view.newButton.disabled = !view.ready || view.loading;
     view.panel.classList.toggle('chat-busy', Boolean(selection?.fresh && selection.status === 'busy'));
-    view.notices.classList.toggle('chat-ok', Boolean(view.ready && !view.offline && selection?.fresh && selection.status !== 'error'));
     fit(view);
   }
   async function load(view) {
@@ -166,17 +184,16 @@
       const status = await ctx.api('/api/chat/status');
       if (!present(view)) return;
       view.installed = status.installed; view.ready = status.ready === true;
-      if (!view.ready) { view.notice.textContent = status.error || 'Chat needs OpenCode and AI Gateway. Native provider fallback is disabled.'; return; }
+      if (!view.ready) { notice(view, status.error || 'Chat needs OpenCode and AI Gateway. Native provider fallback is disabled.'); return; }
       const result = await ctx.api(base(view));
       if (!present(view)) return;
-      const previous = view.sessions.value;
       view.sessions.replaceChildren();
       for (const session of result.sessions || []) addSession(view, session);
-      if (previous && [...view.sessions.options].some(option => option.value === previous)) view.sessions.value = previous;
-      view.notice.textContent = 'Chat uses AI Gateway only. Choose a session or start a new chat.';
+      const remembered = preference(view.project).chatSessionId || sessions.get(view.key);
+      if ([...view.sessions.options].some(option => option.value === remembered)) view.sessions.value = remembered;
       if (view.sessions.value) select(view, view.sessions.value);
-      else { renderWelcome(view, false); view.prompts.replaceChildren(); }
-    } catch (err) { if (present(view)) view.notice.textContent = err.message; }
+      else await createSession(view);
+    } catch (err) { if (present(view)) notice(view, err.message); }
     finally { if (present(view)) { view.loading = false; controls(view); } }
   }
   function addSession(view, session) {
@@ -187,15 +204,22 @@
     if (!present(view) || view.loading || !view.ready) return;
     view.loading = true; controls(view);
     try {
-      const { session } = await ctx.api(base(view), { method: 'POST', body: {} });
-      if (!present(view)) return;
-      addSession(view, session); view.sessions.value = session.id; select(view, session.id);
-    } catch (err) { if (present(view)) view.notice.textContent = err.message; }
+      await createSession(view);
+    } catch (err) { if (present(view)) notice(view, err.message); }
     finally { if (present(view)) { view.loading = false; controls(view); } }
   }
+  async function createSession(view) {
+    const { session } = await ctx.api(base(view), { method: 'POST', body: {} });
+    if (!present(view)) return;
+    addSession(view, session); view.sessions.value = session.id; select(view, session.id);
+  }
   function select(view, id) {
+    if (!present(view)) return;
+    notice(view);
     stopSelection(view); view.log.replaceChildren(); view.prompts.replaceChildren();
     if (!id || !present(view)) { renderWelcome(view, false); controls(view); return; }
+    sessions.set(view.key, id);
+    preference(view.project, { chatSessionId: id });
     renderWelcome(view, true);
     const selection = { id, loaded: false, fresh: false, revision: 0, pending: false, dirty: false, fetching: false, timer: null, status: 'idle', prompts: '' };
     view.selection = selection; controls(view);
@@ -205,15 +229,15 @@
       selection.source.onopen = () => {
         if (!present(view, selection)) return;
         invalidate(view, selection);
-        view.notice.textContent = 'Connected · refreshing Chat…'; schedule(view, selection);
+        schedule(view, selection);
       };
       selection.source.onerror = () => {
         if (!present(view, selection)) return;
         invalidate(view, selection);
         clearTimeout(selection.timer); selection.timer = null; selection.dirty = false;
-        view.notice.textContent = 'Chat disconnected. The agent may still be running. Reconnecting; Stop cancels it.';
+        notice(view, 'Chat disconnected. The agent may still be running. Reconnecting; Stop cancels it.');
       };
-    } catch { view.notice.textContent = 'Live updates unavailable. Reconnect to refresh Chat.'; }
+    } catch { selection.streamUnavailable = true; notice(view, 'Live updates unavailable. Reconnect to refresh Chat.'); }
     refresh(view, selection);
   }
   function schedule(view, selection) {
@@ -261,11 +285,11 @@
       if (nearBottom) view.log.scrollTop = view.log.scrollHeight;
       const option = [...view.sessions.options].find(item => item.value === selection.id);
       if (option && snapshot.session?.title) option.textContent = snapshot.session.title;
-      view.notice.textContent = snapshot.status === 'error' ? 'Chat engine error. Check OpenCode and AI Gateway in Settings, then reconnect.' : snapshot.status === 'busy' ? 'Working · approvals require your choice' : 'Ready · AI Gateway only';
+      notice(view, snapshot.status === 'error' ? 'Chat engine error. Check OpenCode and AI Gateway in Settings, then reconnect.' : selection.streamUnavailable ? 'Live updates unavailable. Reconnect to refresh Chat.' : '');
       const signature = JSON.stringify([snapshot.permissions || [], snapshot.questions || []]);
       if (selection.prompts !== signature) { selection.prompts = signature; renderPrompts(view, selection, snapshot); }
     } catch (err) {
-      if (present(view, selection) && revision === selection.revision) { invalidate(view, selection); view.notice.textContent = err.message; }
+      if (present(view, selection) && revision === selection.revision) { invalidate(view, selection); notice(view, err.message); }
     }
     finally {
       selection.fetching = false;
@@ -282,7 +306,7 @@
       if (!present(view, selection)) return false;
       schedule(view, selection); return true;
     } catch (err) {
-      if (present(view, selection)) { invalidate(view, selection); view.notice.textContent = err.message; schedule(view, selection); }
+      if (present(view, selection)) { invalidate(view, selection); notice(view, err.message); schedule(view, selection); }
       return false;
     }
     finally {
@@ -339,12 +363,12 @@
       const submit = button('Answer', () => {}); submit.type = 'submit';
       form.onsubmit = event => {
         event.preventDefault(); const answers = readers.map(read => read());
-        if (answers.some(answer => !answer.length)) { view.notice.textContent = 'Choose or enter an answer for each question, or reject the request.'; return; }
+        if (answers.some(answer => !answer.length)) { notice(view, 'Choose or enter an answer for each question, or reject the request.'); return; }
         action(view, selection, `${suffix}/reply`, { answers });
       };
       form.append(submit, button('Reject question', () => action(view, selection, `${suffix}/reject`, {}))); view.prompts.append(form);
     }
     view.prompts.querySelectorAll('button').forEach(element => { element.disabled = selection.pending; });
   }
-  window.CitadelChat = { init, open, close };
+  window.CitadelChat = { init, open, close, reset };
 })();

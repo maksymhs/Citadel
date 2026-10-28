@@ -83,13 +83,29 @@ function createChatService({ dataDir = DATA_DIR, getProject = id => projectServi
       const url = new URL(`http://127.0.0.1:${rt.port}${route}`);
       url.searchParams.set('directory', rt.scope.directory);
       const response = await fetchImpl(url, { method, headers: { authorization: rt.auth, 'content-type': 'application/json' }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), redirect: 'error', signal: AbortSignal.timeout(timeout) });
-      if (!response.ok) { await response.body?.cancel(); throw new Error(); }
-      if (response.status === 204) { await response.body?.cancel(); return null; }
+      if (!response.ok) { await response.body?.cancel(); throw Object.assign(new Error(), { engineStatus: response.status }); }
+      const optional = method === 'POST' && /\/(prompt_async|abort|reply|reject)$/.test(route);
+      if (response.status === 204) {
+        await response.body?.cancel();
+        if (optional) return null;
+        throw Object.assign(new Error(), { reason: 'empty response' });
+      }
       let size = 0; const chunks = [];
-      try { for await (const chunk of response.body) { size += chunk.length; if (size > limit) throw new Error(); chunks.push(chunk); } }
+      try { for await (const chunk of response.body || []) { size += chunk.length; if (size > limit) throw Object.assign(new Error(), { reason: 'response too large' }); chunks.push(chunk); } }
       catch (err) { await response.body?.cancel().catch(() => {}); throw err; }
-      return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    } catch { throw failure('Chat engine request failed. Retry or check OpenCode and AI Gateway.'); }
+      const text = Buffer.concat(chunks).toString('utf8');
+      if (!text.trim()) {
+        if (optional) return null;
+        throw Object.assign(new Error(), { reason: 'empty response' });
+      }
+      try { return JSON.parse(text); }
+      catch { throw Object.assign(new Error(), { reason: 'invalid JSON response' }); }
+    } catch (err) {
+      const endpoint = route.split('?')[0].replace(/\/session\/[^/]+/, match => match === '/session/status' ? match : '/session/:id').replace(/\/(permission|question)\/[^/]+/, '/$1/:id');
+      const detail = err.engineStatus ? `HTTP ${err.engineStatus}` : err.reason || (['TimeoutError', 'AbortError'].includes(err.name) ? 'timed out' : 'connection failed');
+      const missing = err.engineStatus === 404 && /^\/session\/[^/]+$/.test(route) && route !== '/session/status';
+      throw failure(`Chat engine request failed (${method} ${endpoint}: ${detail}). ${missing ? 'This saved session is unavailable in OpenCode. Create a new chat.' : 'Retry; if this persists, check OpenCode and AI Gateway in Settings.'}`, missing ? 409 : 503);
+    }
   }
   async function pending(rt) {
     const [statuses, permissions, questions] = await Promise.all([request(rt, '/session/status'), request(rt, '/permission'), request(rt, '/question')]);
@@ -152,9 +168,15 @@ function createChatService({ dataDir = DATA_DIR, getProject = id => projectServi
     await new Promise((resolve, reject) => { reservation.once('error', reject); reservation.listen(0, '127.0.0.1', resolve); });
     const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
     db();
-    const home = path.join(root, s.key);
+    const home = path.join(fs.realpathSync(root), s.key);
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     if (fs.realpathSync(home) !== home) throw failure('Invalid chat runtime storage.');
+    for (const name of ['config', 'data', 'state', 'cache', 'logs']) {
+      const directory = path.join(home, name);
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      if (fs.realpathSync(directory) !== directory) throw failure('Invalid chat runtime storage.');
+      fs.chmodSync(directory, 0o700);
+    }
     const password = crypto.randomBytes(32).toString('hex');
     const env = { ...getChildEnv(), HOME: home, XDG_CONFIG_HOME: path.join(home, 'config'), XDG_DATA_HOME: path.join(home, 'data'), XDG_STATE_HOME: path.join(home, 'state'), XDG_CACHE_HOME: path.join(home, 'cache'), DATA_DIR: home, DATABASE_PATH: path.join(home, 'unused.sqlite'), PROJECTS_DIR: s.directory, LOGS_DIR: path.join(home, 'logs'), DOTENV_CONFIG_PATH: '/dev/null', OPENCODE_SERVER_USERNAME: 'opencode', OPENCODE_SERVER_PASSWORD: password, OPENCODE_DISABLE_PROJECT_CONFIG: 'true', OPENCODE_DISABLE_CLAUDE_CODE: 'true', OPENCODE_DISABLE_AUTOUPDATE: 'true', OPENCODE_DISABLE_EXTERNAL_SKILLS: 'true', OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: 'ask', share: 'disabled', autoupdate: false, plugin: [], mcp: {}, agent: { plan: { permission: { edit: 'deny', bash: 'deny', task: 'deny', external_directory: 'deny' } } } }) };
     const binary = registry.findBinary('opencode');
@@ -169,12 +191,16 @@ function createChatService({ dataDir = DATA_DIR, getProject = id => projectServi
         try { health = await request(rt, '/global/health', 'GET', undefined, 4096, 300); break; } catch {}
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-      if (!health?.healthy || !/^1\.19\./.test(health.version)) throw failure('Native chat requires OpenCode 1.19.x. Update OpenCode in Settings → Tools.');
+      if (!health?.healthy) throw failure('Chat engine startup failed (GET /global/health: unavailable). Check OpenCode and AI Gateway in Settings.');
+      if (!/^1\.19\./.test(health.version)) throw failure('Native chat requires OpenCode 1.19.x. Update OpenCode in Settings → Tools.');
       const doc = await request(rt, '/doc', 'GET', undefined, 4 * 1024 * 1024);
       for (const [route, method] of [['/event', 'get'], ['/session', 'post'], ['/session/status', 'get'], ['/session/{sessionID}', 'get'], ['/session/{sessionID}', 'patch'], ['/session/{sessionID}/message', 'get'], ['/session/{sessionID}/prompt_async', 'post'], ['/session/{sessionID}/abort', 'post'], ['/permission', 'get'], ['/question', 'get'], ['/permission/{requestID}/reply', 'post'], ['/question/{requestID}/reply', 'post'], ['/question/{requestID}/reject', 'post']]) if (!doc.paths?.[route]?.[method]) throw failure('Unsupported OpenCode API. Update OpenCode in Settings → Tools.');
       const config = await request(rt, '/config');
       const provider = config?.provider?.citadel;
       if (config?.enabled_providers?.length !== 1 || config.enabled_providers[0] !== 'citadel' || provider?.npm !== '@ai-sdk/openai-compatible' || provider.options?.baseURL !== `${launch.settings.baseUrl}/v1` || !['{env:CITADEL_GATEWAY_TOKEN}', launch.settings.token].includes(provider.options?.apiKey) || !['model', 'small_model'].every(key => typeof config[key] === 'string' && config[key].startsWith('citadel/')) || !['build', 'plan'].every(role => config.agent?.[role]?.model?.startsWith('citadel/'))) throw failure('Chat engine is not configured exclusively for AI Gateway. Restart AI Gateway and chat.');
+      const aliases = launch.settings.aliases || { planning: 'citadel-planning', execution: 'citadel-execution', small: 'citadel-small' };
+      if (config.model !== `citadel/${aliases.execution}` || config.small_model !== `citadel/${aliases.small}` || config.agent.build.model !== `citadel/${aliases.execution}` || config.agent.plan.model !== `citadel/${aliases.planning}` || !Object.values(aliases).every(alias => Object.hasOwn(provider.models || {}, alias))) throw failure('Chat engine gateway model aliases do not match AI Gateway. Restart AI Gateway and chat.');
+      if (config.permission !== 'ask' && config.permission?.['*'] !== 'ask' || !['edit', 'bash', 'task', 'external_directory'].every(key => config.agent.plan.permission?.[key] === 'deny')) throw failure('Chat engine permission configuration is unsafe. Reopen chat.');
       lastError = null; stream(rt); return rt;
     } catch (err) { await stopRuntime(); lastError = err.message; throw err; }
   }

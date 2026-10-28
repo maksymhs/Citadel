@@ -391,6 +391,9 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(w.document.querySelector('.chat-panel iframe'), null);
       assert.equal(w.document.querySelector('.chat-panel img'), null);
       assert.match(w.document.querySelector('.chat-notices').textContent, /Install OpenCode/);
+      assert.equal(w.document.querySelector('.chat-notices').hidden, false);
+      assert.equal(w.document.querySelector('.chat-header'), null);
+      assert.ok(w.document.querySelector('.chat-composer .chat-notices'));
       assert.equal(workspace.hasAttribute('inert'), true);
       assert.equal(w.getComputedStyle(workspace).visibility, 'hidden');
       assert.equal(w.getComputedStyle(w.document.querySelector('.sidebar')).visibility, 'visible');
@@ -411,6 +414,104 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
     }
     assert.deepEqual(errors, []);
+  });
+
+  test('workspace remembers Chat on return, keeps mounted terminals and does not create on Chat entry', async () => {
+    const originalFetch = w.fetch;
+    let creates = 0, finishTerminals;
+    w.fetch = (url, opts = {}) => {
+      if (String(url).includes('/api/terminals?projectId=') && !opts.method) return new Promise(resolve => { finishTerminals = () => resolve({ ok: true, json: async () => ({ sessions: [], tmuxAvailable: false }) }); });
+      if (String(url).includes('/api/terminals') && opts.method === 'POST') { creates++; return Promise.reject(new Error('Fixture terminal disabled')); }
+      if (String(url) === '/api/chat/status') return Promise.resolve({ ok: true, json: async () => ({ ready: false, error: 'Fixture gateway unavailable' }) });
+      return originalFetch(url, opts);
+    };
+    try {
+      w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
+      assert.equal(w.document.getElementById('ws-chat-btn').getAttribute('aria-pressed'), 'true');
+      assert.equal(creates, 0);
+      const input = w.document.querySelector('.chat-input'); input.value = 'project draft';
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+      w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
+      assert.equal(w.document.querySelector('.chat-input').value, 'project draft');
+      assert.equal(creates, 0);
+      w.document.getElementById('ws-terminal-mode').click(); await sleep(400);
+      const viewport = w.document.getElementById('terminal-viewport');
+      w.document.getElementById('ws-chat-btn').click(); await sleep(0);
+      assert.equal(typeof finishTerminals, 'function');
+      finishTerminals(); await sleep(50);
+      assert.equal(creates, 0, 'late empty terminal list cannot spawn a shell in Chat');
+      w.document.getElementById('ws-terminal-mode').click(); await sleep(100);
+      const mountedViewport = w.document.getElementById('terminal-viewport');
+      finishTerminals(); await sleep(100);
+      const before = creates;
+      for (let i = 0; i < 3; i++) {
+        w.document.getElementById('ws-chat-btn').click(); await sleep(0);
+        assert.equal(w.document.getElementById('ws-terminal-mode').closest('[inert]'), null);
+        w.document.getElementById('ws-terminal-mode').click();
+        assert.equal(w.document.getElementById('terminal-viewport'), mountedViewport);
+      }
+      assert.notEqual(mountedViewport, viewport);
+      assert.equal(creates, before);
+      w.document.getElementById('ws-chat-btn').click(); await sleep(0);
+      w.document.querySelector('.chat-back').click();
+      assert.equal(w.document.getElementById('ws-terminal-mode').getAttribute('aria-pressed'), 'true');
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+      w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
+      assert.equal(w.document.querySelector('.chat-panel'), null);
+    } finally {
+      w.CitadelChat.close(); w.fetch = originalFetch;
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+    }
+  });
+
+  test('workspace preferences and Chat drafts isolate project, owner and host', async () => {
+    const isolated = new JSDOM('<main id="main-content"></main>', { runScripts: 'dangerously', url: base });
+    const win = isolated.window;
+    try {
+      for (const file of ['project-tools.js', 'chat.js']) win.eval(fs.readFileSync(path.join(ROOT, 'public/js', file), 'utf8'));
+      const state = { activeHostId: 'local', user: { id: 'alice' }, hostIdentity: { instanceId: 'one' } };
+      const tools = win.CitadelProjectTools;
+      tools.init({ state, api() {}, escapeHtml() {}, renderProjectsView() {}, showToast() {} });
+      tools.workspacePreference('a', { mode: 'chat', terminalId: 'term-a' });
+      tools.workspacePreference('b', { mode: 'terminal', terminalId: 'term-b' });
+      assert.equal(tools.workspacePreference('a').mode, 'chat');
+      assert.equal(tools.workspacePreference('b').terminalId, 'term-b');
+      win.CitadelChat.init({ state, showToast() {}, openSettingsAt() {}, workspacePreference: tools.workspacePreference, api: async url => {
+        if (url.endsWith('/status')) return { ready: true };
+        if (url.endsWith('/sessions')) return { sessions: [{ id: 'latest' }, { id: 'older' }] };
+        return { status: 'busy', messages: [] };
+      } });
+      const open = async id => { await win.CitadelChat.open({ id, name: id }); await sleep(0); };
+      await open('a');
+      win.document.querySelector('.chat-input').value = 'private draft a';
+      win.document.querySelector('.chat-role').value = 'plan';
+      const history = win.document.querySelector('.chat-sessions'); history.value = 'older'; history.dispatchEvent(new win.Event('change'));
+      await open('b'); assert.equal(win.document.querySelector('.chat-input').value, '');
+      win.document.querySelector('.chat-input').value = 'private draft b';
+      await open('a'); assert.equal(win.document.querySelector('.chat-input').value, 'private draft a');
+      assert.equal(win.document.querySelector('.chat-role').value, 'plan');
+      assert.equal(win.document.querySelector('.chat-sessions').value, 'older');
+      for (const field of ['user', 'activeHostId', 'hostIdentity']) {
+        const original = state[field];
+        state[field] = field === 'user' ? { id: 'bob' } : field === 'activeHostId' ? 'peer' : { instanceId: 'two' };
+        assert.equal(tools.workspacePreference('a').mode, undefined);
+        if (field !== 'activeHostId') { await open('a'); assert.equal(win.document.querySelector('.chat-input').value, ''); }
+        state[field] = original;
+      }
+      await open('b'); assert.equal(win.document.querySelector('.chat-input').value, 'private draft b');
+      assert.ok([...Array(win.localStorage.length).keys()].every(index => !win.localStorage.getItem(win.localStorage.key(index)).includes('private draft')));
+      win.CitadelChat.reset(); tools.reset();
+      assert.equal(win.document.querySelector('.chat-panel'), null);
+      await open('a'); assert.equal(win.document.querySelector('.chat-input').value, '', 'logout clears drafts even for the same owner');
+      assert.equal(tools.workspacePreference('a').mode, 'chat', 'non-secret selections survive logout');
+      win.CitadelChat.reset();
+      let finishStatus;
+      win.CitadelChat.init({ state, showToast() {}, openSettingsAt() {}, api: () => new Promise(resolve => { finishStatus = resolve; }) });
+      const opening = win.CitadelChat.open({ id: 'a', name: 'a' });
+      win.CitadelChat.reset(); state.user = { id: 'bob' };
+      finishStatus({ ready: true }); await opening;
+      assert.equal(win.document.querySelector('.chat-panel'), null, 'late status cannot reopen Chat after logout');
+    } finally { win.CitadelChat.close(); isolated.window.close(); }
   });
 
   test('Chat sessions, bounded named streaming, send, Stop and explicit approvals', async () => {
@@ -452,12 +553,23 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.match(query('.chat-welcome h2').textContent, /help you build/);
       assert.equal(query('.chat-suggestions').children.length, 4);
       assert.ok(query('.chat-box textarea'));
+      assert.equal(query('.chat-header, .chat-title'), null);
+      assert.equal(query('.chat-panel').firstElementChild, query('.chat-log'));
+      assert.equal(query('.chat-notices').hidden, true);
+      assert.equal(query('.chat-notices p').textContent, '');
+      assert.equal(query('.chat-menu').open, false);
+      assert.equal(query('.chat-menu summary').textContent, 'Chat options');
+      assert.equal(query('.chat-menu select').getAttribute('aria-label'), 'Chat session history');
+      assert.ok(query('.chat-composer .chat-menu .chat-back'));
       const postsBeforeSuggestion = calls.filter(call => call.method === 'POST').length;
       query('.chat-suggestion').click();
       assert.match(query('textarea').value, /project is structured/);
       assert.equal(win.document.activeElement, query('textarea'));
       assert.equal(calls.filter(call => call.method === 'POST').length, postsBeforeSuggestion);
+      query('.chat-menu summary').click();
+      assert.equal(query('.chat-menu').open, true);
       click('New chat'); await sleep(10);
+      assert.equal(query('.chat-menu').open, false);
       assert.equal(sources[0].closed, true);
       assert.equal(query('.chat-sessions').value, 'ses_2');
       const input = query('textarea'); input.value = 'hello\nworld'; input.dispatchEvent(new win.Event('input'));
@@ -502,7 +614,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(calls.length, before + 2);
       const after = calls.length; await sleep(350); assert.equal(calls.length, after, 'no polling without events');
       const source = sources.at(-1); source.onerror();
-       assert.notEqual(source.closed, true); assert.match(query('.chat-notices').textContent, /agent may still be running/);
+      assert.notEqual(source.closed, true); assert.match(query('.chat-notices').textContent, /agent may still be running/);
+      assert.equal(query('.chat-notices').hidden, false);
       const cancellations = calls.filter(call => call.url.endsWith('/cancel')).length;
       win.CitadelChat.close(); source.update(); await sleep(300);
       assert.equal(calls.filter(call => call.url.endsWith('/cancel')).length, cancellations);
@@ -512,7 +625,95 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       state.activeHostId = 'peer'; await win.CitadelChat.open({ id: 'remote', name: 'Remote' });
       assert.match(notices.at(-1), /machine’s own Citadel panel/);
       state.activeHostId = 'local'; await win.CitadelChat.open({ id: 'project', name: 'Project' }); await sleep(10);
+      assert.equal(query('.chat-notices').hidden, true);
+      sources.at(-1).onerror();
+      assert.equal(query('.chat-notices').hidden, false);
       click('Settings'); assert.deepEqual(settings, ['gateway']);
+      click('Reconnect'); await sleep(10);
+      assert.equal(query('.chat-notices').hidden, true);
+      query('.chat-menu summary').click(); click('Return to Terminal');
+      assert.equal(query('.chat-panel'), null);
+    } finally { win.CitadelChat.close(); isolated.window.close(); }
+  });
+
+  test('Chat resumes the latest server session per project and creates empty projects exactly once', async () => {
+    const isolated = new JSDOM('<main id="main-content"><button id="terminal">Terminal</button></main>', { runScripts: 'dangerously', url: base });
+    const win = isolated.window, calls = [], sources = [];
+    let created, finishCreate, finishList;
+    const projects = {
+      first: [{ id: 'latest', updatedAt: '2026-10-28T12:00:00Z' }, { id: 'older', updatedAt: '2026-10-27T12:00:00Z' }],
+      second: [{ id: 'second-only' }],
+      empty: [],
+      delayed: []
+    };
+    try {
+      win.EventSource = class {
+        constructor(url) { this.url = url; sources.push(this); }
+        addEventListener() {}
+        close() { this.closed = true; }
+      };
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/chat.js'), 'utf8'));
+      win.CitadelChat.init({ state: { activeHostId: 'local' }, showToast() {}, openSettingsAt() {}, api: async (url, opts = {}) => {
+        calls.push({ url, ...opts });
+        if (url === '/api/chat/status') return { ready: true };
+        const project = decodeURIComponent(url.split('/')[3]);
+        if (url.endsWith('/sessions')) {
+          if (opts.method === 'POST') {
+            await new Promise(resolve => { finishCreate = resolve; });
+            created = { id: `${project}-new` }; projects[project].unshift(created);
+            return { session: created };
+          }
+          if (project === 'delayed') return new Promise(resolve => { finishList = resolve; });
+          return { sessions: projects[project] };
+        }
+        return { status: 'idle', messages: [] };
+      } });
+      const query = selector => win.document.querySelector(selector);
+      const open = async id => { await win.CitadelChat.open({ id, name: id }); await sleep(0); };
+      await open('first');
+      assert.equal(query('.chat-sessions').value, 'latest');
+      query('.chat-menu summary').click();
+      query('.chat-sessions').value = 'older'; query('.chat-sessions').dispatchEvent(new win.Event('change'));
+      await sleep(0);
+      assert.equal(query('.chat-menu').open, false);
+      assert.equal(query('.chat-sessions').value, 'older');
+      win.CitadelChat.close();
+      await open('first');
+      assert.equal(query('.chat-sessions').value, 'older', 'reopening retains the selected project session');
+      sources.at(-1).onerror();
+      projects.first = [{ id: 'newest' }, ...projects.first];
+      query('.chat-notices button:last-child').click(); await sleep(0);
+      assert.equal(query('.chat-sessions').value, 'older', 'reconnect preserves the selected session when still available');
+      const firstSource = sources.at(-1), beforeSecond = calls.length;
+      await open('second');
+      assert.equal(firstSource.closed, true);
+      assert.equal(query('.chat-sessions').value, 'second-only');
+      assert.ok(calls.slice(beforeSecond).filter(call => call.url !== '/api/chat/status').every(call => call.url.startsWith('/api/projects/second/chat/sessions')));
+      assert.equal(query('.chat-welcome-sub').textContent, 'Working in second');
+      const opening = open('empty'); await sleep(0);
+      assert.equal(query('.chat-new').disabled, true);
+      query('.chat-new').onclick(); query('.chat-notices button:last-child').onclick();
+      assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+      finishCreate(); await opening;
+      assert.equal(query('.chat-sessions').value, 'empty-new');
+      assert.equal(query('.chat-notices').hidden, true);
+      assert.equal(query('.chat-new').disabled, false);
+      assert.equal(sources.at(-1).url, '/api/projects/empty/chat/sessions/empty-new/events');
+      await open('empty');
+      assert.equal(calls.filter(call => call.method === 'POST').length, 1, 'reopening a created project does not create again');
+      projects.empty = [];
+      const staleCreate = open('empty'); await sleep(0);
+      await open('second');
+      const currentSource = sources.at(-1);
+      finishCreate(); await staleCreate;
+      assert.equal(query('.chat-sessions').value, 'second-only');
+      assert.equal(sources.at(-1), currentSource, 'late creation cannot select a session in another project');
+      const staleList = open('delayed'); await sleep(0);
+      await open('first');
+      finishList({ sessions: [] }); await staleList;
+      assert.equal(calls.filter(call => call.method === 'POST' && call.url.includes('/delayed/')).length, 0);
+      assert.equal(query('.chat-sessions').value, 'older');
+      assert.equal(win.localStorage.length, 0);
     } finally { win.CitadelChat.close(); isolated.window.close(); }
   });
 
@@ -574,14 +775,18 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(input.value, 'unsent draft');
       fail = true; source.listeners.update(); await flush(); locked();
       assert.match(query('.chat-notices').textContent, /Snapshot unavailable/);
+      assert.equal(query('.chat-notices').hidden, false);
       button('Stop').click(); await sleep(0);
       assert.ok(calls.at(-1).url.endsWith('/cancel'));
       await flush(); locked();
       fail = false; source.listeners.update(); await flush();
       snapshot = { ...snapshot, status: 'error' };
       source.listeners.update(); await flush(); locked();
+      assert.equal(query('.chat-notices').hidden, false);
+      assert.match(query('.chat-notices').textContent, /Chat engine error/);
       snapshot = { ...snapshot, status: 'busy' };
       source.listeners.update(); await flush();
+      assert.equal(query('.chat-notices').hidden, true);
       blockAction = true; button('Allow once').click(); await sleep(0);
       source.onerror(); actionDeferred({ accepted: true }); await sleep(0); locked();
       assert.equal(button('Allow once').disabled, true, 'action finally cannot unlock disconnected approvals');
@@ -662,7 +867,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(calls.filter(call => call.url.endsWith('/cancel')).length, 0);
       const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
       assert.match(appSource, /function navigateTo\(view\) \{\s*window.CitadelChat.close\(\)/);
-      assert.match(appSource, /function teardownSession\(\) \{\s*window.CitadelChat.close\(\)/);
+      assert.match(appSource, /function teardownSession\(\) \{\s*workspaceGeneration\+\+;\s*window.CitadelChat.reset\(\)/);
     } finally { win.CitadelChat.close(); isolated.window.close(); }
   });
 
