@@ -62,6 +62,44 @@ backend binds only to loopback, with server-side authentication; browser session
 credentials are filtered at the proxy. It runs as the Citadel user and is not a
 project sandbox. Stopping it terminates its editor process group.
 
+## Native Chat boundaries
+
+[Native Chat](browser-editor.md#native-chat) requires an administrator's browser
+session cookie; bearer/peer credentials are not accepted. Routes reject unexpected
+origins, cross-site fetches and query parameters, use `no-store`, validate bounded
+inputs and check owner, project and canonical directory for every session operation.
+SSE periodically rechecks the signed-in administrator and session scope. Audit
+entries record action/project identity, not prompts, answers or transcripts.
+
+Chat requires an installed OpenCode 1.19.x engine and an explicitly opted-in,
+running OpenCode AI Gateway configuration. Startup checks required APIs and the
+resolved gateway-only provider/model configuration; no native-provider fallback
+or CLI login-cache import is allowed. The engine listens on loopback with random
+Basic authentication held server-side. Browser cookies and engine credentials
+are not exposed through an arbitrary proxy: the embedded GUI and root OpenCode
+API proxies are removed; VS Code's scoped proxy remains.
+
+Metadata/request digests live in private `DATA_DIR/chat/metadata.sqlite` (WAL),
+separate from the main schema. Transcripts/state persist in hashed HOME/XDG trees
+scoped to owner, project and canonical directory. Chat uses an allowlisted child
+environment and disables project config, external skills, Claude Code config
+loading, sharing and auto-update. Build defaults to ask; Plan additionally denies
+edit, bash, task and external-directory permissions. The UI offers only one-time
+allow/reject and question replies/rejection. These are logical/application
+boundaries, **not a sandbox**: the engine and approved tools run as the shared
+Citadel service user and can access files that user can access. Chat does not
+encrypt its metadata/transcripts; treat the whole tree and backups as sensitive.
+
+Disconnecting or closing the panel does not cancel work. Stop requests engine
+cancellation; clean server shutdown kills its process group. SSE reconnect reloads
+bounded snapshots, not guaranteed full history/event replay. The UI renders literal
+text/fenced code, not arbitrary HTML or full Markdown. Only the machine's own panel
+supports Chat; paired-machine transport is unavailable. Current verification uses
+fixtures/jsdom and an isolated installed-engine capability/session/snapshot check,
+not a real browser or model prompt.
+
+## AI Gateway boundaries
+
 The optional [AI Gateway](ai-gateway.md) requires administrator setup and access
 to gateway-enabled project terminals. It binds to loopback and uses separate
 Claude/ChatGPT authorization. Persistent credentials are encrypted; the external

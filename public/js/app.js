@@ -704,6 +704,7 @@
     syncThemeChrome();
 
     document.getElementById('logout-btn').onclick = async () => {
+      window.CitadelChat.close();
       await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
       teardownSession();
       state.user = null;
@@ -1160,6 +1161,7 @@
   }
 
   function navigateTo(view) {
+    window.CitadelChat.close();
     view = resolveView(view);
     state.terminalSelectionGeneration += 1;
     const from = state.currentView;
@@ -1552,7 +1554,7 @@
         const project = state.projects.find((p) => p.id === id);
         openContextMenu(btn, [
           { label: 'Open VS Code in browser', onSelect: () => window.CitadelProjectTools.showEditor(project) },
-          { label: 'Open OpenCode in browser', onSelect: () => window.CitadelProjectTools.showOpenCode(project) },
+          { label: 'Chat', onSelect: () => window.CitadelProjectTools.showChat(project) },
           { label: 'Associate a folder…', onSelect: () => showAssociateRepoModal(project) },
           { label: 'Clone a repository here…', onSelect: () => showCloneRepoModal(project) },
           { sep: true },
@@ -2145,6 +2147,7 @@
   // poll timer and all open terminal sockets/timers. Called on logout so a
   // signed-out browser stops talking to the server.
   function teardownSession() {
+    window.CitadelChat.close();
     stopHostStatusPolling();
     if (state.dashboardTimer) {
       clearInterval(state.dashboardTimer);
@@ -2489,7 +2492,7 @@
         <div class="terminal-tabs-bar" id="terminal-tabs-container">
           <span class="badge badge-muted ws-context-badge">${escapeHtml(currentProject.name)}</span>
           <button type="button" class="btn btn-secondary btn-sm" id="ws-editor-btn" title="Open this project in browser VS Code">VS Code</button>
-          <button type="button" class="btn btn-secondary btn-sm" id="ws-opencode-btn" title="Open this project in OpenCode web">OpenCode</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="ws-chat-btn" title="Chat with this project">Chat</button>
           ${fontButtonsHtml('ws')}
           <button class="btn btn-secondary btn-sm select-btn" id="ws-select-btn" title="Select and copy text (screen and history)">
             <svg style="width:14px;height:14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7V5a1 1 0 011-1h2M4 17v2a1 1 0 001 1h2m10-16h2a1 1 0 011 1v2m0 10v2a1 1 0 01-1 1h-2M9 12h6"/></svg>
@@ -2515,7 +2518,7 @@
     `;
 
     document.getElementById('ws-editor-btn').onclick = () => window.CitadelBrowserEditor.open(currentProject);
-    document.getElementById('ws-opencode-btn').onclick = () => window.CitadelBrowserEditor.openCode(currentProject);
+    document.getElementById('ws-chat-btn').onclick = () => window.CitadelChat.open(currentProject);
     document.getElementById('ws-copy-mode-btn').onclick = () => {
       toggleCopyMode(() => state.terminals.get(state.activeTerminalId), 'ws-copy-mode-btn');
     };
@@ -4010,6 +4013,7 @@
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
+  window.CitadelChat.init({ api, state, openSettingsAt, showToast });
   window.CitadelBrowserEditor.init({ api, escapeHtml, showToast, state });
   window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state });
   window.CitadelRepos.init({ api, escapeHtml, loadProjects, openModal, renderProjectsView, showToast });

@@ -44,7 +44,7 @@ Self-hosted, lightweight and secure. Runs on a VPS, a Mac or a spare laptop.
 <td width="50%" valign="top">
 
 ### 🤖 AI agent launcher
-Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries. Missing agents install with one click, once for every user.
+Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries. Missing agents install with one click, once for every user. Native [Chat](docs/browser-editor.md#native-chat) adds Plan/Build, approvals and questions for local projects through an explicitly enabled AI Gateway and OpenCode 1.19.x; it replaces the embedded OpenCode GUI, not terminal agents.
 
 </td>
 <td width="50%" valign="top">
@@ -159,7 +159,7 @@ Every extra capability is opt-in:
 
 To just look at the panel without installing anything on the machine, there is a development-only Docker image: `docker compose up --build` (see [docs/installation.md](docs/installation.md#try-it-without-installing-docker)). It is not the supported deployment.
 
-Projects discovers folders under `PROJECTS_DIR`; import a suggestion and use **More actions → Open in VS Code** for local or SSH editing. [Details](docs/installation.md#project-folders-and-vs-code).
+Projects discovers folders under `PROJECTS_DIR`; import a suggestion and use **More actions → Open VS Code in browser** or **Chat**. Fresh installs retain the OpenCode CLI; Chat requires opt-in gateway subscription reuse, with no native-provider fallback. Chat and browser VS Code require the machine's own panel, not paired-machine transport. [Setup and limits](docs/installation.md#project-folders-vs-code-and-chat).
 
 ### Requirements
 
@@ -224,6 +224,7 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 | [Remote access](docs/remote-access.md) | QR pairing, Cloudflare tunnels, own domain |
 | [Task mesh](docs/task-mesh.md) | Parallel work across paired nodes |
 | [AI Gateway](docs/ai-gateway.md) | Optional Claude/ChatGPT routing, model choices, usage windows and limitations |
+| [Chat and browser VS Code](docs/browser-editor.md) | Gateway-only native Chat, private storage, approvals, bounded history and optional editor |
 | [Feature map](docs/features.md) | Which files make up each feature, with their tests and guide |
 | [Code map](docs/code-map.md) | Every source file with its purpose, and where each screen lives |
 | [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) | How it is built and why |

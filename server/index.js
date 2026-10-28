@@ -178,6 +178,7 @@ async function buildServer(options = {}) {
   await fastify.register(settingsRoutes);
   await fastify.register(require('./routes/gatewayRoutes'));
   await fastify.register(require('./routes/editorRoutes'));
+  await fastify.register(require('./routes/chatRoutes'));
   await fastify.register(tailscaleRoutes);
   await fastify.register(secretRoutes);
   await fastify.register(hostRoutes);

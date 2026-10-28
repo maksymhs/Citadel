@@ -9,7 +9,8 @@ Which files make up each feature. Start here when a task is phrased in product t
 | Persistent terminals and clipboard image paste | `terminalRoutes`, `wsTerminal` → `terminalManager`, `terminalImageService`, `fileService`, `scripts/fsAgent.js`; `remoteProxyRoutes` → `hostService` | `app.js` (terminal tabs and clipboard), `terminal-images.js` | `terminal`, `terminal-images`, `remote-proxy`, `ui-smoke` | [installation](installation.md#paste-an-image-into-a-terminal) · [architecture §7](architecture.md) |
 | AI agents (launch, install, reinstall/update, remove) | `agentRoutes` → `agentRegistry`, `agentInstallService`, `agentLifecycle`, `agentCatalogue` | `app.js`, `monitor.js` | `agents`, `agent-install`, `agent-lifecycle` | [architecture §7](architecture.md) |
 | Credential vault, `citadel-creds` | `secretRoutes` → `secretStore`, `secretSyncService`, `security/secrets.js`; CLI `scripts/citadel-creds.js` | `app.js` (Settings) | `secrets`, `secret-sync`, `gitcred` | [security](security.md) |
-| Browser editors (VS Code optional, OpenCode web) | `editorRoutes` → `editorService`, `releaseDownload`, `openCodeGuiAdapter`, OpenCode web service | `browser-editor.js`, `project-tools.js`, `app.js` (project terminal toolbar) | `editor`, `opencode-gui-adapter`, `ui-smoke` | [browser editor](browser-editor.md) |
+| Browser VS Code (optional) | `editorRoutes` → `editorService`, `releaseDownload` | `browser-editor.js`, `project-tools.js`, `app.js` (project terminal toolbar) | `editor`, `ui-smoke` | [browser editor](browser-editor.md) |
+| Native Chat (admin, local projects, gateway-only OpenCode 1.19.x API; owner-private sessions, Plan/Build and approvals) | `chatRoutes` → `chatService`; `gatewayService`, `scripts/gateway-launch.js`; separate `DATA_DIR/chat/metadata.sqlite` | `chat.js`, `project-tools.js`, `app.js`; `public/index.html`, `public/css/app.css` | `chat`, `ui-smoke`, `editor` (retired GUI/root routes absent) | [native Chat](browser-editor.md#native-chat) · [AI Gateway](ai-gateway.md) |
 | Files explorer | `fileRoutes` → `fileService`; `scripts/fsAgent.js` (privileged ops) | `files.js` | `files`, `ui-smoke` | [installation](installation.md) |
 | Disk usage and quick cleanup | `fileRoutes` (`/api/files/cleanup`) → `fileService`, `scripts/fsAgent.js` | `disk-cleanup.js` | `files` | [installation](installation.md) |
 | Machine switching (one URL, many hosts) | `hostRoutes`, `remoteProxyRoutes` → `hostService` | `app.js` (machine selector) | `remote-proxy`, `known-peers` | [architecture §3](architecture.md) |
@@ -32,5 +33,9 @@ Which files make up each feature. Start here when a task is phrased in product t
 | macOS menu bar icon, Full Disk Access | `scripts/menubar-macos.sh`, `scripts/macos/CitadelMenu.swift`, `macPermissions`, `scripts/permissions.js` | — | `menubar`, `mac-permissions` | [installation](installation.md) |
 | Database and migrations | `database/db.js` | — | `db-upgrade` | [architecture §9](architecture.md) |
 | Configuration | `config.js`, `.env.example` | — | `config-paths` | [installation](installation.md) |
+
+The native Chat files are listed explicitly here because they have no source-purpose
+header comments; the generated code map may show missing-header placeholders rather
+than useful descriptions. Do not infer that Chat is absent from that map's summaries.
 
 Some names above are prefixes (`task-*` covers `task-execution`, `task-leases`, `task-node-*`; `sentinel*` covers `sentinel`, `sentinel-env`, `sentinel-process`, `sentinel-report`). Check a suite exists with `ls tests | grep <name>`.

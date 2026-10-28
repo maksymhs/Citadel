@@ -1,35 +1,67 @@
-# Browser VS Code and OpenCode web
+# Native Chat and browser VS Code
 
-From **Projects → More actions → Open OpenCode in browser**, or the **OpenCode**
-button in a project terminal, Citadel starts OpenCode's web interface in that
-project, inside Citadel's main workspace with its navigation still available.
-The server creates and verifies a separate web session in the selected project
-folder; reopening the same running project resumes that session. **Return to
-Terminal** restores the mounted terminal without restarting it. Navigating elsewhere
-closes the panel, not the OpenCode process. Switching projects restarts the shared
-web server and rejects stale project URLs.
+## Native Chat
 
-The GUI inherits the same configured model defaults as terminal-launched OpenCode.
-If OpenCode is enabled in AI Gateway, it uses the same private launcher and
-Build/Plan/small model aliases; an opted-in but stopped gateway produces an error.
-Otherwise native OpenCode configuration applies. Transient model selections or
-explicit model arguments in another terminal and its conversation are not copied.
-Fresh Citadel installs include the OpenCode CLI; it is not auto-started.
-Citadel runs `opencode serve` on loopback with a generated password and proxies
-HTTP and WebSocket traffic through the authenticated panel. **Stop OpenCode**
-terminates that process; clean shutdown also stops it. Only local projects are
-supported; for paired machines, open that machine's panel. OpenCode shares the
-Citadel service account's file and command privileges and is not a sandbox.
-OpenCode's root-level API routes (including `/provider`, `/path`, `/session` and
-`/project`) are forwarded only for the active project's GUI Referer and an
-administrator session; unrelated Citadel routes retain their normal handling.
-The GUI adapter keeps routing, API requests and assets under the project URL.
-It accepts only the reviewed frontend bundle observed with OpenCode server 1.19.3
-(frontend 1.19.2); other builds show a compatibility error instead of an empty
-screen. Recheck compatibility before updating OpenCode independently. Desktop
-and emulated mobile navigation, drafts, session reloads, workers and SSE were
-verified with that build. Native new-tab/middle-click session links and live model
-conversations remain unverified; use ordinary in-frame navigation for now.
+Choose **Projects → More actions → Chat**, or **Chat** in a project terminal.
+Citadel's own Chat panel opens in the main workspace, keeping the terminal mounted.
+**Return to Terminal** restores it without restarting it. This is not an embedded
+OpenCode GUI: the old GUI, bundle adapter, `/opencode/*`, `/api/opencode-web` and
+root API proxies have been removed. VS Code and native terminal agents remain available.
+
+Chat is administrator-only and **AI Gateway only**. In **Settings → AI Gateway**,
+explicitly connect your Claude and/or ChatGPT accounts, choose a route, select
+**OpenCode** under **Choose your tools**, save and enable the gateway. Chat reuses
+those connected subscriptions and shared planning/execution/background aliases;
+it does not import CLI login caches or fall back to native providers. Account
+entitlement and third-party compatibility remain experimental. A missing or stopped
+gateway produces an error. See [AI Gateway](ai-gateway.md).
+
+Fresh Citadel installs still include the OpenCode CLI, without auto-starting it;
+install or update it through Settings → Tools if needed. Native Chat requires
+**OpenCode 1.19.x** and checks the server's API document for session, async prompt,
+status, SSE, permission and question endpoints. Other versions or missing API
+operations fail explicitly. This API check does not depend on an OpenCode frontend
+bundle and is not a guarantee that every 1.19.x build works end to end.
+
+Use **New chat** or select a previous session. **Build** uses the execution alias;
+**Plan** uses the planning alias and denies edit, bash, task and external-directory
+permissions. Other permissions default to **ask**. Chat displays **Allow once** or
+**Reject**, plus question choices/custom answers and question rejection; it does
+not offer permanent permission grants. Send with the button or **Ctrl/Cmd+Enter**;
+Enter inserts a newline. **Stop** requests cancellation of the selected session.
+Returning to the terminal, navigating away or losing the connection does not cancel
+an agent; it may still be running.
+
+Live updates use session-scoped SSE notifications followed by bounded snapshots,
+not a raw OpenCode event/API proxy. EventSource reconnects and refreshes state;
+**Reconnect** reloads sessions, and online/tab-return handling refreshes the
+selection. Sending and approvals wait for fresh state after a disconnect. The UI
+shows at most the latest 100 messages, with bounded parts/text and tool names/status,
+not a full transcript or full tool output. Text is rendered literally with fenced
+code blocks, not full Markdown or HTML. There is no complete-history browsing or
+full OpenCode GUI feature-parity promise.
+
+Session ownership is private to the signed-in administrator, registered project
+and canonical directory. Metadata and request deduplication live in
+`DATA_DIR/chat/metadata.sqlite` (WAL), separate from Citadel's main schema and
+migrations. OpenCode transcripts and state persist in a hashed per-owner/project/
+directory HOME under `DATA_DIR/chat`, with separate XDG directories; terminal
+conversations and interactive model overrides are not copied. One engine runs at
+a time; busy work or pending approvals must be finished or cancelled before
+switching owners/projects or starting another session. Clean Citadel shutdown
+stops its process group but retains Chat storage.
+
+The engine runs `opencode serve` only on loopback with a random password and a
+restricted launch environment, with project config, external skills and Claude
+Code configuration loading disabled. This logical separation is **not an OS
+sandbox**: the engine and approved tools have the Citadel service account's file
+and command privileges. Chat metadata/transcripts are not encrypted by the Chat
+service; protect backups as sensitive data. Paired-machine Chat transport is not
+supported: open that machine's own Citadel panel. Automated fixtures/jsdom and an
+isolated installed-OpenCode capability/session/snapshot check cover the current
+implementation; no real model prompt or browser validation is claimed for native Chat.
+
+## Browser VS Code
 
 From **Projects → More actions → Open VS Code in browser**, Citadel opens an
 optional [code-server](https://github.com/coder/code-server) editor inside the
@@ -87,6 +119,7 @@ context, as described in the [upstream guide](https://coder.com/docs/code-server
 
 Tests cover administrator/origin checks, HTTP and binary WebSocket forwarding,
 credential filtering, managed project paths, checksums, lifecycle and the return
-button. A real isolated Linux code-server install, Chrome workbench load, file edit/save
-and return to Citadel were also exercised; no browser errors or editor processes
-remained after clean shutdown. Real macOS and paired-machine editor transport remain unverified.
+button, as well as the absence of retired OpenCode GUI/root proxy routes. Earlier
+Linux code-server browser checks do not verify the current native Chat implementation.
+No real browser was exercised for this documentation update; real macOS and
+paired-machine editor transport remain unverified.

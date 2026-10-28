@@ -158,10 +158,25 @@ Select **OpenCode** under **3. Choose your tools**, select **Save changes**, and
 OpenCode from the project's agent selector. OpenCode must be installed separately
 through Machines → Tools. The switch defaults off; disabling it leaves new OpenCode
 launches in native mode. Existing terminals keep their launch environment.
-**OpenCode web** uses the same opt-in launcher and model aliases when its server
-starts, and opens a separate session in the selected project folder within Citadel.
-Stop and reopen the web server to apply changed gateway launch settings. It does
-not inherit an existing terminal conversation or an interactive model override.
+The native **Chat** panel also uses this launcher and the same role aliases,
+but unlike terminal OpenCode it requires the running gateway and explicit OpenCode
+opt-in: disabling either makes Chat unavailable, with no native-provider fallback.
+It reuses only the Claude/ChatGPT subscriptions explicitly connected to AI Gateway,
+not native CLI login caches. Fresh installs retain the OpenCode CLI; install/update
+it through Tools if missing. Terminal native mode and VS Code are unchanged.
+
+Chat requires OpenCode **1.19.x** and checks its session/prompt/status/SSE/permission/
+question API operations and gateway-only configuration at startup. This is API
+compatibility gating, not a reviewed frontend bundle: the embedded OpenCode GUI
+and its root proxies are removed. Select Build or Plan in Citadel; approvals are
+Allow once/Reject, and questions can be answered or rejected. Plan denies edit,
+bash, task and external-directory permissions; remaining permissions default to ask.
+Owner-private metadata and isolated HOME/transcripts persist under `DATA_DIR/chat`,
+separate from terminal conversations and Citadel's main database schema, but are
+not an OS sandbox. Chat is local-panel only, not transported through paired peers.
+See [native Chat](browser-editor.md#native-chat) for bounded history, SSE reconnect,
+storage and lifecycle limits. No real prompt or browser verification is claimed
+for native Chat; existing terminal-client trials below do not establish that.
 
 Citadel injects runtime-only `OPENCODE_CONFIG_CONTENT` overrides: a custom
 `citadel` provider using `@ai-sdk/openai-compatible` at the local `/v1` endpoint.

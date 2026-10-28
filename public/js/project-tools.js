@@ -53,7 +53,7 @@
   }
 
   function showEditor(project) { return window.CitadelBrowserEditor.open(project); }
-  function showOpenCode(project) { return window.CitadelBrowserEditor.openCode(project); }
+  function showChat(project) { return window.CitadelChat.open(project); }
 
-  window.CitadelProjectTools = { init, mountDiscovery, showEditor, showOpenCode };
+  window.CitadelProjectTools = { init, mountDiscovery, showEditor, showChat };
 })();

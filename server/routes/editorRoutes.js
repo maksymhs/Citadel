@@ -4,16 +4,8 @@ const { WebSocket } = require('ws');
 const { requireAuth } = require('../security/auth');
 const { isAllowedOrigin } = require('../security/guard');
 const editor = require('../services/editorService');
-const openCodeWeb = editor.openCodeWeb;
-const openCodeGui = require('../services/openCodeGuiAdapter');
 const audit = require('../services/auditService');
 const DROP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'authorization', 'cookie', 'set-cookie']);
-const OPENCODE_ABSOLUTE_PATHS = new Set([
-  '/assets', '/api', '/global', '/event', '/provider', '/path', '/session', '/project',
-  '/config', '/vcs', '/instance', '/command', '/find', '/file', '/experimental',
-  '/lsp', '/formatter', '/mcp', '/agent', '/log', '/tui', '/auth', '/permission',
-  '/question', '/pty', '/skill', '/worktree', '/resource',
-]);
 function filtered(headers) { return Object.fromEntries(Object.entries(headers).filter(([key]) => !DROP.has(key.toLowerCase()))); }
 async function editorRoutes(fastify) {
   fastify.addHook('onRequest', async (request, reply) => {
@@ -22,21 +14,8 @@ async function editorRoutes(fastify) {
     if (request.user.role !== 'admin') return reply.status(403).send({ error: 'Administrator privileges are required.' });
     if (request.headers.origin && !isAllowedOrigin(request.headers.origin)) return reply.status(403).send({ error: 'Unauthorized origin.' });
   });
-  fastify.addHook('onClose', async () => { await editor.close(); await openCodeWeb.close(); });
+  fastify.addHook('onClose', async () => { await editor.close(); });
   fastify.get('/api/editor', () => ({ editor: editor.status() }));
-  fastify.get('/api/opencode-web', () => ({ opencode: openCodeWeb.status() }));
-  fastify.post('/api/projects/:id/opencode-web', async (request, reply) => {
-    try {
-      const result = await openCodeWeb.open(request.params.id);
-      audit.logAction({ userId: request.user.id, action: 'opencode_web_opened', targetType: 'project', targetId: request.params.id, ip: request.ip });
-      return result;
-    } catch (err) { return reply.status(400).send({ error: err.message }); }
-  });
-  fastify.delete('/api/opencode-web', async (request, reply) => {
-    await openCodeWeb.close();
-    audit.logAction({ userId: request.user.id, action: 'opencode_web_stopped', targetType: 'opencode-web', targetId: null, ip: request.ip });
-    return { opencode: openCodeWeb.status() };
-  });
   for (const [method, url, action, run] of [
     ['POST', '/api/editor/install', 'browser_editor_installed', () => editor.install()],
     ['POST', '/api/projects/:id/editor', 'browser_editor_opened', req => editor.open(req.params.id)],
@@ -54,87 +33,38 @@ async function editorRoutes(fastify) {
     proxy.removeAllContentTypeParsers();
     proxy.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: 16 * 1024 * 1024 }, (request, body, done) => done(null, body));
     function routeTarget(request) {
-      const isOpenCode = request.raw.url.startsWith('/opencode/');
-      const target = isOpenCode ? openCodeWeb.target(request.params.projectId) : editor.target(request.params.projectId);
+      const target = editor.target(request.params.projectId);
       const rest = request.params['*'] || '';
       const query = request.raw.url.includes('?') ? request.raw.url.slice(request.raw.url.indexOf('?')) : '';
-      return { ...target, isOpenCode, path: `/${rest}${query}` };
-    }
-    function routeAbsoluteOpenCode(request) {
-      const target = openCodeWeb.currentTarget();
-      const requestUrl = request.raw.url;
-      const rawPath = requestUrl.split('?')[0];
-      const route = [...OPENCODE_ABSOLUTE_PATHS].find(prefix => rawPath === prefix || rawPath.startsWith(`${prefix}/`));
-      if (!route) throw new Error('OpenCode route is not allowed.');
-      if (route !== '/assets') {
-        const referer = request.headers.referer || '';
-        if (!referer.includes(`/opencode/${encodeURIComponent(target.projectId)}/`)) throw new Error('OpenCode route is not associated with the active project.');
-      }
-      return { ...target, isOpenCode: true, projectId: target.projectId, path: requestUrl };
-    }
-    function isAbsoluteOpenCodePath(request) {
-      const pathname = request.raw.url.split('?')[0];
-      return [...OPENCODE_ABSOLUTE_PATHS].some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
+      return { ...target, path: `/${rest}${query}` };
     }
     async function forward(request, reply) {
       let target;
-      try { target = isAbsoluteOpenCodePath(request) ? routeAbsoluteOpenCode(request) : routeTarget(request); } catch (err) {
-        if (isAbsoluteOpenCodePath(request)) return reply.callNotFound();
+      try { target = routeTarget(request); } catch (err) {
         return reply.status(503).send({ error: err.message });
       }
-      const adapting = target.isOpenCode && request.raw.url.startsWith('/opencode/');
-      const prefix = adapting ? openCodeGui.prefixFor(request.params.projectId) : null;
-      if (adapting && request.raw.url.split('?')[0] === prefix) {
-        const query = request.raw.url.includes('?') ? request.raw.url.slice(request.raw.url.indexOf('?')) : '';
-        return reply.code(308).header('location', `${prefix}/${query}`).send();
-      }
-      const headers = { ...filtered(request.headers), ...(target.cookie ? { cookie: target.cookie } : {}), ...(target.auth ? { authorization: target.auth } : {}) };
-      if (adapting) {
-        headers['accept-encoding'] = 'identity';
-        for (const key of ['if-none-match', 'if-modified-since', 'if-match', 'if-unmodified-since', 'if-range', 'range']) delete headers[key];
-      }
-      const adaptationAbort = new AbortController();
-      const upstream = http.request({ hostname: '127.0.0.1', port: target.port, path: target.path, method: request.method, headers, timeout: 30000 }, async response => {
+      const headers = { ...filtered(request.headers), cookie: target.cookie };
+      const upstream = http.request({ hostname: '127.0.0.1', port: target.port, path: target.path, method: request.method, headers, timeout: 30000 }, response => {
         try {
           const outgoing = filtered(response.headers);
           if (outgoing.location && /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(outgoing.location)) throw new Error('Unexpected editor redirect.');
-          if (outgoing.location && adapting) {
-            const resolved = new URL(outgoing.location, `http://localhost${target.path}`);
-            outgoing.location = openCodeGui.prefixUrl(resolved.pathname + resolved.search + resolved.hash, prefix);
-          }
-          if (outgoing.location?.startsWith('/') && request.raw.url.startsWith('/editor/')) outgoing.location = `/editor/${encodeURIComponent(request.params.projectId)}${outgoing.location}`;
-          const kind = adapting ? openCodeGui.resourceKind(target.path, outgoing['content-type']) : null;
-          let body = response;
-          if (kind) {
-            if (response.statusCode === 206 || response.statusCode === 304) throw new Error('Unexpected partial OpenCode GUI response.');
-            const source = await openCodeGui.readText(response);
-            body = await openCodeGui.adaptText(source, { kind, path: target.path, prefix, target, signal: adaptationAbort.signal });
-            for (const key of ['content-length', 'content-encoding', 'etag', 'last-modified', 'content-range', 'accept-ranges', 'content-md5', 'digest']) delete outgoing[key];
-            outgoing['content-type'] = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', manifest: 'application/manifest+json; charset=utf-8' }[kind];
-          }
+          if (outgoing.location?.startsWith('/')) outgoing.location = `/editor/${encodeURIComponent(request.params.projectId)}${outgoing.location}`;
           reply.code(response.statusCode || 502);
           for (const [key, value] of Object.entries(outgoing)) if (value !== undefined) reply.header(key, value);
           reply.header('cache-control', 'no-store');
-          if (target.isOpenCode) reply.header('referrer-policy', 'same-origin');
-          reply.send(body);
+          reply.send(response);
         } catch {
           response.destroy();
-          if (!reply.sent) {
-            reply.code(502).header('cache-control', 'no-store');
-            if (adapting) reply.type('text/html; charset=utf-8').send(openCodeGui.ERROR_PAGE);
-            else reply.send({ error: 'Browser editor response failed.' });
-          }
+          if (!reply.sent) reply.code(502).header('cache-control', 'no-store').send({ error: 'Browser editor response failed.' });
         }
       });
       upstream.on('timeout', () => upstream.destroy());
       upstream.on('error', () => {
         if (reply.sent) return;
-        reply.status(502).header('cache-control', 'no-store');
-        if (adapting) reply.type('text/html; charset=utf-8').send(openCodeGui.ERROR_PAGE);
-        else reply.send({ error: 'Browser editor connection failed.' });
+        reply.status(502).header('cache-control', 'no-store').send({ error: 'Browser editor connection failed.' });
       });
-      request.raw.on('aborted', () => { adaptationAbort.abort(); upstream.destroy(); });
-      reply.raw.on('close', () => { if (!reply.raw.writableEnded) { adaptationAbort.abort(); upstream.destroy(); } });
+      request.raw.on('aborted', () => { upstream.destroy(); });
+      reply.raw.on('close', () => { if (!reply.raw.writableEnded) upstream.destroy(); });
       if (Buffer.isBuffer(request.body)) upstream.write(request.body);
       upstream.end();
       // Response arrives on the stream callback, rather than through Fastify's
@@ -143,11 +73,10 @@ async function editorRoutes(fastify) {
     }
     function forwardSocket(socket, request) {
       let target;
-      try { target = isAbsoluteOpenCodePath(request) ? routeAbsoluteOpenCode(request) : routeTarget(request); } catch { socket.close(1008, 'Editor unavailable.'); return; }
-      const isOpenCode = target.isOpenCode;
+      try { target = routeTarget(request); } catch { socket.close(1008, 'Editor unavailable.'); return; }
       const protocols = String(request.headers['sec-websocket-protocol'] || '').split(',').map(v => v.trim()).filter(Boolean);
-      const upstream = new WebSocket(`ws://127.0.0.1:${target.port}${target.path}`, protocols, { headers: { ...(target.cookie ? { cookie: target.cookie } : {}), ...(target.auth ? { authorization: target.auth } : {}), host: request.headers.host, ...(request.headers.origin ? { origin: request.headers.origin } : {}) }, handshakeTimeout: 10000, maxPayload: 16 * 1024 * 1024 });
-      const release = isOpenCode ? () => {} : editor.socketOpened();
+      const upstream = new WebSocket(`ws://127.0.0.1:${target.port}${target.path}`, protocols, { headers: { cookie: target.cookie, host: request.headers.host, ...(request.headers.origin ? { origin: request.headers.origin } : {}) }, handshakeTimeout: 10000, maxPayload: 16 * 1024 * 1024 });
+      const release = editor.socketOpened();
       let closed = false, queuedBytes = 0;
       const pending = [];
       const close = () => {
@@ -170,14 +99,6 @@ async function editorRoutes(fastify) {
     const options = { helmet: false, config: { rateLimit: false } };
     proxy.route({ method: 'GET', url: '/editor/:projectId/*', ...options, handler: forward, wsHandler: forwardSocket });
     proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: '/editor/:projectId/*', ...options, handler: forward });
-    proxy.route({ method: 'GET', url: '/opencode/:projectId/*', ...options, handler: forward, wsHandler: forwardSocket });
-    proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: '/opencode/:projectId/*', ...options, handler: forward });
-    proxy.route({ method: 'GET', url: '/opencode/:projectId', ...options, handler: forward });
-    proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: '/opencode/:projectId', ...options, handler: forward });
-    for (const route of [...OPENCODE_ABSOLUTE_PATHS].flatMap(prefix => [prefix, `${prefix}/*`])) {
-      proxy.route({ method: 'GET', url: route, ...options, handler: forward, wsHandler: forwardSocket });
-      proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: route, ...options, handler: forward });
-    }
   });
 }
 module.exports = editorRoutes;

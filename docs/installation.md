@@ -136,7 +136,7 @@ running `opencode` or `codex`. Native CLI installations are still required.
 Exit Claude and reopen an existing project terminal after activation. It binds only to loopback,
 requires no sudo and remains off by default. This experimental integration offers opt-in Auto fallback after both providers are connected. See [setup and limitations](ai-gateway.md).
 
-### Project folders, VS Code and OpenCode web
+### Project folders, VS Code and Chat
 
 Opening **Projects**, or clicking **Refresh**, scans immediate non-hidden folders
 under `PROJECTS_DIR`. Suggestions are read-only; choose **Import folder** to
@@ -145,14 +145,27 @@ are directory symlinks and `node_modules`. Scans stop after 500 entries or 100
 suggestions and never recurse or execute repository code. Use **Import folder**
 for other folders or to choose a different project name.
 
-A project's **More actions** menu offers **Open VS Code in browser** and
-**Open OpenCode in browser**. The project terminal toolbar also offers **VS Code**
-and **OpenCode**. VS Code installs its optional editor on first use. OpenCode's
-CLI is installed by default on fresh Citadel installs; it starts `opencode serve`
-only when requested. Both run on demand, through Citadel authentication and a
-loopback-only backend, and **Back to Citadel** restores the panel. These actions
-are administrator-only and currently work on the machine serving the panel;
-paired machines require their own panel. See [browser editor setup](browser-editor.md).
+A project's **More actions** menu offers **Open VS Code in browser** and **Chat**;
+the project terminal toolbar also offers **VS Code** and **Chat**. VS Code retains
+its optional first-use code-server install and **Back to Citadel** action. Chat is
+Citadel's native panel, not the retired embedded OpenCode GUI; **Return to Terminal**
+restores the mounted terminal without stopping agent work.
+
+Fresh installs still include the OpenCode CLI, without auto-starting it. For Chat,
+install/update OpenCode through Tools as needed: **1.19.x** with the required
+session/prompt/SSE/approval APIs is required. Explicitly connect your subscriptions,
+select **OpenCode**, save and start **Settings → AI Gateway**. Chat is gateway-only;
+it does not import CLI login caches or fall back to native providers. Terminal
+OpenCode can still run natively when not opted in, and terminal gateway routing
+is unchanged. Chat offers Plan/Build, ask-based approvals/questions and Stop;
+SSE reconnect refreshes bounded history, not full Markdown or a complete transcript.
+
+Chat stores owner-private metadata in `DATA_DIR/chat/metadata.sqlite`, separate
+from the main schema, and OpenCode transcripts in per-owner/project/directory HOME
+and XDG storage beneath `DATA_DIR/chat`. This is not a sandbox or encrypted Chat
+storage. Both actions require administrator access and run only on the machine
+serving the panel; paired-machine transports are unsupported, so open that
+machine's own panel. See [Chat and browser editor setup](browser-editor.md).
 
 ## Updating an existing installation
 

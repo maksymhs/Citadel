@@ -86,6 +86,15 @@ SQLite in WAL mode at `DATA_DIR/citadel.db`; fresh databases get the `CREATE TAB
 | Observability | `events`, `metric_samples` |
 | Platform | `app_config` (key/value), `plugins`, `schema_migrations` |
 
+Native Chat uses a **separate** WAL database, `DATA_DIR/chat/metadata.sqlite`,
+created lazily by `chatService`, not the main schema/migrations. Its `sessions`
+table scopes engine IDs to owner, project and canonical directory; `requests`
+stores message request IDs/digests for deduplication. It does not store full
+message bodies there. OpenCode owns transcripts/state in the hashed per-owner/
+project/directory HOME and separate XDG directories below `DATA_DIR/chat`.
+The Chat root is mode 0700 and metadata file 0600; this is filesystem privacy,
+not Chat encryption or an OS sandbox. Protect the whole Chat tree in backups.
+
 Beside the database, `DATA_DIR` holds `secret.key` (AES-256-GCM key, mode 0600, or `CITADEL_SECRET_KEY`), `tunnel-url`, `connect-qr`, `update-status.json`, `update-channel`, `permissions.json` (macOS) and backups under `backups/`. Services read settings through `server/config.js`; `.env.example` documents every variable.
 
 ## 10. Where the details are
@@ -115,10 +124,30 @@ setup. Internal API paths and persisted keys retain the `gateway` name for
 compatibility. See [AI Gateway](ai-gateway.md).
 
 Browser VS Code uses an optional pinned code-server distribution, started on
-demand. OpenCode web starts the installed `opencode serve` CLI on demand. Both use
-administrator-only HTTP/WebSocket bridges to protected loopback listeners and do
-not pass browser/peer credentials. The browser keeps a return action outside the
-iframe; Citadel stops both process groups on shutdown. See [browser editor](browser-editor.md).
+demand through an administrator-only HTTP/WebSocket bridge to a protected loopback
+listener. Browser/peer credentials are not passed upstream; a return action remains
+outside its iframe. Its install, lifecycle and native terminal gateway paths are unchanged.
+
+Native Chat is a separate Citadel UI (`public/js/chat.js`) backed by `chatRoutes`
+and `chatService`, registered in `server/index.js`. It starts the installed
+`opencode serve` through the opt-in OpenCode AI Gateway launcher only, never native
+provider fallback. Startup requires OpenCode 1.19.x, checks the required API
+operations and verifies gateway-exclusive provider/model configuration. Build/Plan
+use execution/planning aliases; permissions default to ask, with edit/bash/task/
+external-directory denied in Plan. The panel supports one-time approval/rejection,
+questions and cancellation. Session-cookie administrator auth, origin checks and
+owner/project/canonical-directory checks apply to snapshots, mutations and SSE;
+peer tokens are not accepted. Paired-machine transport is unsupported: use the
+machine's own panel.
+
+The browser receives bounded snapshots through project/session APIs and SSE update
+notifications, refreshing after reconnect rather than replaying a complete event
+history. Rendering is literal text plus fenced code blocks and tool status, not
+full Markdown or full transcript/tool output. One engine is active at a time;
+busy work blocks owner/project switching. Returning to the mounted terminal or
+closing Chat does not cancel work. Clean shutdown stops both editor and Chat
+process groups. The embedded OpenCode GUI, bundle adapter and root API proxies
+are removed; VS Code remains an iframe. See [Chat and browser editor](browser-editor.md).
 
 ## Retired project management
 
