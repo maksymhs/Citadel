@@ -7,7 +7,12 @@ const editor = require('../services/editorService');
 const openCodeWeb = editor.openCodeWeb;
 const audit = require('../services/auditService');
 const DROP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'authorization', 'cookie', 'set-cookie']);
-const OPENCODE_ABSOLUTE_PATHS = new Set(['/assets', '/api', '/global', '/event']);
+const OPENCODE_ABSOLUTE_PATHS = new Set([
+  '/assets', '/api', '/global', '/event', '/provider', '/path', '/session', '/project',
+  '/config', '/vcs', '/instance', '/command', '/find', '/file', '/experimental',
+  '/lsp', '/formatter', '/mcp', '/agent', '/log', '/tui', '/auth', '/permission',
+  '/question', '/pty', '/skill', '/worktree', '/resource',
+]);
 function filtered(headers) { return Object.fromEntries(Object.entries(headers).filter(([key]) => !DROP.has(key.toLowerCase()))); }
 async function editorRoutes(fastify) {
   fastify.addHook('onRequest', async (request, reply) => {
@@ -133,7 +138,7 @@ async function editorRoutes(fastify) {
     proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: '/opencode/:projectId/*', ...options, handler: forward });
     proxy.route({ method: 'GET', url: '/opencode/:projectId', ...options, handler: forward });
     proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: '/opencode/:projectId', ...options, handler: forward });
-    for (const route of ['/assets/*', '/api/*', '/global/*', '/event', '/event/*', '/assets', '/api', '/global']) {
+    for (const route of [...OPENCODE_ABSOLUTE_PATHS].flatMap(prefix => [prefix, `${prefix}/*`])) {
       proxy.route({ method: 'GET', url: route, ...options, handler: forward, wsHandler: forwardSocket });
       proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: route, ...options, handler: forward });
     }

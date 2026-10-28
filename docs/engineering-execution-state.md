@@ -671,3 +671,8 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Proxy routes now use the supported top-level `helmet: false` option instead of `config.helmet: false`. OpenCode proxy responses explicitly use `Referrer-Policy: same-origin`, allowing browser API requests to retain the project Referer required by the bridge without sending it to external origins.
 - Regression coverage checks iframe policy, upstream CSP preservation, absence of inherited frame-blocking headers, unchanged panel security headers and forwarding of `/global/health`, `/api/event` and `/api/provider` with the project Referer.
 - Editor tests and lint passed; full suite: 551 passed, 1 skipped, 0 failed. No real browser or live service was exercised; root-based SPA history navigation remains an integration limitation to validate.
+
+## 154. Forward OpenCode's actual root API namespaces
+- Fixed the GUI's reported `/provider`, `/path`, `/session/status` and `/project` 404 responses: OpenCode uses root API namespaces, not the previously tested `/api/provider`. Registered exact and nested routes from one shared allowlist, including session messages, configuration, files, permissions and PTYs.
+- Preserved administrator/origin checks, active-project Referer requirements and credential filtering. Regression fixtures verify JSON responses, query preservation, session/config mutations, missing/wrong-project Referer rejection, unauthenticated rejection and unrelated-path 404 handling.
+- Editor tests (5/5), full suite (551 passed, 1 skipped, 0 failed), lint and diff checks passed. No live service restart, real GUI browser execution, conversation or macOS verification was performed; root-based SPA history navigation remains unverified.

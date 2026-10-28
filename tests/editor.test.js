@@ -51,6 +51,9 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
     } else if (req.url === '/assets/index-B5F0ExSs.css') {
       res.setHeader('content-type', 'text/css');
       res.end('body { color: red; }');
+    } else if (['/provider', '/path', '/session', '/project', '/config', '/file', '/permission', '/question', '/pty', '/agent'].some(prefix => req.url === prefix || req.url.startsWith(`${prefix}/`) || req.url.startsWith(`${prefix}?`))) {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ url: req.url, method: req.method, body: text }));
     } else {
       res.setHeader('content-type', 'text/html');
       res.end('<html>Browser editor fixture</html>');
@@ -90,6 +93,25 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
       assert.equal(seen.url, endpoint);
       assert.equal(seen.headers.authorization, 'Basic private');
     }
+    for (const endpoint of ['/provider', '/provider/auth', '/path', '/session/status', '/project', '/project/current', '/config', '/file/status', '/permission', '/question', '/pty', '/agent', '/session?directory=%2Ftmp%2Fproject&limit=10']) {
+      const result = await app.inject({ url: endpoint, cookies, headers: { referer: documentUrl } });
+      assert.equal(result.statusCode, 200, endpoint);
+      assert.equal(result.headers['content-type'], 'application/json');
+      assert.deepEqual(result.json(), { url: endpoint, method: 'GET', body: '' });
+      assert.equal(seen.headers.authorization, 'Basic private');
+      assert.equal(seen.headers.cookie, undefined);
+      for (const referer of [undefined, `${base}/`, `${base}/opencode/other-project/`]) {
+        const denied = await app.inject({ url: endpoint, cookies, headers: referer ? { referer } : {} });
+        assert.equal(denied.statusCode, 404, endpoint);
+      }
+      assert.equal((await app.inject({ url: endpoint, headers: { referer: documentUrl } })).statusCode, 401);
+    }
+    for (const [method, endpoint, payload] of [['POST', '/session', '{"title":"New session"}'], ['POST', '/session/test/prompt_async', '{"parts":[]}'], ['PATCH', '/config', '{"model":"test/model"}'], ['DELETE', '/session/test', undefined]]) {
+      const result = await app.inject({ method, url: endpoint, cookies, headers: { referer: documentUrl, 'content-type': 'application/json' }, ...(payload ? { payload } : {}) });
+      assert.equal(result.statusCode, 200, `${method} ${endpoint}`);
+      assert.deepEqual(result.json(), { url: endpoint, method, body: payload || '' });
+    }
+    assert.equal((await app.inject({ url: '/provider-unrelated', cookies, headers: { referer: documentUrl } })).statusCode, 404);
     const asset = await app.inject({ url: '/assets/index-B5F0ExSs.js', cookies, headers: { referer: documentUrl } });
     assert.equal(asset.statusCode, 200);
     assert.equal(asset.headers['content-type'], 'application/javascript');

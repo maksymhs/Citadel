@@ -8,6 +8,9 @@ HTTP and WebSocket traffic through the authenticated panel. **Stop OpenCode**
 terminates that process; clean shutdown also stops it. Only local projects are
 supported; for paired machines, open that machine's panel. OpenCode shares the
 Citadel service account's file and command privileges and is not a sandbox.
+OpenCode's root-level API routes (including `/provider`, `/path`, `/session` and
+`/project`) are forwarded only for the active project's GUI Referer and an
+administrator session; unrelated Citadel routes retain their normal handling.
 
 From **Projects → More actions → Open VS Code in browser**, Citadel opens an
 optional [code-server](https://github.com/coder/code-server) editor inside the
