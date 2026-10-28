@@ -375,6 +375,144 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
+  test('OpenCode stays in the shell, preserves terminals and ignores stale requests', async () => {
+    w.document.querySelector('.nav-item[data-view="projects"]').click();
+    await sleep(400);
+    const projectButton = w.document.querySelector('.open-workspace-btn');
+    const projectId = projectButton.getAttribute('data-project-id');
+    const originalFetch = w.fetch;
+    const calls = [], pending = [];
+    let deferOpen = false, deferStop = false, invalid = false, failStop = false;
+    const response = (value) => ({ ok: true, json: async () => value });
+    const sessionUrl = `/opencode/${encodeURIComponent(projectId)}/session/fixture`;
+    w.fetch = (url, opts = {}) => {
+      if (String(url).includes('/api/terminals') && opts.method === 'POST') return Promise.reject(new Error('Terminal creation disabled in UI fixture'));
+      if (String(url).endsWith('/opencode-web')) {
+        calls.push({ url, method: opts.method });
+        if (opts.method === 'DELETE' && failStop) return Promise.reject(new Error('Stop failed'));
+        if ((opts.method === 'POST' && deferOpen) || (opts.method === 'DELETE' && deferStop)) return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+        return Promise.resolve(response({ url: invalid ? 'https://invalid.example/' : sessionUrl }));
+      }
+      return originalFetch(url, opts);
+    };
+    try {
+      projectButton.click();
+      await sleep(700);
+      const content = w.document.getElementById('main-content');
+      const workspace = content.querySelector('.workspace-container');
+      const viewport = w.document.getElementById('terminal-viewport');
+      const terminal = w.document.createElement('div');
+      terminal.textContent = 'Mounted terminal state';
+      viewport.append(terminal);
+      const open = async () => { w.document.getElementById('ws-opencode-btn').click(); await sleep(30); };
+      await open();
+      const panel = content.querySelector('.browser-editor-embedded');
+      assert.ok(panel);
+      assert.equal(calls[0].url, `/api/projects/${encodeURIComponent(projectId)}/opencode-web`);
+      assert.equal(calls[0].method, 'POST');
+      assert.equal(panel.querySelector('iframe').getAttribute('src'), sessionUrl);
+      assert.match(panel.querySelector('strong').textContent, /ui-discovered · OpenCode web/);
+      assert.match(panel.querySelector('#editor-back').textContent, /Terminal/);
+      assert.equal(w.getComputedStyle(panel).position, 'absolute');
+      assert.equal(w.getComputedStyle(content).position, 'relative');
+      assert.equal(w.getComputedStyle(w.document.querySelector('.sidebar')).visibility, 'visible');
+      assert.equal(w.getComputedStyle(w.document.querySelector('.top-bar')).visibility, 'visible');
+      const menu = w.document.getElementById('mobile-menu-btn');
+      menu.click();
+      assert.equal(w.document.querySelector('.sidebar').classList.contains('open'), true);
+      menu.click();
+      assert.equal(w.document.querySelector('.sidebar').classList.contains('open'), false);
+      assert.equal(workspace.hasAttribute('inert'), true);
+      assert.equal(w.getComputedStyle(workspace).visibility, 'hidden');
+      w.document.getElementById('editor-back').click();
+      assert.equal(content.querySelector('.browser-editor'), null);
+      assert.equal(w.document.getElementById('terminal-viewport'), viewport);
+      assert.equal(terminal.isConnected, true);
+      assert.equal(terminal.textContent, 'Mounted terminal state');
+      assert.equal(workspace.hasAttribute('inert'), false);
+      assert.equal(content.classList.contains('browser-editor-host'), false);
+      assert.equal(calls.filter(call => call.method === 'DELETE').length, 0);
+
+      await open();
+      failStop = true;
+      w.document.getElementById('editor-stop').click(); await sleep(30);
+      assert.equal(w.document.getElementById('editor-stop').disabled, false);
+      failStop = false;
+      w.document.getElementById('editor-stop').click(); await sleep(30);
+      assert.equal(content.querySelector('.browser-editor'), null);
+      assert.equal(calls.at(-1).url, '/api/opencode-web');
+      assert.equal(calls.at(-1).method, 'DELETE');
+      assert.equal(terminal.isConnected, true);
+
+      invalid = true;
+      await open();
+      assert.equal(content.querySelector('iframe'), null);
+      assert.match(content.querySelector('.settings-warn').textContent, /Invalid OpenCode address/);
+      invalid = false;
+      w.document.getElementById('editor-retry').click(); await sleep(30);
+      assert.equal(content.querySelector('iframe').getAttribute('src'), sessionUrl);
+      w.document.getElementById('editor-back').click();
+
+      deferOpen = true;
+      await open();
+      const stale = pending.shift();
+      w.document.getElementById('editor-back').click();
+      deferOpen = false;
+      await open();
+      const replacement = content.querySelector('.browser-editor');
+      stale.resolve(response({ url: sessionUrl })); await sleep(30);
+      assert.equal(content.querySelector('.browser-editor'), replacement);
+      assert.equal(content.querySelectorAll('iframe').length, 1);
+
+      deferStop = true;
+      w.document.getElementById('editor-stop').click(); await sleep(30);
+      const stopping = pending.shift();
+      w.document.getElementById('editor-back').click();
+      await open();
+      const afterStop = content.querySelector('.browser-editor');
+      stopping.resolve(response({})); await sleep(30);
+      assert.equal(content.querySelector('.browser-editor'), afterStop);
+      w.document.getElementById('editor-back').click();
+
+      for (const reject of [false, true]) {
+        deferOpen = true;
+        await open();
+        const navigating = pending.shift();
+        w.document.querySelector('.nav-item[data-view="settings"]').click();
+        await sleep(100);
+        assert.equal(w.document.querySelector('.browser-editor'), null);
+        assert.equal(content.classList.contains('browser-editor-host'), false);
+        if (reject) navigating.reject(new Error('Late failure'));
+        else navigating.resolve(response({ url: sessionUrl }));
+        await sleep(30);
+        assert.equal(w.document.querySelector('.browser-editor'), null);
+        if (!reject) {
+          w.document.querySelector(`[data-workspace-context="${projectId}"]`).click();
+          await sleep(500);
+        }
+      }
+    } finally {
+      w.CitadelBrowserEditor.close();
+      w.fetch = originalFetch;
+      w.document.querySelector('.nav-item[data-view="projects"]').click();
+      await sleep(300);
+    }
+    assert.deepEqual(errors, []);
+  });
+
+  test('OpenCode keeps paired-machine restrictions without making requests', async () => {
+    const isolated = new JSDOM('<main id="main-content"></main>', { runScripts: 'dangerously' });
+    try {
+      const win = isolated.window, calls = [], notices = [];
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/browser-editor.js'), 'utf8'));
+      win.CitadelBrowserEditor.init({ api: (...args) => calls.push(args), escapeHtml: String, showToast: message => notices.push(message), state: { activeHostId: 'peer-1' } });
+      await win.CitadelBrowserEditor.openCode({ id: 'remote-project', name: 'Remote' });
+      assert.deepEqual(calls, []);
+      assert.match(notices[0], /machine’s own Citadel panel/);
+      assert.equal(win.document.querySelector('.browser-editor'), null);
+    } finally { isolated.window.close(); }
+  });
+
   test('retired project management scripts and navigation are absent', () => {
     for (const name of ['CitadelProjectHub', 'CitadelMissions', 'CitadelKnowledge']) assert.equal(w[name], undefined);
     assert.equal(w.document.querySelectorAll('.nav-item[data-view="project-hub"], .nav-item[data-view="work"], .nav-item[data-view="docs"], .nav-item[data-view="learning"]').length, 0);

@@ -158,6 +158,10 @@ Select **OpenCode** under **3. Choose your tools**, select **Save changes**, and
 OpenCode from the project's agent selector. OpenCode must be installed separately
 through Machines → Tools. The switch defaults off; disabling it leaves new OpenCode
 launches in native mode. Existing terminals keep their launch environment.
+**OpenCode web** uses the same opt-in launcher and model aliases when its server
+starts, and opens a separate session in the selected project folder within Citadel.
+Stop and reopen the web server to apply changed gateway launch settings. It does
+not inherit an existing terminal conversation or an interactive model override.
 
 Citadel injects runtime-only `OPENCODE_CONFIG_CONTENT` overrides: a custom
 `citadel` provider using `@ai-sdk/openai-compatible` at the local `/v1` endpoint.

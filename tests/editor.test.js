@@ -267,28 +267,57 @@ http.createServer(async (req, res) => {
   await assert.rejects(escaping.open('bad'), /Path traversal/);
 });
 
-test('OpenCode web starts a protected server with private credentials and closes it', async () => {
+test('OpenCode web uses native or gateway settings, verifies project sessions and rejects stale targets', async () => {
   const instance = fs.mkdtempSync(path.join(root, 'opencode-'));
   const binary = path.join(instance, 'opencode');
   fs.writeFileSync(binary, `#!/usr/bin/env node
 const http = require('node:http');
 if (!process.env.OPENCODE_SERVER_PASSWORD || process.env.OPENCODE_SERVER_USERNAME !== 'opencode') process.exit(1);
 const auth = 'Basic ' + Buffer.from('opencode:' + process.env.OPENCODE_SERVER_PASSWORD).toString('base64');
-http.createServer((req, res) => {
+let created = 0;
+http.createServer(async (req, res) => {
   if (req.headers.authorization !== auth) { res.writeHead(401); res.end(); return; }
-  if (req.url === '/global/health') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ healthy: true })); }
+  const url = new URL(req.url, 'http://localhost');
+  if (url.pathname === '/session' || url.pathname === '/session/ses_fixture') {
+    if (url.searchParams.get('directory') !== process.cwd()) { res.writeHead(400); res.end(); return; }
+    if (req.method === 'POST') {
+      let body = ''; for await (const chunk of req) body += chunk;
+      if (body !== '{}' || ++created !== 1) { res.writeHead(400); res.end(); return; }
+    }
+    res.setHeader('content-type', 'application/json');
+    const mode = require('node:fs').existsSync(${JSON.stringify(path.join(instance, 'bad-session'))}) ? require('node:fs').readFileSync(${JSON.stringify(path.join(instance, 'bad-session'))}, 'utf8') : '';
+    if (mode === 'http') { res.writeHead(500); res.end('private provider failure'); return; }
+    res.end(JSON.stringify({ id: mode === 'id' ? '../private' : 'ses_fixture', directory: mode === 'directory' || (mode === 'verify' && req.method === 'GET') ? '/wrong-project' : process.cwd() }));
+  }
+  else if (req.url === '/probe') {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2), config: process.env.OPENCODE_CONFIG_CONTENT, token: process.env.CITADEL_GATEWAY_TOKEN, internal: process.env.CITADEL_TOKEN }));
+  }
+  else if (req.url === '/global/health') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ healthy: true })); }
   else if (req.url === '/assets/index.js') { res.setHeader('content-type', 'application/javascript'); res.end('window.opencodeFixture = true;'); }
   else if (req.url === '/assets/index.css') { res.setHeader('content-type', 'text/css'); res.end('body { color: blue; }'); }
   else { res.writeHead(404); res.end(); }
 }).listen(Number(process.argv[process.argv.indexOf('--port') + 1]), process.argv[process.argv.indexOf('--hostname') + 1]);
 `, { mode: 0o700 });
+  let launch = null, selected = projects.getProject(project.id);
   const s = editor.createOpenCodeWebService({
+    spawnImpl: (command, args, options) => {
+      assert.ok(fs.statSync(options.cwd).isDirectory());
+      assert.equal(options.detached, true);
+      assert.equal(options.env.CITADEL_TOKEN, undefined);
+      assert.equal(command, launch ? launch.command : binary);
+      if (launch) assert.deepEqual(args.slice(0, launch.args.length + 1), [...launch.args, binary]);
+      return require('node:child_process').spawn(command, args, options);
+    },
     registry: { findBinary: name => { assert.equal(name, 'opencode'); return binary; } },
-    getProject: id => { assert.equal(id, project.id); return projects.getProject(id); },
+    gateway: { launchOptions: client => { assert.equal(client, 'opencode'); return launch; } },
+    getProject: id => id === selected.id ? selected : projects.getProject(id),
   });
   try {
     const opened = await s.open(project.id);
-    assert.equal(opened.url, `/opencode/${project.id}/`);
+    assert.equal(opened.url, `/opencode/${project.id}/${Buffer.from(project.path).toString('base64url')}/session/ses_fixture`);
+    assert.deepEqual(await s.open(project.id), opened);
+    assert.deepEqual(await Promise.all([s.open(project.id), s.open(project.id)]), [opened, opened]);
     const target = s.target(project.id);
     const upstream = `http://127.0.0.1:${target.port}`;
     assert.equal((await fetch(`${upstream}/global/health`)).status, 401);
@@ -307,6 +336,48 @@ http.createServer((req, res) => {
     assert.deepEqual(s.status(), { installed: true, running: true, error: null });
     assert.ok(!JSON.stringify(s.status()).includes(target.auth));
     assert.ok(!JSON.stringify(s.status()).includes(password));
+    const native = await (await fetch(`${upstream}/probe`, { headers: { authorization: target.auth } })).json();
+    assert.equal(native.cwd, project.path);
+    assert.deepEqual(native.args, ['serve', '--hostname', '127.0.0.1', '--port', String(target.port)]);
+    await s.close();
+    const file = path.join(instance, 'launch.json');
+    fs.writeFileSync(file, JSON.stringify({ baseUrl: 'http://127.0.0.1:8317', token: 'fixture-key', opencodeEnabled: true, contextTokens: 64000 }));
+    launch = { command: process.execPath, args: [path.resolve(__dirname, '../scripts/gateway-launch.js'), file, '--client', 'opencode'] };
+    await s.open(project.id);
+    const wrappedTarget = s.target(project.id);
+    const wrapped = await (await fetch(`http://127.0.0.1:${wrappedTarget.port}/probe`, { headers: { authorization: wrappedTarget.auth } })).json();
+    const config = JSON.parse(wrapped.config);
+    assert.equal(wrapped.cwd, project.path);
+    assert.deepEqual(wrapped.args, ['serve', '--hostname', '127.0.0.1', '--port', String(wrappedTarget.port)]);
+    assert.equal(config.model, 'citadel/citadel-execution');
+    assert.equal(config.agent.plan.model, 'citadel/citadel-planning');
+    assert.equal(config.agent.build.model, 'citadel/citadel-execution');
+    assert.equal(config.small_model, 'citadel/citadel-small');
+    assert.equal(config.provider.citadel.models['citadel-execution'].limit.context, 64000);
+    assert.equal(wrapped.token, 'fixture-key');
+    assert.equal(wrapped.internal, undefined);
+    assert.ok(!JSON.stringify(await s.open(project.id)).includes('fixture-key'));
+    const other = projects.createProject({ name: 'Other GUI project' });
+    await s.open(other.id);
+    assert.throws(() => s.target(project.id), /stopped/);
+    assert.equal(s.currentTarget().projectId, other.id);
+    selected = { ...selected, id: 'same-path-identity', path: other.path };
+    await s.open(selected.id);
+    assert.throws(() => s.target(other.id), /stopped/);
+    assert.equal(s.currentTarget().projectId, selected.id);
+    selected = { ...selected, path: project.path };
+    assert.throws(() => s.target(selected.id), /stopped/);
+    assert.throws(() => s.currentTarget(), /stopped/);
+    const switched = await s.open(selected.id);
+    assert.equal(switched.url, `/opencode/${selected.id}/${Buffer.from(project.path).toString('base64url')}/session/ses_fixture`);
+    for (const mode of ['http', 'id', 'directory', 'verify']) {
+      await s.close();
+      fs.writeFileSync(path.join(instance, 'bad-session'), mode);
+      await assert.rejects(s.open(selected.id), /^Error: OpenCode web could not open a project session\.$/);
+      assert.equal(s.status().running, false);
+      assert.throws(() => s.target(selected.id), /stopped/);
+      assert.ok(!JSON.stringify(s.status()).includes('private'));
+    }
   } finally { await s.close(); }
   assert.equal(s.status().running, false);
 });

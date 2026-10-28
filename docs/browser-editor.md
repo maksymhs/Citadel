@@ -2,7 +2,19 @@
 
 From **Projects → More actions → Open OpenCode in browser**, or the **OpenCode**
 button in a project terminal, Citadel starts OpenCode's web interface in that
-project. Fresh Citadel installs include the OpenCode CLI; it is not auto-started.
+project, inside Citadel's main workspace with its navigation still available.
+The server creates and verifies a separate web session in the selected project
+folder; reopening the same running project resumes that session. **Return to
+Terminal** restores the mounted terminal without restarting it. Navigating elsewhere
+closes the panel, not the OpenCode process. Switching projects restarts the shared
+web server and rejects stale project URLs.
+
+The GUI inherits the same configured model defaults as terminal-launched OpenCode.
+If OpenCode is enabled in AI Gateway, it uses the same private launcher and
+Build/Plan/small model aliases; an opted-in but stopped gateway produces an error.
+Otherwise native OpenCode configuration applies. Transient model selections or
+explicit model arguments in another terminal and its conversation are not copied.
+Fresh Citadel installs include the OpenCode CLI; it is not auto-started.
 Citadel runs `opencode serve` on loopback with a generated password and proxies
 HTTP and WebSocket traffic through the authenticated panel. **Stop OpenCode**
 terminates that process; clean shutdown also stops it. Only local projects are

@@ -155,19 +155,37 @@ function createEditorService({ dataDir = DATA_DIR, spawnImpl = spawn, execFileIm
   }
   return { status, install, open, target, close, socketOpened };
 }
-function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectService.getProject, registry = agentRegistry } = {}) {
-  let child = null, port = null, starting = null, lastError = null, auth = null, processGroup = null, activeProjectPath = null, activeProjectId = null;
-  function status() { return { installed: Boolean(registry.findBinary('opencode')), running: Boolean(child), error: lastError }; }
+function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectService.getProject, registry = agentRegistry, gateway = require('./gatewayService') } = {}) {
+  let child = null, port = null, starting = null, lastError = null, auth = null, processGroup = null, activeProjectPath = null, activeProjectId = null, sessionId = null;
+  function status() { return { installed: Boolean(registry.findBinary('opencode')), running: Boolean(child && sessionId), error: lastError }; }
+  async function sessionRequest(route, method = 'GET') {
+    const url = new URL(`http://127.0.0.1:${port}${route}`);
+    url.searchParams.set('directory', activeProjectPath);
+    const response = await fetch(url, { method, headers: { authorization: auth, 'content-type': 'application/json' }, ...(method === 'POST' ? { body: '{}' } : {}), redirect: 'error', signal: AbortSignal.timeout(10000) });
+    if (!response.ok) { await response.body?.cancel(); throw new Error(); }
+    const chunks = []; let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > 65536) throw new Error();
+      chunks.push(chunk);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  }
   async function open(id) {
+    if (starting) { await starting; return open(id); }
+    starting = openProject(id);
+    try { return await starting; } finally { starting = null; }
+  }
+  async function openProject(id) {
     const found = getProject(id);
     if (!found) throw new Error('Project not found.');
     const projectPath = validateSafePath(found.path);
     const binary = registry.findBinary('opencode');
     if (!binary) throw new Error('OpenCode is not installed.');
-    if (starting) await starting;
-    if (child && activeProjectPath !== projectPath) { await close(); return open(id); }
+    if (child && (activeProjectPath !== projectPath || activeProjectId !== id)) await close();
     if (!child) {
-      starting = (async () => {
+      const launch = gateway.launchOptions('opencode');
+      try {
         activeProjectPath = projectPath;
         activeProjectId = id;
         const reservation = net.createServer();
@@ -179,42 +197,62 @@ function createOpenCodeWebService({ spawnImpl = spawn, getProject = projectServi
         env.OPENCODE_SERVER_PASSWORD = password;
         env.OPENCODE_SERVER_USERNAME = 'opencode';
         auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`;
-        child = spawnImpl(binary, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], { cwd: projectPath, env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
-        processGroup = child.pid;
-        child.once('error', () => { child = null; processGroup = null; lastError = 'OpenCode web failed to start.'; });
-        child.once('close', () => { child = null; processGroup = null; activeProjectPath = null; activeProjectId = null; auth = null; });
+        const args = ['serve', '--hostname', '127.0.0.1', '--port', String(port)];
+        child = spawnImpl(launch ? launch.command : binary, launch ? [...launch.args, binary, ...args] : args, { cwd: projectPath, env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
+        const current = child, group = current.pid;
+        processGroup = group;
+        current.once('error', () => { if (child === current) lastError = 'OpenCode web failed to start.'; });
+        current.once('close', () => {
+          if (group) { try { process.kill(-group, 'SIGKILL'); } catch {} }
+          if (child !== current) return;
+          child = null; processGroup = null; activeProjectPath = null; activeProjectId = null; auth = null; sessionId = null;
+        });
+        let ready = false;
         for (let i = 0; i < 100; i++) {
           if (!child) break;
           try {
-            const response = await fetch(`http://127.0.0.1:${port}/global/health`, { headers: { authorization: auth }, signal: AbortSignal.timeout(300) });
-            if (response.ok) { await response.body?.cancel(); lastError = null; return; }
+            const response = await fetch(`http://127.0.0.1:${port}/global/health`, { headers: { authorization: auth }, redirect: 'error', signal: AbortSignal.timeout(300) });
+            if (response.ok) { await response.body?.cancel(); ready = true; break; }
             await response.body?.cancel();
           } catch { /* OpenCode is still starting */ }
           await new Promise(resolve => setTimeout(resolve, 100));
         }
+        if (!ready) throw new Error();
+        const created = await sessionRequest('/session', 'POST');
+        if (typeof created?.id !== 'string' || !/^ses_[a-zA-Z0-9_-]{1,160}$/.test(created.id) || created.directory !== projectPath) throw new Error();
+        const verified = await sessionRequest(`/session/${encodeURIComponent(created.id)}`);
+        if (verified?.id !== created.id || verified.directory !== projectPath) throw new Error();
+        if (!child || activeProjectId !== id || activeProjectPath !== projectPath) throw new Error();
+        sessionId = verified.id;
+        lastError = null;
+      } catch {
         await close();
-        throw new Error('OpenCode web did not become ready.');
-      })();
-      try { await starting; } finally { starting = null; }
+        lastError = 'OpenCode web could not open a project session.';
+        throw new Error(lastError);
+      }
     }
-    return { url: `/opencode/${encodeURIComponent(id)}/`, project: { id: found.id, name: found.name } };
+    target(id);
+    return { url: `/opencode/${encodeURIComponent(id)}/${Buffer.from(projectPath, 'utf8').toString('base64url')}/session/${encodeURIComponent(sessionId)}`, project: { id: found.id, name: found.name } };
   }
   function target(id) {
-    if (!getProject(id) || !child) throw new Error('OpenCode web is stopped.');
+    const found = getProject(id);
+    if (!found || !child || !auth || !sessionId || id !== activeProjectId || validateSafePath(found.path) !== activeProjectPath) throw new Error('OpenCode web is stopped. Open it again from Projects.');
     return { port, auth };
   }
   function currentTarget() {
-    if (!activeProjectId || !child) throw new Error('OpenCode web is stopped.');
-    return { port, auth, projectId: activeProjectId };
+    return { ...target(activeProjectId), projectId: activeProjectId };
   }
   async function close() {
-    const current = child, group = processGroup; child = null; processGroup = null; auth = null; activeProjectPath = null; activeProjectId = null;
+    const current = child, group = processGroup; child = null; processGroup = null; auth = null; activeProjectPath = null; activeProjectId = null; sessionId = null;
+    const signal = name => { if (group) { try { process.kill(-group, name); } catch {} } else if (current) { try { current.kill(name); } catch {} } };
     if (current && current.exitCode === null && !current.signalCode) {
-      const signal = name => { if (group) { try { process.kill(-group, name); } catch { /* process group exited */ } } else current.kill(name); };
-      signal('SIGTERM');
-      await new Promise(resolve => { const timer = setTimeout(() => { signal('SIGKILL'); resolve(); }, 2000); current.once('close', () => { clearTimeout(timer); resolve(); }); });
-      signal('SIGKILL');
+      await new Promise(resolve => {
+        const timer = setTimeout(() => { signal('SIGKILL'); resolve(); }, 2000);
+        current.once('close', () => { clearTimeout(timer); resolve(); });
+        signal('SIGTERM');
+      });
     }
+    signal('SIGKILL');
   }
   return { status, open, target, currentTarget, close };
 }

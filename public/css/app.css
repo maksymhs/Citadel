@@ -2773,6 +2773,15 @@ label.mon-row:hover { border-color: var(--border-hover); }
 
 /* Optional browser editor keeps the Citadel return action outside the iframe. */
 .browser-editor { position: fixed; inset: 0; z-index: 5000; display: flex; flex-direction: column; background: var(--bg-primary); }
+.browser-editor-host { position: relative; min-height: 0; overflow: hidden; }
+.browser-editor-host > :not(.browser-editor-embedded) { visibility: hidden; }
+.browser-editor-embedded { position: absolute; z-index: 1; min-width: 0; }
+.browser-editor-embedded .browser-editor-bar { gap: 8px; }
+.browser-editor-embedded .browser-editor-bar strong { min-width: 0; flex-basis: 160px; }
+@media (max-width: 600px) {
+  .browser-editor-embedded .browser-editor-bar strong { flex-basis: 100%; order: -1; }
+  .browser-editor-embedded .browser-editor-setup { margin: 12px; padding: 16px; }
+}
 .browser-editor-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; flex-wrap: wrap; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); }
 .browser-editor-bar strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .browser-editor-body { flex: 1; min-height: 0; overflow: auto; }
