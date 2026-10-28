@@ -43,6 +43,8 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
     let text = ''; for await (const chunk of req) text += chunk;
     seen = { headers: req.headers, url: req.url, text };
     res.setHeader('set-cookie', 'backend=never-expose');
+    res.setHeader('referrer-policy', 'no-referrer');
+    res.setHeader('content-security-policy', "default-src 'self'; frame-ancestors 'self'");
     if (req.url === '/assets/index-B5F0ExSs.js') {
       res.setHeader('content-type', 'application/javascript');
       res.end('window.editorFixture = true;');
@@ -73,7 +75,22 @@ test('HTTP and WebSocket proxy preserve data without exposing browser or backend
     assert.equal(seen.headers.authorization, undefined);
     assert.equal(seen.url, '/some/path?x=1');
     assert.equal(seen.text, '{"x":"unchanged"}');
-    const asset = await app.inject({ url: '/assets/index-B5F0ExSs.js', cookies, headers: { referer: `${base}/opencode/${project.id}/` } });
+    const documentUrl = `${base}/opencode/${project.id}/`;
+    const document = await app.inject({ url: `/opencode/${project.id}/`, cookies });
+    assert.equal(document.statusCode, 200);
+    assert.equal(document.headers['referrer-policy'], 'same-origin');
+    assert.equal(document.headers['x-frame-options'], undefined);
+    assert.equal(document.headers['content-security-policy'], "default-src 'self'; frame-ancestors 'self'");
+    const panel = await app.inject({ url: '/', cookies });
+    assert.equal(panel.headers['referrer-policy'], 'no-referrer');
+    assert.equal(panel.headers['x-frame-options'], 'SAMEORIGIN');
+    for (const endpoint of ['/global/health', '/api/event', '/api/provider']) {
+      const result = await app.inject({ url: endpoint, cookies, headers: { referer: documentUrl } });
+      assert.equal(result.statusCode, 200);
+      assert.equal(seen.url, endpoint);
+      assert.equal(seen.headers.authorization, 'Basic private');
+    }
+    const asset = await app.inject({ url: '/assets/index-B5F0ExSs.js', cookies, headers: { referer: documentUrl } });
     assert.equal(asset.statusCode, 200);
     assert.equal(asset.headers['content-type'], 'application/javascript');
     assert.equal(asset.body, 'window.editorFixture = true;');

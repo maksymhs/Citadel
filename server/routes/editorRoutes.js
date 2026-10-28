@@ -87,6 +87,7 @@ async function editorRoutes(fastify) {
         reply.code(response.statusCode || 502);
         for (const [key, value] of Object.entries(outgoing)) if (value !== undefined) reply.header(key, value);
         reply.header('cache-control', 'no-store');
+        if (target.isOpenCode) reply.header('referrer-policy', 'same-origin');
         reply.send(response);
       });
       upstream.on('timeout', () => upstream.destroy());
@@ -125,7 +126,7 @@ async function editorRoutes(fastify) {
       });
       upstream.on('error', close); upstream.on('close', close); socket.on('error', close); socket.on('close', close);
     }
-    const options = { config: { helmet: false, rateLimit: false } };
+    const options = { helmet: false, config: { rateLimit: false } };
     proxy.route({ method: 'GET', url: '/editor/:projectId/*', ...options, handler: forward, wsHandler: forwardSocket });
     proxy.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], url: '/editor/:projectId/*', ...options, handler: forward });
     proxy.route({ method: 'GET', url: '/opencode/:projectId/*', ...options, handler: forward, wsHandler: forwardSocket });
