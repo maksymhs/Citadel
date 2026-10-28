@@ -108,7 +108,8 @@
     view.sessions.onchange = () => { select(view, view.sessions.value); view.menu.open = false; view.input.focus(); };
     view.newButton = button('New chat', () => { view.menu.open = false; view.input.focus(); create(view); }, 'chat-new');
     const history = node('label', 'Session history'); history.append(view.sessions);
-    tools.append(back, history, view.newButton);
+    if (!options.content) tools.append(back);
+    tools.append(history, view.newButton);
     view.menu.append(summary, tools);
     view.notices = node('div', undefined, 'chat-notices'); view.notices.hidden = true;
     view.notice = node('p'); view.notice.setAttribute('role', 'status');

@@ -2156,6 +2156,7 @@
   // signed-out browser stops talking to the server.
   function teardownSession() {
     workspaceGeneration++;
+    document.getElementById('ws-close-mode')?.remove();
     window.CitadelChat.reset();
     window.CitadelBrowserEditor.close();
     window.CitadelProjectTools.reset();
@@ -2458,16 +2459,15 @@
 
     const currentProject = state.projects.find((p) => p.id === context);
     if (!currentProject) return renderWorkspaceOverview();
-    content.innerHTML = '<div class="workspace-project"><div class="workspace-modes" role="group" aria-label="Workspace mode"><button type="button" class="btn btn-secondary btn-sm" id="ws-terminal-mode" aria-pressed="false">Terminal</button><button type="button" class="btn btn-secondary btn-sm" id="ws-chat-btn" aria-pressed="false">Chat</button><button type="button" class="btn btn-secondary btn-sm" id="ws-vscode-mode" aria-pressed="false">VS Code</button><button type="button" class="btn btn-secondary btn-sm" id="ws-close-mode">Close view / Choose mode</button></div><div class="workspace-surface"></div></div>';
+    content.innerHTML = '<div class="workspace-project"><div class="workspace-surface"></div></div>';
     const surface = content.querySelector('.workspace-surface');
-    const terminalButton = document.getElementById('ws-terminal-mode');
-    const chatButton = document.getElementById('ws-chat-btn');
-    const editorButton = document.getElementById('ws-vscode-mode');
-    const closeButton = document.getElementById('ws-close-mode');
-    for (const button of [chatButton, editorButton]) {
-      button.disabled = state.activeHostId !== 'local';
-      if (button.disabled) button.title = 'Open this machine’s own Citadel panel';
-    }
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.id = 'ws-close-mode';
+    closeButton.className = 'top-bar-icon';
+    closeButton.setAttribute('aria-label', 'Close view and choose mode');
+    closeButton.title = 'Close view and choose mode';
+    closeButton.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M6 18L18 6"/></svg>';
     const chooser = document.createElement('section');
     chooser.className = 'workspace-chooser';
     chooser.setAttribute('aria-label', 'Choose workspace mode');
@@ -2485,10 +2485,8 @@
       workspaceMode = mode;
       const attempt = ++terminalAttempt;
       if (remember) window.CitadelProjectTools.workspacePreference(context, { mode });
-      terminalButton.setAttribute('aria-pressed', String(mode === 'terminal'));
-      editorButton.setAttribute('aria-pressed', String(mode === 'vscode'));
-      chatButton.setAttribute('aria-pressed', String(mode === 'chat'));
-      closeButton.hidden = !mode;
+      if (mode) actions?.append(closeButton);
+      else closeButton.remove();
       state.terminalSelectionGeneration++;
       window.CitadelChat.close();
       window.CitadelBrowserEditor.close();
@@ -2521,9 +2519,6 @@
         } else refitActiveTerminals();
       }
     };
-    terminalButton.onclick = () => { if (workspaceMode !== 'terminal') choose('terminal'); };
-    chatButton.onclick = () => { if (workspaceMode !== 'chat') choose('chat'); };
-    editorButton.onclick = () => { if (workspaceMode !== 'vscode') choose('vscode'); };
     closeButton.onclick = () => choose(null);
     chooser.querySelectorAll('[data-workspace-mode]').forEach(button => { button.onclick = () => choose(button.dataset.workspaceMode); });
     chooseWorkspaceMode = choose;

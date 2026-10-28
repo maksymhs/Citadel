@@ -361,7 +361,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await sleep(500);
       const button = w.document.getElementById('ws-editor-btn');
       assert.equal(button.textContent, 'VS Code');
-      assert.equal(w.document.getElementById('ws-chat-btn').textContent, 'Chat');
+      assert.equal(w.document.querySelector('.workspace-modes'), null);
+      assert.equal(w.document.getElementById('ws-chat-btn'), null);
       const viewport = w.document.getElementById('terminal-viewport');
       button.click();
       await sleep(300);
@@ -372,7 +373,9 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(w.getComputedStyle(w.document.querySelector('.sidebar')).visibility, 'visible');
       assert.equal(w.getComputedStyle(w.document.querySelector('.top-bar')).visibility, 'visible');
       assert.equal(w.document.getElementById('editor-stop'), null);
-      w.document.getElementById('editor-back').click();
+      assert.equal(w.document.getElementById('editor-back'), null);
+      assert.equal(w.document.querySelector('.browser-editor-bar'), null);
+      w.document.getElementById('ws-close-mode').click();
       assert.equal(w.document.getElementById('terminal-viewport'), viewport);
       assert.equal(w.document.querySelector('.browser-editor'), null);
       assert.ok(w.document.querySelector('.workspace-chooser'));
@@ -397,7 +400,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       w.document.querySelector('.open-workspace-btn').click(); await sleep(700);
       const viewport = w.document.getElementById('terminal-viewport');
       const workspace = w.document.querySelector('.workspace-container');
-      w.document.getElementById('ws-chat-btn').click(); await sleep(30);
+      w.document.getElementById('ws-close-mode').click();
+      w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(30);
       assert.ok(w.document.querySelector('.chat-panel'));
       assert.equal(w.document.querySelector('.chat-panel iframe'), null);
       assert.equal(w.document.querySelector('.chat-panel img'), null);
@@ -438,33 +442,41 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     };
     try {
       w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
-      assert.equal(w.document.getElementById('ws-chat-btn').getAttribute('aria-pressed'), 'true');
+      assert.ok(w.document.querySelector('.chat-panel'));
+      assert.ok(w.document.querySelector('#top-bar-actions #ws-close-mode'));
       assert.equal(creates, 0);
       const input = w.document.querySelector('.chat-input'); input.value = 'project draft';
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
       w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
       assert.equal(w.document.querySelector('.chat-input').value, 'project draft');
       assert.equal(creates, 0);
-      w.document.getElementById('ws-terminal-mode').click(); await sleep(400);
+      w.document.getElementById('ws-close-mode').click();
+      w.document.querySelector('[data-workspace-mode="terminal"]').click(); await sleep(400);
       const viewport = w.document.getElementById('terminal-viewport');
-      w.document.getElementById('ws-chat-btn').click(); await sleep(0);
+      w.document.getElementById('ws-close-mode').click();
+      w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(0);
       assert.equal(typeof finishTerminals, 'function');
       finishTerminals(); await sleep(50);
       assert.equal(creates, 0, 'late empty terminal list cannot spawn a shell in Chat');
-      w.document.getElementById('ws-terminal-mode').click(); await sleep(100);
+      w.document.getElementById('ws-close-mode').click();
+      w.document.querySelector('[data-workspace-mode="terminal"]').click(); await sleep(100);
       const mountedViewport = w.document.getElementById('terminal-viewport');
       finishTerminals(); await sleep(100);
       const before = creates;
       for (let i = 0; i < 3; i++) {
-        w.document.getElementById('ws-chat-btn').click(); await sleep(0);
-        assert.equal(w.document.getElementById('ws-terminal-mode').closest('[inert]'), null);
-        w.document.getElementById('ws-terminal-mode').click();
+        w.document.getElementById('ws-close-mode').click();
+        w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(0);
+        assert.equal(w.document.getElementById('ws-close-mode').closest('[inert]'), null);
+        w.document.getElementById('ws-close-mode').click();
+        w.document.querySelector('[data-workspace-mode="terminal"]').click();
         assert.equal(w.document.getElementById('terminal-viewport'), mountedViewport);
       }
       assert.notEqual(mountedViewport, viewport);
       assert.equal(creates, before);
-      w.document.getElementById('ws-chat-btn').click(); await sleep(0);
-      w.document.querySelector('.chat-back').click();
+      w.document.getElementById('ws-close-mode').click();
+      w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(0);
+      assert.equal(w.document.querySelector('.chat-back'), null);
+      w.document.getElementById('ws-close-mode').click();
       assert.ok(w.document.querySelector('.workspace-chooser'));
       assert.equal(w.document.getElementById('terminal-viewport'), mountedViewport);
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
@@ -492,7 +504,14 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     const tools = w.CitadelProjectTools;
     tools.workspacePreference(projectId, { mode: 'invalid', terminalId: 'saved-terminal', chatSessionId: 'saved-chat' });
     const enter = async () => { w.document.querySelector('.open-workspace-btn').click(); await sleep(350); };
-    const leave = async () => { w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300); };
+    const leave = async () => {
+      const close = w.document.getElementById('ws-close-mode');
+      const mode = tools.workspacePreference(projectId).mode;
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+      assert.equal(w.document.getElementById('ws-close-mode'), null);
+      close?.click();
+      assert.equal(tools.workspacePreference(projectId).mode, mode, 'detached header action cannot clear remembered mode');
+    };
     const sidebar = label => {
       w.document.querySelector(`[data-ws-menu-context="${projectId}"]`).click();
       const button = [...w.document.querySelectorAll('.ctx-item')].find(item => item.textContent === label);
@@ -501,16 +520,26 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     try {
       await enter();
       assert.equal(w.document.querySelectorAll('.workspace-mode-card').length, 3);
+      assert.equal(w.document.getElementById('ws-close-mode'), null);
+      for (const selector of ['.workspace-modes', '#ws-terminal-mode', '#ws-chat-btn', '#ws-vscode-mode']) assert.equal(w.document.querySelector(selector), null);
       assert.equal(w.document.activeElement.dataset.workspaceMode, 'chat');
       assert.equal(calls.some(call => call.method === 'POST' || call.url === '/api/chat/status' || call.url === '/api/editor' || call.url.includes('/api/terminals?projectId=')), false);
       sidebar('VS Code'); await sleep(30);
       assert.equal(tools.workspacePreference(projectId).mode, 'vscode');
+      const close = w.document.querySelector('#top-bar-actions #ws-close-mode');
+      assert.ok(close);
+      assert.equal(close.getAttribute('aria-label'), 'Close view and choose mode');
+      assert.equal(close.title, 'Close view and choose mode');
+      assert.ok(close.querySelector('svg[aria-hidden="true"]'));
+      assert.match(w.document.getElementById('top-bar-title').textContent, /ui-discovered/);
       assert.ok(w.document.querySelector('.workspace-surface > .browser-editor-embedded'));
       w.document.getElementById('ws-close-mode').click();
       finishEditor(); await sleep(20);
       assert.equal(w.document.querySelector('.browser-editor-frame'), null);
       assert.ok(w.document.querySelector('.workspace-chooser'));
       assert.equal(tools.workspacePreference(projectId).mode, null);
+      assert.equal(w.document.getElementById('ws-close-mode'), null);
+      assert.equal(w.document.activeElement.dataset.workspaceMode, 'chat');
       assert.equal(tools.workspacePreference(projectId).terminalId, 'saved-terminal');
       assert.equal(tools.workspacePreference(projectId).chatSessionId, 'saved-chat');
       w.document.querySelector('[data-workspace-mode="vscode"]').click(); await sleep(20);
@@ -519,7 +548,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(w.getComputedStyle(w.document.querySelector('.browser-editor')).position, 'absolute');
       await leave(); assert.equal(w.document.querySelector('.browser-editor'), null);
       await enter(); await sleep(20); finishEditor(); await sleep(20);
-      assert.equal(w.document.getElementById('ws-vscode-mode').getAttribute('aria-pressed'), 'true');
+      assert.equal(tools.workspacePreference(projectId).mode, 'vscode');
+      assert.ok(w.document.querySelector('#top-bar-actions #ws-close-mode'));
       assert.ok(w.document.querySelector('.workspace-surface iframe'));
       sidebar('Chat'); await sleep(30);
       assert.equal(w.document.querySelector('.browser-editor'), null);
@@ -537,7 +567,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       }
       assert.equal(calls.filter(call => call.url === '/api/terminals' && call.method === 'POST').length, creates);
       await leave(); await enter();
-      assert.equal(w.document.getElementById('ws-terminal-mode').getAttribute('aria-pressed'), 'true');
+      assert.equal(tools.workspacePreference(projectId).mode, 'terminal');
+      assert.ok(w.document.querySelector('#top-bar-actions #ws-close-mode'));
       assert.equal(calls.some(call => call.method === 'DELETE' || call.url.endsWith('/cancel')), false);
       w.document.getElementById('ws-close-mode').click();
       await leave(); await enter();
@@ -1071,7 +1102,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(calls.filter(call => call.url.endsWith('/cancel')).length, 0);
       const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
       assert.match(appSource, /function navigateTo\(view\) \{\s*window.CitadelChat.close\(\)/);
-      assert.match(appSource, /function teardownSession\(\) \{\s*workspaceGeneration\+\+;\s*window.CitadelChat.reset\(\)/);
+      assert.match(appSource, /function teardownSession\(\) \{\s*workspaceGeneration\+\+;\s*document.getElementById\('ws-close-mode'\)\?\.remove\(\);\s*window.CitadelChat.reset\(\)/);
     } finally { win.CitadelChat.close(); isolated.window.close(); }
   });
 

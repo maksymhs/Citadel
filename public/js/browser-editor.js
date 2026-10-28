@@ -33,11 +33,8 @@
     }
     (options.content || document.body).append(current);
     const body = current.querySelector('#browser-editor-body');
-    current.querySelector('#editor-back').onclick = () => { if (present()) { close(); options.onClose?.(); } };
-    if (options.content) {
-      current.querySelector('#editor-back').textContent = 'Choose workspace mode';
-      current.querySelector('#editor-stop').remove();
-    }
+    if (options.content) current.querySelector('.browser-editor-bar').remove();
+    else current.querySelector('#editor-back').onclick = () => { if (present()) { close(); options.onClose?.(); } };
     const stop = current.querySelector('#editor-stop');
     if (stop) stop.onclick = async () => {
       if (!present() || stop.disabled) return;

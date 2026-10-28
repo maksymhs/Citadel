@@ -5,12 +5,12 @@
 On first opening a project, choose a centered **Chat**, **Terminal** or **VS Code**
 card. No terminal, Chat session or editor starts until you select a mode. The selection
 is remembered per signed-in owner, panel instance, selected host and project, including
-existing Terminal/Chat preferences. Use the compact workspace buttons, the sidebar's
-three-dot workspace menu, or **Projects → More actions** to switch modes.
+existing Terminal/Chat preferences. Use the sidebar's three-dot workspace menu or
+**Projects → More actions** to switch modes; there is no workspace mode toolbar.
 An already mounted terminal stays mounted when switching modes. Entering a workspace
 remembered in Chat or VS Code does not create or attach a terminal.
-**Close view / Choose mode**, **Chat options → Choose workspace mode**, and the editor's
-**Choose workspace mode** button clear only the mode preference and return to the cards;
+The compact **X** in Citadel's global header (**Close view and choose mode**) appears
+only in a selected project mode. It clears only the mode preference and returns to the cards;
 terminal and Chat session selections, drafts and running work are retained. Navigating
 away closes the view but remembers the mode. There is no Chat toolbar above the conversation.
 This is not an embedded
@@ -95,7 +95,8 @@ implementation; no real model prompt or browser validation is claimed for native
 From **Projects → More actions → Open VS Code in browser**, Citadel opens an
 optional [code-server](https://github.com/coder/code-server) editor inside the
 project workspace, not a fullscreen overlay. You can also choose **VS Code** from
-the workspace cards, mode buttons, terminal toolbar or sidebar three-dot menu.
+the workspace cards, terminal toolbar or sidebar three-dot menu. Embedded VS Code
+uses the global header's close action, without a duplicate internal return header.
 The Citadel sidebar and global header remain visible and mounted terminals are preserved.
 No desktop VS Code installation or SSH configuration is required.
 

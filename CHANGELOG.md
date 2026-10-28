@@ -2,11 +2,24 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
-## Unreleased
+## [0.57.0](https://github.com/maksymhs/Citadel/releases/tag/v0.57.0) · 2026-10-28
 
 ### Added
 
+- **workspace**: Integrate VS Code and add persistent project mode chooser
+- **workspace**: Remember independent project terminal and chat views
+- **chat**: Polish conversation layout with Citadel theme
+- **chat**: Replace embedded OpenCode GUI with native gateway-backed chat
+- **workspace**: Integrate contextual OpenCode sessions and shared model defaults
 - **workspace**: Add OpenCode web option
+
+### Fixed
+
+- **workspace**: Adapt OpenCode GUI to project-prefixed routing
+- **workspace**: Forward OpenCode root API endpoints
+- **workspace**: Preserve OpenCode API referrers in browser
+- **workspace**: Enforce OpenCode server authentication and preserve missing routes
+- **workspace**: Proxy OpenCode root asset routes
 
 ## [0.56.0](https://github.com/maksymhs/Citadel/releases/tag/v0.56.0) · 2026-10-28
 
