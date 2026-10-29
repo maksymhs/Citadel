@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.60.0](https://github.com/maksymhs/Citadel/releases/tag/v0.60.0) · 2026-10-29
+
+### Added
+
+- **workspace**: Simplify mode selection and project discovery
+
 ## [0.59.0](https://github.com/maksymhs/Citadel/releases/tag/v0.59.0) · 2026-10-29
 
 ### Changed
