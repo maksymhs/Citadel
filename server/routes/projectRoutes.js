@@ -8,6 +8,8 @@ const projectService = require('../services/projectService');
 const gitService = require('../services/gitService');
 const gitCredentialsService = require('../services/gitCredentialsService');
 const auditService = require('../services/auditService');
+const chatService = require('../services/chatService');
+const editorService = require('../services/editorService');
 const { PROJECTS_DIR } = require('../config');
 const { sanitizeSlug, isInsideBase } = require('../security/guard');
 
@@ -286,7 +288,12 @@ async function projectRoutes(fastify) {
   fastify.delete('/api/projects/:id', async (request, reply) => {
     const deleteFiles = request.query?.deleteFiles === 'true';
     try {
-      const res = projectService.deleteProject(request.params.id, { deleteFiles });
+      const project = projectService.getProject(request.params.id);
+      if (!project) return reply.status(404).send({ error: 'Project not found.' });
+      const res = await chatService.withProjectRemoval(project.id, () => {
+        if (editorService.status().running) throw Object.assign(new Error('Stop the shared editor before project removal.'), { statusCode: 409 });
+        return projectService.deleteProject(project.id, { deleteFiles });
+      });
       auditService.logAction({
         userId: request.user.id,
         action: 'project_deleted',
@@ -297,7 +304,7 @@ async function projectRoutes(fastify) {
       });
       return res;
     } catch (err) {
-      return reply.status(400).send({ error: err.message });
+      return reply.status(err.statusCode || 400).send({ error: err.message });
     }
   });
 

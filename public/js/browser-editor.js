@@ -57,6 +57,8 @@
         // The server supplies only a local project editor path, never an arbitrary iframe URL.
         if (!result.url?.startsWith(`/editor/${encodeURIComponent(project.id)}/?folder=`)) throw new Error('Invalid editor address.');
         body.innerHTML = `<iframe class="browser-editor-frame" title="VS Code · ${esc(project.name)}" src="${esc(result.url)}" allow="clipboard-read; clipboard-write"></iframe>`;
+        window.CitadelProjectTools?.workspacePreference(project.id, { editorOpened: true });
+        options.onOpened?.();
         if (stop) stop.hidden = false;
       } catch (err) { if (present()) showError(err); }
     }

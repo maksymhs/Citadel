@@ -31,6 +31,96 @@
     element.style.height = 'auto';
     if (element.scrollHeight) element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
   }
+  const COMMANDS = [
+    ['/new', 'Start a new session; keep history'],
+    ['/reset', 'Confirm a fresh session; keep history'],
+    ['/context', 'Latest assistant token usage and configured context window'],
+    ['/model', 'View AI Gateway mode routing'],
+    ['/help', 'Commands and tool activity help']
+  ];
+  function commandMenu(view, dismiss = false) {
+    const match = /^\/[^\s]*$/.test(view.input.value);
+    view.commandItems = match && !dismiss ? COMMANDS.filter(([name]) => name.startsWith(view.input.value.toLowerCase())) : [];
+    view.commandIndex = Math.min(view.commandIndex || 0, Math.max(0, view.commandItems.length - 1));
+    view.commandList.replaceChildren();
+    view.commandList.hidden = !view.commandItems.length;
+    view.input.setAttribute('aria-expanded', String(!view.commandList.hidden));
+    view.input.removeAttribute('aria-activedescendant');
+    view.commandItems.forEach(([name, description], index) => {
+      const item = node('div', `${name} — ${description}`, 'chat-command-option');
+      item.id = `chat-command-${index}`; item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(index === view.commandIndex));
+      item.onmousedown = event => event.preventDefault();
+      item.onclick = () => chooseCommand(view, name);
+      view.commandList.append(item);
+      if (index === view.commandIndex) view.input.setAttribute('aria-activedescendant', item.id);
+    });
+  }
+  function chooseCommand(view, name) {
+    view.input.value = name; commandMenu(view, true); controls(view); view.input.focus();
+    runCommand(view);
+  }
+  function infoPanel(view, title) {
+    view.info.replaceChildren(node('strong', title), button('Dismiss', () => { view.info.hidden = true; view.input.focus(); }, 'chat-link'));
+    view.info.hidden = false;
+    return view.info;
+  }
+  async function runCommand(view, text = view.input.value) {
+    if (!text.trimStart().startsWith('/')) return false;
+    if (!present(view)) return true;
+    const editRevision = view.editRevision || 0;
+    const command = text.trim().toLowerCase();
+    if (!COMMANDS.some(([name]) => name === command)) {
+      infoPanel(view, 'Unknown command').append(node('p', 'Use /help to see commands. Commands do not accept arguments.'));
+      return true;
+    }
+    commandMenu(view, true);
+    const selection = view.selection;
+    if (command === '/new') {
+      if (!view.ready || view.loading || view.offline) { infoPanel(view, 'New chat unavailable').append(node('p', 'Reconnect Chat before creating a session.')); return true; }
+      await create(view);
+      if (view.selection === selection) return true;
+    } else if (command === '/reset') {
+      const panel = infoPanel(view, 'Start a fresh session?');
+      panel.append(node('p', 'Prior messages are retained in Session history. This creates a new session; it does not delete history or cancel running work.'));
+      const confirm = button('Confirm new session', async () => {
+        if (!present(view, selection) || view.loading || !view.ready || view.offline) return;
+        confirm.disabled = true; await create(view);
+        if (present(view)) { confirm.disabled = false; if (view.selection !== selection) panel.hidden = true; }
+      });
+      panel.append(confirm, button('Keep current session', () => { panel.hidden = true; view.input.focus(); }));
+    } else if (command === '/help') {
+      const panel = infoPanel(view, 'Chat commands');
+      for (const [name, description] of COMMANDS) panel.append(node('p', `${name} — ${description}`));
+      panel.append(node('p', 'Arrow keys select commands; Enter chooses; Escape closes suggestions. Ctrl+Enter sends. Tool activity expands to show tool names and status only, not raw inputs. Permission requests require separate approval.'));
+    } else if (command === '/model') {
+      const panel = infoPanel(view, 'AI Gateway models');
+      for (const role of ['plan', 'build']) panel.append(node('p', `${role === 'plan' ? 'Plan' : 'Build'}: ${selection?.snapshot?.models?.[role]?.model || 'unknown'}`));
+      panel.append(node('p', `Selected mode: ${view.role.value}. Routing is managed by AI Gateway; native provider selection is disabled.`));
+      const other = view.role.value === 'plan' ? 'build' : 'plan';
+      const switchMode = button(`Switch to ${other === 'plan' ? 'Plan' : 'Build'}`, () => {
+        if (!present(view, selection) || view.role.disabled) return;
+        view.role.value = other; panel.hidden = true; view.input.focus();
+      });
+      switchMode.disabled = view.role.disabled; panel.append(switchMode);
+    } else {
+      const panel = infoPanel(view, 'Latest assistant usage');
+      const snapshot = selection?.snapshot;
+      const latest = snapshot?.messages?.filter(message => message.role === 'assistant').at(-1);
+      const tokens = latest?.tokens;
+      const configured = snapshot?.models?.[view.role.value];
+      const value = number => typeof number === 'number' && Number.isFinite(number) && number >= 0 ? number.toLocaleString() : 'unknown';
+      panel.append(node('p', `Selected gateway model: ${configured?.model || 'unknown'}. Configured context window: ${value(configured?.limitTokens)} tokens.`));
+      panel.append(node('p', `Latest assistant model: ${latest?.model || 'unknown'}${selection?.fresh ? '' : ' (snapshot may be stale)'}.`));
+      panel.append(node('p', `Input: ${value(tokens?.input)}; output: ${value(tokens?.output)}; reasoning: ${value(tokens?.reasoning)}; cache read: ${value(tokens?.cache?.read)}; cache write: ${value(tokens?.cache?.write)}.`));
+      panel.append(node('p', 'Latest request input context = input + cache read + cache write. Output and reasoning are reported separately and may overlap; they are not added. These are not session totals or a live context percentage.'));
+      const inputs = [tokens?.input, tokens?.cache?.read, tokens?.cache?.write];
+      panel.append(node('p', `Latest request input context: ${inputs.every(number => typeof number === 'number' && Number.isFinite(number) && number >= 0) && inputs.reduce((a, b) => a + b, 0) <= Number.MAX_SAFE_INTEGER ? value(inputs.reduce((a, b) => a + b, 0)) : 'unknown'} tokens.`));
+    }
+    if (present(view) && view.input.value === text && (view.editRevision || 0) === editRevision) view.input.value = '';
+    if (present(view)) controls(view);
+    return true;
+  }
   const SUGGESTIONS = [
     ['Explain this project', 'Explain how this project is structured and where I should start reading.'],
     ['Find bugs', 'Review the most recent changes and point out bugs or risky code.'],
@@ -109,7 +199,7 @@
     view.newButton = button('New chat', () => { view.menu.open = false; view.input.focus(); create(view); }, 'chat-new');
     const history = node('label', 'Session history'); history.append(view.sessions);
     if (!options.content) tools.append(back);
-    tools.append(history, view.newButton);
+    tools.append(history, view.newButton, button('Command help', () => { runCommand(view, '/help'); view.menu.open = false; }));
     view.menu.append(summary, tools);
     view.notices = node('div', undefined, 'chat-notices'); view.notices.hidden = true;
     view.notice = node('p'); view.notice.setAttribute('role', 'status');
@@ -120,9 +210,20 @@
     const box = node('div', undefined, 'chat-box');
     view.input = node('textarea', undefined, 'chat-input'); view.input.rows = 1; view.input.maxLength = 32000;
     view.input.placeholder = 'Message Chat'; view.input.setAttribute('aria-label', 'Message');
-    view.input.oninput = () => { fit(view); controls(view); };
+    view.commandList = node('div', undefined, 'chat-command-list'); view.commandList.id = 'chat-command-list';
+    view.commandList.hidden = true; view.commandList.setAttribute('role', 'listbox'); view.commandList.setAttribute('aria-label', 'Chat commands');
+    view.input.setAttribute('aria-controls', view.commandList.id); view.input.setAttribute('aria-autocomplete', 'list'); view.input.setAttribute('aria-expanded', 'false');
+    view.input.oninput = () => { view.editRevision = (view.editRevision || 0) + 1; view.commandIndex = 0; fit(view); controls(view); commandMenu(view); };
     view.input.onkeydown = event => {
-      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) { event.preventDefault(); composer.requestSubmit(); }
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Escape') { event.preventDefault(); commandMenu(view, true); return; }
+      if (!event.ctrlKey && !event.metaKey && !view.commandList.hidden) {
+        if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+          event.preventDefault(); view.commandIndex = (view.commandIndex + (event.key === 'ArrowDown' ? 1 : -1) + view.commandItems.length) % view.commandItems.length; commandMenu(view); return;
+        }
+        if (event.key === 'Enter') { event.preventDefault(); chooseCommand(view, view.commandItems[view.commandIndex][0]); return; }
+      }
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); composer.requestSubmit(); }
     };
     view.role = node('select', undefined, 'chat-role'); view.role.setAttribute('aria-label', 'Agent mode');
     for (const role of ['build', 'plan']) { const option = node('option', role === 'build' ? 'Build' : 'Plan'); option.value = role; view.role.append(option); }
@@ -131,8 +232,9 @@
     view.send = button('Send', () => {}, 'chat-send'); view.send.type = 'submit';
     view.stop = button('Stop', () => action(view, view.selection, 'cancel', {}), 'chat-stop');
     const actions = node('div', undefined, 'chat-composer-actions'); actions.append(view.menu, view.role, node('span', 'Ctrl+Enter to send', 'chat-hint'), view.stop, view.send);
-    box.append(view.input, actions);
-    composer.append(view.notices, box); composer.onsubmit = event => { event.preventDefault(); send(view); };
+    box.append(view.commandList, view.input, actions);
+    view.info = node('section', undefined, 'chat-command-info'); view.info.hidden = true; view.info.setAttribute('aria-label', 'Command information'); view.info.setAttribute('aria-live', 'polite');
+    composer.append(view.notices, view.info, box); composer.onsubmit = event => { event.preventDefault(); send(view); };
     panel.append(view.log, view.prompts, composer);
     renderWelcome(view, false);
     view.onOffline = () => {
@@ -169,7 +271,7 @@
   function controls(view) {
     const selection = view.selection;
     const locked = !view.ready || view.offline || !selection?.fresh || selection.pending;
-    view.send.disabled = Boolean(locked || selection?.status !== 'idle' || !view.input.value.trim());
+    view.send.disabled = view.input.value.trimStart().startsWith('/') ? false : Boolean(locked || selection?.status !== 'idle' || !view.input.value.trim());
     view.stop.disabled = Boolean(!selection?.loaded || selection.pending || (selection.fresh && selection.status !== 'busy'));
     view.prompts.querySelectorAll('button').forEach(element => { element.disabled = Boolean(locked); });
     view.role.disabled = Boolean(locked || selection?.status === 'busy');
@@ -216,7 +318,7 @@
   }
   function select(view, id) {
     if (!present(view)) return;
-    notice(view);
+    notice(view); view.info.hidden = true;
     stopSelection(view); view.log.replaceChildren(); view.prompts.replaceChildren();
     if (!id || !present(view)) { renderWelcome(view, false); controls(view); return; }
     sessions.set(view.key, id);
@@ -254,6 +356,7 @@
     try {
       const snapshot = await ctx.api(path(view, selection));
       if (!present(view, selection) || revision !== selection.revision || view.offline) return;
+      selection.snapshot = snapshot;
       selection.loaded = true; selection.fresh = snapshot.status !== 'error'; selection.status = snapshot.status;
       const nearBottom = view.log.scrollHeight - view.log.scrollTop - view.log.clientHeight < 100;
       view.log.replaceChildren();
@@ -318,6 +421,7 @@
     }
   }
   async function send(view) {
+    if (view.input.value.trimStart().startsWith('/')) { await runCommand(view); return; }
     const selection = view.selection, text = view.input.value, role = view.role.value;
     if (view.send.disabled || !selection) return;
     if (!selection.attempt || selection.attempt.text !== text || selection.attempt.role !== role) selection.attempt = { text, role, requestId: window.crypto.randomUUID() };

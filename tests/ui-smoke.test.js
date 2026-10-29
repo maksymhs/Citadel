@@ -29,6 +29,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   let server;
   let dom;
   let w;
+  let loadPage;
 
   before(async () => {
     fs.mkdirSync(path.join(data, 'projects', 'ui-discovered'), { recursive: true });
@@ -59,9 +60,15 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     for (const c of cookie.split('; ')) jar.setCookieSync(c, base);
     const virtualConsole = new VirtualConsole();
     virtualConsole.on('jsdomError', (e) => errors.push(e.message.split('\n')[0]));
-    dom = await JSDOM.fromURL(`${base}/`, {
+    loadPage = (saved = {}, width = 1024, storageBlocked = false) => JSDOM.fromURL(`${base}/`, {
       runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true, cookieJar: jar, virtualConsole,
       beforeParse(win) {
+        win.innerWidth = width;
+        for (const [key, value] of Object.entries(saved)) win.localStorage.setItem(key, value);
+        if (storageBlocked) {
+          win.Storage.prototype.getItem = () => { throw new Error('Storage blocked'); };
+          win.Storage.prototype.setItem = () => { throw new Error('Storage blocked'); };
+        }
         win.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
         win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
         win.fetch = (url, opts = {}) => fetch(new URL(url, base), { ...opts, signal: undefined, headers: { ...(opts.headers || {}), cookie } });
@@ -70,6 +77,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         win.addEventListener('unhandledrejection', (e) => errors.push(`unhandled rejection: ${e.reason && e.reason.message}`));
       },
     });
+    dom = await loadPage();
     w = dom.window;
     await sleep(2500);
   });
@@ -91,7 +99,148 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(typeof w[name], 'object', `window.${name} is missing`);
     }
     assert.ok(w.document.querySelector('.nav-item'), 'the sidebar should render after sign-in');
+    assert.equal(w.document.querySelector('.nav-item[data-view="projects"]').classList.contains('active'), true);
+    assert.ok(w.document.getElementById('projects-system-open'));
+    assert.equal(w.document.querySelector('.workspace-heading'), null);
     assert.deepEqual(errors, []);
+  });
+
+  test('sidebar toggle keeps desktop preference separate from mobile overlay and restores focus', async () => {
+    const sidebar = w.document.getElementById('app-sidebar');
+    const toggle = w.document.getElementById('mobile-menu-btn');
+    const backdrop = w.document.getElementById('sidebar-backdrop');
+    const resize = width => { w.innerWidth = width; w.dispatchEvent(new w.Event('resize')); };
+    const visible = expected => {
+      assert.equal(toggle.getAttribute('aria-expanded'), String(expected));
+      assert.equal(toggle.getAttribute('aria-label'), expected ? 'Close sidebar' : 'Open sidebar');
+      assert.equal(toggle.title, toggle.getAttribute('aria-label'));
+      assert.equal(sidebar.getAttribute('aria-hidden'), String(!expected));
+      assert.equal(sidebar.hasAttribute('inert'), !expected);
+    };
+    assert.equal(toggle.getAttribute('aria-controls'), sidebar.id);
+    assert.notEqual(w.getComputedStyle(toggle).display, 'none');
+    visible(true);
+    sidebar.querySelector('button').focus();
+    toggle.click();
+    visible(false);
+    assert.equal(w.getComputedStyle(sidebar).display, 'none');
+    assert.equal(w.document.activeElement, toggle);
+    const key = Object.keys(w.localStorage).find(key => key.startsWith('citadel.sidebar.'));
+    assert.ok(key);
+    assert.equal(w.localStorage.getItem(key), '1');
+    const saved = { [key]: '1' };
+    const restored = await loadPage(saved);
+    try {
+      await sleep(1200);
+      assert.equal(restored.window.document.getElementById('mobile-menu-btn').getAttribute('aria-expanded'), 'false');
+      assert.equal(restored.window.document.getElementById('app-sidebar').hasAttribute('inert'), true);
+    } finally { restored.window.close(); }
+    resize(768);
+    visible(false);
+    assert.equal(sidebar.classList.contains('desktop-folded'), false);
+    toggle.click();
+    visible(true);
+    assert.equal(backdrop.classList.contains('open'), true);
+    sidebar.querySelector('button').focus();
+    w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    visible(false);
+    assert.equal(w.document.activeElement, toggle);
+    toggle.click(); backdrop.click(); visible(false);
+    toggle.click();
+    resize(1024);
+    visible(false);
+    assert.equal(backdrop.classList.contains('open'), false);
+    assert.equal(w.document.body.style.overflow, '');
+    assert.equal(w.localStorage.getItem(key), '1');
+    toggle.click(); visible(true);
+    assert.equal(w.localStorage.getItem(key), '0');
+    resize(767); visible(false);
+    toggle.click();
+    w.document.querySelector('.nav-item[data-view="dashboard"]').click();
+    visible(false);
+    resize(1024); visible(true);
+    assert.equal(backdrop.classList.contains('open'), false);
+    toggle.focus();
+    assert.equal(toggle.tagName, 'BUTTON');
+    assert.equal(toggle.type, 'button');
+    assert.deepEqual(errors, []);
+  });
+
+  test('sidebar preference is owner scoped and storage failure leaves a usable default', async () => {
+    const key = Object.keys(w.localStorage).find(key => key.startsWith('citadel.sidebar.'));
+    const foreignKey = `citadel.sidebar.${JSON.stringify(['another-owner', base])}`;
+    for (const [saved, blocked] of [[{ [foreignKey]: '1' }, false], [{ [key]: '1' }, true]]) {
+      const page = await loadPage(saved, 1024, blocked);
+      try {
+        await sleep(1200);
+        const toggle = page.window.document.getElementById('mobile-menu-btn');
+        assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+        toggle.click();
+        assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+        toggle.click();
+        assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+      } finally { page.window.close(); }
+    }
+    const page = await loadPage({ [key]: '1' }, 600);
+    try {
+      await sleep(1200);
+      const win = page.window;
+      const toggle = win.document.getElementById('mobile-menu-btn');
+      assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+      toggle.click();
+      assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+      assert.equal(win.localStorage.getItem(key), '1');
+      win.innerWidth = 1024; win.dispatchEvent(new win.Event('resize'));
+      assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+      assert.equal(win.document.getElementById('sidebar-backdrop').classList.contains('open'), false);
+    } finally { page.window.close(); }
+    assert.deepEqual(errors, []);
+  });
+
+  test('Projects is the entry point with System first and no empty Workspace navigation', async () => {
+    w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(350);
+    assert.equal(w.document.querySelector('[data-view="workspace"]'), null);
+    assert.equal(w.document.querySelector('.workspace-heading'), null);
+    assert.equal(w.document.querySelector('[data-workspace-context="system"]'), null);
+    assert.equal(w.document.getElementById('main-content').firstElementChild.className, 'card project-system');
+    assert.ok(w.document.getElementById('projects-system-open'));
+  });
+
+  test('runtime uses read-only activity, not saved mode or history, and isolates scope', async () => {
+    const isolated = new JSDOM('', { runScripts: 'dangerously', url: base });
+    const win = isolated.window;
+    try {
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/project-tools.js'), 'utf8'));
+      const tools = win.CitadelProjectTools;
+      const state = { user: { id: 'alice', role: 'admin' }, activeHostId: 'local', hostIdentity: { instanceId: 'one' }, projects: [{ id: 'a' }, { id: 'b' }] };
+      let running = false, editor = false, finish;
+      const calls = [];
+      tools.init({ state, escapeHtml: String, renderProjectsView() {}, showToast() {}, openWorkspace() {}, api: async url => {
+        calls.push(url);
+        if (url === '/api/editor') return { editor: { running: editor } };
+        if (finish === true) return new Promise(resolve => { finish = resolve; });
+        return { running: running && url.includes('/a/') };
+      } });
+      tools.workspacePreference('a', { mode: 'chat', chatSessionId: 'retained', editorOpened: true });
+      await tools.refreshRuntime();
+      assert.equal(tools.projectRuntime('a').chat, false);
+      assert.equal(tools.projectRuntime('a').vscode, false);
+      running = true; editor = true;
+      tools.workspacePreference('a', { editorOpened: true });
+      await tools.refreshRuntime();
+      assert.equal(tools.projectRuntime('a').chat, true);
+      assert.equal(tools.projectRuntime('a').vscode, true);
+      assert.equal(tools.projectRuntime('b').vscode, false, 'shared process does not open every project');
+      assert.ok(calls.every(url => url === '/api/editor' || url.endsWith('/chat/activity')));
+      state.user = { id: 'bob', role: 'admin' };
+      assert.equal(tools.projectRuntime('a').chat, undefined);
+      state.user = { id: 'alice', role: 'admin' };
+      finish = true;
+      const pending = tools.refreshRuntime(); await sleep(0);
+      tools.reset(); state.activeHostId = 'peer';
+      finish({ running: true }); await pending;
+      assert.equal(tools.projectRuntime('a').chat, undefined);
+    } finally { win.close(); }
   });
 
   test('terminal image helper detects, uploads and pastes only a path for the current terminal', async () => {
@@ -342,6 +491,53 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
+  test('project removal preserves files by default and disk deletion requires the exact path', async () => {
+    const originalFetch = w.fetch, calls = [];
+    const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
+    let running = false;
+    w.fetch = (url, opts = {}) => {
+      url = String(url);
+      if (opts.method === 'DELETE' && url.startsWith('/api/projects/')) {
+        calls.push(url); return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
+      }
+      if (url === '/api/editor') return Promise.resolve({ ok: true, json: async () => ({ editor: { running: false } }) });
+      if (url.endsWith('/chat/activity')) return Promise.resolve({ ok: true, json: async () => ({ running }) });
+      if (url === '/api/terminals') return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      return originalFetch(url, opts);
+    };
+    const action = label => {
+      w.document.querySelector(`.proj-menu-btn[data-project-id="${projectId}"]`).click();
+      [...w.document.querySelectorAll('.ctx-item')].find(item => item.textContent === label).click();
+    };
+    try {
+      action('Remove from Citadel…');
+      assert.equal(w.document.getElementById('del-files-check'), null);
+      assert.match(w.document.querySelector('.modal-body').textContent, /kept untouched/);
+      w.document.getElementById('modal-cancel-btn').click();
+      assert.equal(calls.length, 0);
+      running = true;
+      action('Remove from Citadel…');
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(60);
+      assert.equal(calls.length, 0, 'running Chat blocks removal');
+      w.document.getElementById('modal-cancel-btn').click(); running = false;
+      action('Remove from Citadel…');
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(150);
+      assert.ok(calls[0].endsWith('deleteFiles=false'));
+      assert.ok(fs.existsSync(path.join(data, 'projects', 'ui-discovered')));
+      action('Delete project files from disk…');
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(30);
+      assert.equal(calls.length, 1);
+      const input = w.document.getElementById('delete-project-path');
+      input.value = path.join(data, 'projects', 'ui-discovered');
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(150);
+      assert.ok(calls[1].endsWith('deleteFiles=true'));
+    } finally {
+      w.document.getElementById('modal-cancel-btn')?.click();
+      w.fetch = originalFetch;
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+    }
+  });
+
   test('project terminal opens its own editor and returns to the same workspace', async () => {
     w.document.querySelector('.nav-item[data-view="projects"]').click();
     await sleep(500);
@@ -368,7 +564,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await sleep(300);
       assert.ok(w.document.getElementById('editor-install'));
       assert.ok(w.document.querySelector('.browser-editor').getAttribute('aria-label').includes('ui-discovered'));
-      assert.ok(w.document.querySelector(`[data-workspace-context="${projectId}"]`));
+      assert.equal(w.document.querySelector(`[data-workspace-context="${projectId}"]`), null, 'failed terminal launch and editor setup are not open workspaces');
       assert.ok(w.document.querySelector('.workspace-surface > .browser-editor-embedded'));
       assert.equal(w.getComputedStyle(w.document.querySelector('.sidebar')).visibility, 'visible');
       assert.equal(w.getComputedStyle(w.document.querySelector('.top-bar')).visibility, 'visible');
@@ -414,7 +610,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(w.getComputedStyle(w.document.querySelector('.sidebar')).visibility, 'visible');
       assert.equal(w.getComputedStyle(w.document.querySelector('.top-bar')).visibility, 'visible');
       w.document.getElementById('mobile-menu-btn').click();
-      assert.equal(w.document.querySelector('.sidebar').classList.contains('open'), true);
+      assert.equal(w.document.querySelector('.sidebar').classList.contains('desktop-folded'), true);
+      assert.equal(w.document.getElementById('mobile-menu-btn').getAttribute('aria-expanded'), 'false');
       w.document.getElementById('mobile-menu-btn').click();
       w.CitadelChat.close();
       assert.equal(w.document.getElementById('terminal-viewport'), viewport);
@@ -494,7 +691,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     let finishEditor;
     w.fetch = (url, opts = {}) => {
       calls.push({ url: String(url), method: opts.method || 'GET' });
-      if (String(url) === '/api/editor') return Promise.resolve({ ok: true, json: async () => ({ editor: { installed: true } }) });
+      if (String(url) === '/api/editor') return Promise.resolve({ ok: true, json: async () => ({ editor: { installed: true, running: true } }) });
       if (String(url).endsWith('/editor') && opts.method === 'POST') return new Promise(resolve => { finishEditor = () => resolve({ ok: true, json: async () => ({ url: `/editor/${projectId}/?folder=test` }) }); });
       if (String(url) === '/api/chat/status') return Promise.resolve({ ok: true, json: async () => ({ ready: false, error: 'Fixture gateway unavailable' }) });
       if (String(url) === '/api/terminals' && opts.method === 'POST') return Promise.reject(new Error('Fixture terminal disabled'));
@@ -513,7 +710,13 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(tools.workspacePreference(projectId).mode, mode, 'detached header action cannot clear remembered mode');
     };
     const sidebar = label => {
-      w.document.querySelector(`[data-ws-menu-context="${projectId}"]`).click();
+      const entry = w.document.querySelector(`[data-ws-menu-context="${projectId}"]`);
+      if (!entry) {
+        const mode = { 'VS Code': 'vscode', Chat: 'chat', 'Open terminal': 'terminal' }[label];
+        w.document.querySelector(`[data-workspace-mode="${mode}"]`).click();
+        return;
+      }
+      entry.click();
       const button = [...w.document.querySelectorAll('.ctx-item')].find(item => item.textContent === label);
       assert.ok(button); button.click();
     };
@@ -523,13 +726,16 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(w.document.getElementById('ws-close-mode'), null);
       for (const selector of ['.workspace-modes', '#ws-terminal-mode', '#ws-chat-btn', '#ws-vscode-mode']) assert.equal(w.document.querySelector(selector), null);
       assert.equal(w.document.activeElement.dataset.workspaceMode, 'chat');
-      assert.equal(calls.some(call => call.method === 'POST' || call.url === '/api/chat/status' || call.url === '/api/editor' || call.url.includes('/api/terminals?projectId=')), false);
+      assert.equal(calls.some(call => call.method !== 'GET' || call.url === '/api/chat/status' || /\/chat\/sessions\//.test(call.url)), false);
+      assert.ok(calls.some(call => call.url.endsWith('/chat/activity')));
+      assert.equal(w.document.querySelectorAll('[data-stop-mode]').length, 3);
+      assert.equal(w.document.querySelector('button button'), null);
       sidebar('VS Code'); await sleep(30);
       assert.equal(tools.workspacePreference(projectId).mode, 'vscode');
       const close = w.document.querySelector('#top-bar-actions #ws-close-mode');
       assert.ok(close);
-      assert.equal(close.getAttribute('aria-label'), 'Close view and choose mode');
-      assert.equal(close.title, 'Close view and choose mode');
+      assert.equal(close.getAttribute('aria-label'), 'Choose mode');
+      assert.equal(close.title, 'Choose mode');
       assert.ok(close.querySelector('svg[aria-hidden="true"]'));
       assert.match(w.document.getElementById('top-bar-title').textContent, /ui-discovered/);
       assert.ok(w.document.querySelector('.workspace-surface > .browser-editor-embedded'));
@@ -577,6 +783,76 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       w.fetch = originalFetch; await leave();
     }
     assert.deepEqual(errors, []);
+  });
+
+  test('chooser stops are separate, confirmed, scoped and never launch modes', async () => {
+    const originalFetch = w.fetch, calls = [];
+    const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
+    let alive = true, chatRunning = true, editorRunning = true, failTerminal = false;
+    w.CitadelProjectTools.workspacePreference(projectId, { mode: null });
+    w.fetch = (url, opts = {}) => {
+      url = String(url);
+      const method = opts.method || 'GET'; calls.push({ url, method });
+      const response = data => Promise.resolve({ ok: true, json: async () => data });
+      if (url.startsWith('/api/terminals?projectId=')) return response({ sessions: [{ id: 'own-stop', project_id: projectId, isAlive: alive }, { id: 'other-stop', project_id: 'other-project', isAlive: true }, { id: 'dead-stop', project_id: projectId, isAlive: false }] });
+      if (url.endsWith('/chat/activity')) return response({ running: chatRunning });
+      if (url.endsWith('/chat/stop')) { chatRunning = false; return response({ stopped: true }); }
+      if (url === '/api/editor') { if (method === 'DELETE') editorRunning = false; return response({ editor: { installed: true, running: editorRunning } }); }
+      if (url === '/api/terminals/own-stop' && method === 'DELETE') {
+        if (failTerminal) return Promise.reject(new Error('Fixture stop failed'));
+        alive = false; return response({ success: true });
+      }
+      return originalFetch(url, opts);
+    };
+    const stop = mode => w.document.querySelector(`[data-stop-mode="${mode}"]`);
+    try {
+      w.document.querySelector('.open-workspace-btn').click(); await sleep(400);
+      assert.equal(calls.some(c => c.method !== 'GET'), false);
+      assert.ok(stop('terminal') && !stop('terminal').disabled);
+      stop('terminal').click(); await sleep(20);
+      assert.match(w.document.querySelector('.modal-body').textContent, /Stop 1 registered terminal/);
+      w.document.getElementById('modal-cancel-btn').click(); await sleep(20);
+      assert.equal(calls.some(c => c.method === 'DELETE'), false);
+      failTerminal = true;
+      stop('terminal').click(); await sleep(20);
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(50);
+      assert.match(w.document.getElementById('toast-root').textContent, /could not be stopped/);
+      assert.ok(w.document.getElementById('modal-confirm-btn'));
+      failTerminal = false;
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(50);
+      assert.equal(stop('terminal').disabled, true);
+      assert.equal(calls.some(c => /other-stop|dead-stop/.test(c.url)), false);
+      stop('vscode').click(); await sleep(20);
+      assert.match(w.document.querySelector('.modal-body').textContent, /ALL projects/);
+      w.document.getElementById('modal-cancel-btn').click(); await sleep(20);
+      assert.equal(calls.some(c => c.url === '/api/editor' && c.method === 'DELETE'), false);
+      stop('vscode').click(); await sleep(20);
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(30);
+      assert.equal(stop('vscode').disabled, true);
+      stop('chat').click(); await sleep(20);
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(30);
+      assert.equal(stop('chat').disabled, true);
+      assert.ok(calls.some(c => c.url === `/api/projects/${projectId}/chat/stop` && c.method === 'POST'));
+      assert.equal(calls.some(c => c.method === 'POST' && !c.url.endsWith('/chat/stop')), false);
+      assert.equal(calls.some(c => /\/chat\/sessions\//.test(c.url)), false);
+      assert.ok(w.document.querySelector('.workspace-chooser'));
+      let finishStatus;
+      const fixtureFetch = w.fetch;
+      w.fetch = (url, opts) => String(url).endsWith('/chat/activity') ? new Promise(resolve => { finishStatus = () => resolve({ ok: true, json: async () => ({ running: true }) }); }) : fixtureFetch(url, opts);
+      w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(20);
+      w.document.getElementById('ws-close-mode').click(); await sleep(20);
+      const staleStop = stop('chat');
+      const stopCalls = calls.filter(c => c.method !== 'GET').length;
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+      finishStatus(); await sleep(20);
+      staleStop.click(); await sleep(20);
+      assert.equal(w.document.getElementById('active-modal-overlay'), null);
+      assert.equal(calls.filter(c => c.method !== 'GET').length, stopCalls);
+    } finally {
+      w.document.getElementById('modal-cancel-btn')?.click();
+      w.fetch = originalFetch;
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+    }
   });
 
   test('pending terminal creation is serialized across workspace navigation and mode switches', async () => {

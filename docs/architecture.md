@@ -140,6 +140,16 @@ owner/project/canonical-directory checks apply to snapshots, mutations and SSE;
 peer tokens are not accepted. Paired-machine transport is unsupported: use the
 machine's own panel.
 
+Projects is the first-entry screen; System terminals have a separate first card.
+The sidebar Workspace group is derived from observed terminal/owner Chat activity
+and browser-local editor hints, not saved mode choices. The shared editor has no
+authoritative per-folder state. Removal defaults to registration-only, while disk
+deletion is separately confirmed. The delete route serializes its guard and
+synchronous deletion through the Chat queue, rejecting any owner's running project
+engine, and checks live registered terminals and the shared editor before mutation.
+Slash commands are local composer actions, never model prompts; snapshots include
+bounded assistant token counters and verified gateway alias/context-limit metadata.
+
 The browser receives bounded snapshots through project/session APIs and SSE update
 notifications, refreshing after reconnect rather than replaying a complete event
 history. Rendering is literal text plus fenced code blocks and tool status, not

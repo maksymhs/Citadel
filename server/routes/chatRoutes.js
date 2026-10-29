@@ -33,10 +33,12 @@ async function chatRoutes(fastify, options = {}) {
   const empty = value => object(value, []);
   const args = request => [request.user.id, request.params.id, request.params.chatId];
   route('GET', '/api/chat/status', () => chat.status());
+  route('GET', '/api/projects/:id/chat/activity', request => chat.activity(request.user.id, request.params.id));
+  route('POST', '/api/projects/:id/chat/stop', request => chat.stopProject(request.user.id, request.params.id), empty, 'stopped');
   route('GET', base, request => chat.list(request.user.id, request.params.id));
   route('POST', base, request => chat.create(request.user.id, request.params.id), empty, 'created');
   route('GET', `${base}/:chatId`, request => chat.snapshot(...args(request)));
-  route('POST', `${base}/:chatId/messages`, request => chat.message(...args(request), request.body), value => object(value, ['text', 'role', 'requestId']) && typeof value.text === 'string' && value.text.trim().length > 0 && value.text.length <= 32000 && !value.text.includes('\0') && ['build', 'plan'].includes(value.role) && typeof value.requestId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value.requestId), 'message');
+  route('POST', `${base}/:chatId/messages`, request => chat.message(...args(request), request.body), value => object(value, ['text', 'role', 'requestId']) && typeof value.text === 'string' && value.text.trim().length > 0 && !value.text.trimStart().startsWith('/') && value.text.length <= 32000 && !value.text.includes('\0') && ['build', 'plan'].includes(value.role) && typeof value.requestId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value.requestId), 'message');
   route('POST', `${base}/:chatId/cancel`, request => chat.action(...args(request), 'cancel'), empty, 'cancelled');
   route('POST', `${base}/:chatId/permissions/:requestId/reply`, request => chat.action(...args(request), 'permission', request.params.requestId, request.body), value => object(value, ['reply']) && ['once', 'reject'].includes(value.reply), 'permission_replied');
   route('POST', `${base}/:chatId/questions/:requestId/reply`, request => chat.action(...args(request), 'question', request.params.requestId, request.body), value => object(value, ['answers']) && Array.isArray(value.answers) && value.answers.length <= 20 && value.answers.every(answer => Array.isArray(answer) && answer.length <= 30 && answer.every(text => typeof text === 'string' && text.length <= 2000)), 'question_replied');

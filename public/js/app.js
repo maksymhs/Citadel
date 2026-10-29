@@ -24,6 +24,7 @@
     activeTerminalId: null,
     sysTerminals: new Map(), // host (non-project) terminal sessions
     activeSysTerminalId: null,
+    sessionsAvailable: false,
     allSessions: [], // every terminal session, drives the sidebar workspace tree
     workspaceNavOpen: true, // sidebar "Workspace" group expanded
     workspaceNavContexts: [], // workspace contexts whose terminals are expanded
@@ -632,7 +633,10 @@
   }
 
   // --- Main Application Shell ---
+  let cleanupSidebar = () => {};
+
   function renderAppShell() {
+    cleanupSidebar();
     const root = document.getElementById('app-root');
     root.innerHTML = `
       <div id="app-container">
@@ -660,7 +664,7 @@
         <!-- Main Wrapper -->
         <div class="main-wrapper">
           <header class="top-bar">
-            <button class="hamburger-btn" id="mobile-menu-btn" aria-label="Toggle navigation">
+            <button class="hamburger-btn" id="mobile-menu-btn" type="button" aria-controls="app-sidebar" aria-expanded="true" aria-label="Close sidebar" title="Close sidebar">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
             <div class="top-bar-lead">
@@ -682,16 +686,47 @@
 
     const sidebarEl = document.getElementById('app-sidebar');
     const backdropEl = document.getElementById('sidebar-backdrop');
-    const closeSidebar = () => {
-      sidebarEl.classList.remove('open');
-      backdropEl.classList.remove('open');
+    const toggleEl = document.getElementById('mobile-menu-btn');
+    const preferenceKey = `citadel.sidebar.${JSON.stringify([state.user.id ?? state.user.username, location.origin])}`;
+    let desktopFolded = false;
+    try { desktopFolded = localStorage.getItem(preferenceKey) === '1'; } catch {}
+    let mobile = null;
+    let mobileOpen = false;
+    const syncSidebar = () => {
+      const visible = mobile ? mobileOpen : !desktopFolded;
+      if (!visible && sidebarEl.contains(document.activeElement)) toggleEl.focus();
+      sidebarEl.classList.toggle('desktop-folded', !mobile && desktopFolded);
+      sidebarEl.classList.toggle('open', mobile && mobileOpen);
+      backdropEl.classList.toggle('open', mobile && mobileOpen);
+      sidebarEl.toggleAttribute('inert', !visible);
+      sidebarEl.setAttribute('aria-hidden', String(!visible));
+      toggleEl.setAttribute('aria-expanded', String(visible));
+      const label = visible ? 'Close sidebar' : 'Open sidebar';
+      toggleEl.setAttribute('aria-label', label);
+      toggleEl.title = label;
+      requestAnimationFrame(refitActiveTerminals);
     };
-
-    document.getElementById('mobile-menu-btn').onclick = () => {
-      sidebarEl.classList.toggle('open');
-      backdropEl.classList.toggle('open');
+    const closeSidebar = () => {
+      mobileOpen = false;
+      syncSidebar();
+    };
+    toggleEl.onclick = () => {
+      if (mobile) mobileOpen = !mobileOpen;
+      else {
+        desktopFolded = !desktopFolded;
+        try { localStorage.setItem(preferenceKey, desktopFolded ? '1' : '0'); } catch {}
+      }
+      syncSidebar();
     };
     backdropEl.onclick = closeSidebar;
+    const onSidebarKey = (event) => {
+      if (event.key === 'Escape' && mobile && mobileOpen) {
+        event.preventDefault();
+        closeSidebar();
+        toggleEl.focus();
+      }
+    };
+    document.addEventListener('keydown', onSidebarKey);
 
     renderSidebarNav();
     bindSidebarNav(closeSidebar);
@@ -704,6 +739,7 @@
     syncThemeChrome();
 
     document.getElementById('logout-btn').onclick = async () => {
+      cleanupSidebar();
       teardownSession();
       await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
       teardownSession();
@@ -730,11 +766,20 @@
         || (navigator.maxTouchPoints || 0) > 0
         || window.innerWidth <= 768;
       document.documentElement.classList.toggle('is-mobile-ui', isMobile);
-      if (!isMobile) closeSidebar();
+      if (mobile !== isMobile) {
+        mobile = isMobile;
+        mobileOpen = false;
+        syncSidebar();
+      }
     };
     applyDeviceMode();
     window.addEventListener('resize', applyDeviceMode);
     window.addEventListener('orientationchange', applyDeviceMode);
+    cleanupSidebar = () => {
+      window.removeEventListener('resize', applyDeviceMode);
+      window.removeEventListener('orientationchange', applyDeviceMode);
+      document.removeEventListener('keydown', onSidebarKey);
+    };
   }
 
   // Build the sidebar from the primary views plus any enabled optional module
@@ -763,6 +808,7 @@
     }
 
     nav.innerHTML = html;
+    setActiveNav(state.currentView);
   }
 
   // Machine selector pinned at the top of the sidebar. The current machine is
@@ -885,7 +931,11 @@
   function startHostStatusPolling() {
     if (state.hostStatusTimer) clearInterval(state.hostStatusTimer);
     state.hostStatusTimer = setInterval(() => {
-      if (!document.hidden) refreshHostStatus(true);
+      if (!document.hidden) {
+        refreshHostStatus(true);
+        loadSessions();
+        window.CitadelProjectTools.refreshRuntime().then(renderSidebarNav);
+      }
     }, 60000);
   }
 
@@ -962,16 +1012,17 @@
   }
 
   function workspaceNavHtml() {
+    const projects = state.projects.filter(p => {
+      const activity = window.CitadelProjectTools.projectRuntime(p.id);
+      return sessionsForContext(p.id).some(s => s.isAlive) || activity.chat === true || activity.vscode;
+    });
+    if (!projects.length) return '';
     const open = state.workspaceNavOpen !== false;
-    const parentActive = state.currentView === 'workspace' ? ' active' : '';
-    let html = `<a class="nav-item nav-parent${parentActive}" data-view="workspace">
-      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${NAV_ICONS.workspace}</svg>
-      <span>Workspace</span>${navChevron('workspace', open)}</a>`;
+    let html = `<div class="nav-section-title workspace-heading"><span>Workspace</span>${navChevron('workspace', open)}</div>`;
     if (!open) return html;
 
     html += '<div class="nav-sub">';
-    html += workspaceNodeHtml('system', 'System (host)', null);
-    for (const p of state.projects) {
+    for (const p of projects) {
       html += workspaceNodeHtml(p.id, p.name, p.path);
     }
     html += '</div>';
@@ -985,10 +1036,11 @@
     const session = sessionForContext(context);
     const isActiveCtx = state.currentView === 'workspace' && state.workspaceContext === context;
     const activeClass = isActiveCtx ? ' active' : '';
-    const running = Boolean(session);
-    return `<a class="nav-item nav-subitem${activeClass}" data-workspace-context="${context}" title="${escapeHtml(subtitle || label)}">
+    const activity = window.CitadelProjectTools.projectRuntime(context);
+    const running = Boolean(session?.isAlive || activity.chat || activity.vscode);
+    return `<a class="nav-item nav-subitem${activeClass}" data-workspace-context="${escapeHtml(context)}" title="${escapeHtml(subtitle || label)}">
       <span class="nav-dot${running ? ' nav-dot-on' : ''}"></span><span class="nav-label">${escapeHtml(label)}</span>
-      <button class="nav-item-menu" data-ws-menu-context="${context}" title="Workspace menu" aria-label="Workspace menu">&#8942;</button></a>`;
+      <button class="nav-item-menu" data-ws-menu-context="${escapeHtml(context)}" title="Workspace menu" aria-label="Workspace menu">&#8942;</button></a>`;
   }
 
   // Live terminal sessions belonging to a workspace context ('system' = host).
@@ -1052,9 +1104,7 @@
       if (item) {
         e.preventDefault();
         const view = item.getAttribute('data-view');
-        // Clicking the Workspace parent opens the overview selector.
-        if (view === 'workspace') activate(openWorkspaceOverview);
-        else activate(() => navigateTo(view));
+        activate(() => navigateTo(view));
       }
     };
   }
@@ -1117,7 +1167,8 @@
     }
     await loadModules();
     renderAppShell();
-    navigateTo(resolveView(ui.currentView));
+    if (ui.currentView === 'workspace') await loadProjects();
+    navigateTo(ui.currentView ? resolveView(ui.currentView) : 'projects');
     maybeOpenPairingLink();
   }
 
@@ -1125,7 +1176,8 @@
   // reachable, falling back to the dashboard for disabled/unknown modules.
   function resolveView(viewId) {
     let view = LEGACY_VIEW_MAP[viewId] || viewId;
-    if (!KNOWN_VIEWS.includes(view)) view = 'dashboard';
+    if (!KNOWN_VIEWS.includes(view)) view = 'projects';
+    if (view === 'workspace' && !resolveWorkspaceContext()) view = 'projects';
     const optional = OPTIONAL_NAV.find((n) => n.view === view);
     if (optional && !moduleEnabled(optional.module)) view = 'dashboard';
     return view;
@@ -1229,9 +1281,13 @@
 
   // --- Data Loading ---
   async function loadProjects() {
+    const scope = window.CitadelProjectTools.scopeKey(null);
     try {
       const res = await api('/api/projects');
+      if (scope !== window.CitadelProjectTools.scopeKey(null)) return;
       state.projects = res.projects || [];
+      await window.CitadelProjectTools.refreshRuntime(false);
+      if (scope !== window.CitadelProjectTools.scopeKey(null)) return;
       const badge = document.getElementById('nav-projects-count');
       if (badge) badge.textContent = state.projects.length;
 
@@ -1466,7 +1522,14 @@
     renderProjectsActions();
 
     const content = document.getElementById('main-content');
-    await loadProjects();
+    const scope = window.CitadelProjectTools.scopeKey(null);
+    await Promise.all([loadProjects(), loadSessions()]);
+    if (state.currentView !== 'projects' || scope !== window.CitadelProjectTools.scopeKey(null)) return;
+    const systemCard = '<section class="card project-system"><div><strong>System (host)</strong><p class="mon-muted">Host terminals, independent of projects.</p></div><button type="button" class="btn btn-secondary btn-sm" id="projects-system-open">Open System terminals</button></section>';
+    const mountSystem = () => {
+      content.insertAdjacentHTML('afterbegin', systemCard);
+      document.getElementById('projects-system-open').onclick = () => openWorkspace('system');
+    };
 
     if (state.projects.length === 0) {
       content.innerHTML = `
@@ -1483,13 +1546,15 @@
       `;
       document.getElementById('empty-create-btn').onclick = showCreateProjectModal;
       document.getElementById('empty-clone-btn').onclick = showCloneProjectModal;
+      mountSystem();
       window.CitadelProjectTools.mountDiscovery(content);
       return;
     }
 
     const projectRow = (p) => {
       const repos = p.repos_count || 0;
-      const sessions = p.active_sessions_count || 0;
+      const sessions = sessionsForContext(p.id).filter(s => s.isAlive).length;
+      const activity = window.CitadelProjectTools.projectRuntime(p.id);
       return `
         <div class="proj-item" data-proj-search="${escapeHtml(`${p.name} ${p.path} ${p.description || ''}`.toLowerCase())}">
           <div class="proj-row">
@@ -1497,6 +1562,7 @@
               <div class="proj-name">
                 <strong>${escapeHtml(p.name)}</strong>
                 ${p.existsOnDisk ? '' : '<span class="badge badge-danger">Missing</span>'}
+                <span class="badge badge-muted">${sessions || activity.chat || activity.vscode ? 'Open' : state.sessionsAvailable && activity.chat === false && activity.editor === false ? 'Stopped' : 'Status unavailable'}</span>
                 ${sessions > 0 ? `<span class="badge badge-success" title="Persistent terminals running">${sessions} terminal${sessions === 1 ? '' : 's'}</span>` : ''}
               </div>
               ${p.description ? `<div class="proj-desc">${escapeHtml(p.description)}</div>` : ''}
@@ -1528,6 +1594,7 @@
       </div>
     `;
 
+    mountSystem();
     document.getElementById('proj-search')?.addEventListener('input', (e) => {
       const q = e.target.value.trim().toLowerCase();
       document.querySelectorAll('#proj-list .proj-item').forEach((el) => {
@@ -1561,41 +1628,44 @@
         const name = btn.getAttribute('data-project-name');
         const project = state.projects.find((p) => p.id === id);
         openContextMenu(btn, [
-          { label: 'Open VS Code in browser', onSelect: () => window.CitadelProjectTools.showEditor(project) },
-          { label: 'Chat', onSelect: () => window.CitadelProjectTools.showChat(project) },
+          { label: 'Open terminal', onSelect: () => openWorkspace(id, 'terminal') },
+          { label: 'VS Code', disabled: state.activeHostId !== 'local', onSelect: () => window.CitadelProjectTools.showEditor(project) },
+          { label: 'Chat', disabled: state.activeHostId !== 'local', onSelect: () => window.CitadelProjectTools.showChat(project) },
           { label: 'Associate a folder…', onSelect: () => showAssociateRepoModal(project) },
           { label: 'Clone a repository here…', onSelect: () => showCloneRepoModal(project) },
           { sep: true },
-          { label: 'Delete project…', danger: true, onSelect: () => showDeleteProjectModal(id, name) },
+          { label: 'Remove from Citadel…', onSelect: () => showDeleteProjectModal(id, name) },
+          { label: 'Delete project files from disk…', danger: true, onSelect: () => showDeleteProjectModal(id, name, true) },
         ]);
       };
     });
     window.CitadelProjectTools.mountDiscovery(content);
   }
 
-  function showDeleteProjectModal(id, name) {
+  function showDeleteProjectModal(id, name, deleteFiles = false) {
+    const project = state.projects.find(p => p.id === id);
+    if (!project) return;
+    const scope = window.CitadelProjectTools.scopeKey(id);
     openModal({
-      title: `Delete Project "${name}"`,
-      bodyHtml: `
-        <p style="margin-bottom:12px;color:var(--text-secondary);">
-          Do you want to unlink this project from Citadel?
-        </p>
-        <div style="background:var(--bg-tertiary);padding:12px;border-radius:6px;margin-bottom:12px;">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-            <input type="checkbox" id="del-files-check">
-            <span style="color:var(--danger-color);font-weight:600;">Also delete the files from disk</span>
-          </label>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
-            By default, your files are preserved untouched on the VPS.
-          </div>
-        </div>
-      `,
-      confirmText: 'Delete Project',
+      title: deleteFiles ? `Delete files — ${name}` : `Remove from Citadel — ${name}`,
+      bodyHtml: deleteFiles
+        ? `<p>Permanently delete this project directory and remove its registration? Save and back up your work first. Files outside the managed projects directory cannot be deleted.</p><p><code>${escapeHtml(project.path)}</code></p><label>Type the exact directory path to confirm<input class="form-input" id="delete-project-path" autocomplete="off"></label>`
+        : '<p>Remove this project registration from Citadel? Files on disk are kept untouched. Stop open terminals, Chat and editor work first.</p>',
+      confirmText: deleteFiles ? 'Delete files and registration' : 'Remove from Citadel',
       onConfirm: async () => {
-        const delFiles = document.getElementById('del-files-check')?.checked || false;
-        await api(`/api/projects/${id}?deleteFiles=${delFiles}`, { method: 'DELETE' });
-        showToast('Project deleted.', 'success');
-        renderProjectsView();
+        if (scope !== window.CitadelProjectTools.scopeKey(id)) throw new Error('Machine or user changed. Reopen this action.');
+        if (deleteFiles && document.getElementById('delete-project-path')?.value !== project.path) throw new Error('Type the exact project directory path.');
+        const [sessionsAvailable] = await Promise.all([loadSessions(), window.CitadelProjectTools.refreshRuntime()]);
+        if (!sessionsAvailable) throw new Error('Terminal status unavailable. Try again before removal.');
+        if (scope !== window.CitadelProjectTools.scopeKey(id)) throw new Error('Machine or user changed. Reopen this action.');
+        const activity = window.CitadelProjectTools.projectRuntime(id);
+        if (sessionsForContext(id).some(s => s.isAlive) || activity.chat !== false || activity.editor !== false) throw new Error('Stop project terminals, Chat and the shared editor before removal. All runtime statuses must be available.');
+        await api(`/api/projects/${encodeURIComponent(id)}?deleteFiles=${deleteFiles}`, { method: 'DELETE' });
+        if (scope !== window.CitadelProjectTools.scopeKey(id)) return;
+        window.CitadelProjectTools.workspacePreference(id, { mode: null, editorOpened: false });
+        if (state.workspaceContext === id) state.workspaceContext = null;
+        showToast(deleteFiles ? 'Project removed; disk deletion requested.' : 'Removed from Citadel. Files kept.', 'success');
+        if (state.currentView === 'projects') await renderProjectsView();
       },
     });
   }
@@ -2370,13 +2440,6 @@
     return null;
   }
 
-  // Open the overview selector (parent "Workspace" click).
-  function openWorkspaceOverview() {
-    state.workspaceContext = null;
-    saveUiState({ workspaceContext: null });
-    navigateTo('workspace');
-  }
-
   // Open a workspace section (System or a project) from the sidebar/overview.
   function openWorkspace(context, mode) {
     if (mode && context !== 'system') {
@@ -2449,7 +2512,7 @@
     if (actions) actions.innerHTML = '';
 
     if (!context) {
-      return renderWorkspaceOverview();
+      return navigateTo('projects');
     }
 
     content.style.padding = '0'; // Terminal takes full viewport
@@ -2458,23 +2521,102 @@
     }
 
     const currentProject = state.projects.find((p) => p.id === context);
-    if (!currentProject) return renderWorkspaceOverview();
+    if (!currentProject) return navigateTo('projects');
     content.innerHTML = '<div class="workspace-project"><div class="workspace-surface"></div></div>';
     const surface = content.querySelector('.workspace-surface');
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.id = 'ws-close-mode';
-    closeButton.className = 'top-bar-icon';
-    closeButton.setAttribute('aria-label', 'Close view and choose mode');
-    closeButton.title = 'Close view and choose mode';
-    closeButton.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6l12 12M6 18L18 6"/></svg>';
+    closeButton.className = 'btn btn-secondary btn-sm';
+    closeButton.setAttribute('aria-label', 'Choose mode');
+    closeButton.title = 'Choose mode';
+    closeButton.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m7-7-7 7 7 7"/></svg><span>Choose mode</span>';
     const chooser = document.createElement('section');
     chooser.className = 'workspace-chooser';
     chooser.setAttribute('aria-label', 'Choose workspace mode');
-    chooser.innerHTML = `<div><h2>How do you want to work?</h2><p>${escapeHtml(currentProject.name)} · Choose a mode. Running work is kept when you switch.</p><div class="workspace-mode-cards">${[['chat', 'Chat', 'Talk to an AI agent'], ['terminal', 'Terminal', 'Open a persistent shell'], ['vscode', 'VS Code', 'Edit in your browser']].map(([mode, label, description]) => `<button type="button" class="card workspace-mode-card" data-workspace-mode="${mode}" ${mode !== 'terminal' && state.activeHostId !== 'local' ? 'disabled' : ''}><strong>${label}</strong><span>${mode !== 'terminal' && state.activeHostId !== 'local' ? 'Open this machine’s own Citadel panel' : description}</span></button>`).join('')}</div></div>`;
+    chooser.innerHTML = `<div><h2>How do you want to work?</h2><p>${escapeHtml(currentProject.name)} · Choose a mode. Running work is kept when you switch.</p><div class="workspace-mode-cards">${[['chat', 'Chat', 'Talk to an AI agent'], ['terminal', 'Terminal', 'Open a persistent shell'], ['vscode', 'VS Code', 'Edit in your browser']].map(([mode, label, description]) => `<div class="card workspace-mode-card"><button type="button" class="workspace-mode-select" data-workspace-mode="${mode}" ${mode !== 'terminal' && state.activeHostId !== 'local' ? 'disabled' : ''}><strong>${label}</strong><span>${mode !== 'terminal' && state.activeHostId !== 'local' ? 'Open this machine’s own Citadel panel' : description}</span></button><span data-mode-status="${mode}" role="status">Checking…</span><button type="button" class="btn btn-secondary btn-sm" data-stop-mode="${mode}" disabled>${mode === 'terminal' ? 'Stop terminals' : mode === 'vscode' ? 'Stop shared editor' : 'Stop Chat'}</button></div>`).join('')}</div></div>`;
     const title = document.getElementById('top-bar-title');
     if (title) title.textContent = `Workspace — ${currentProject.name}`;
-    let terminalStarted = false, terminalReady = false, terminalAttempt = 0;
+    let terminalStarted = false, terminalReady = false, terminalAttempt = 0, statusAttempt = 0;
+    const scopeKey = () => JSON.stringify([state.user?.id ?? state.user?.username, state.hostIdentity?.instanceId, state.activeHostId, state.workspaceContext]);
+    const initialScope = scopeKey();
+    const presentChooser = () => generation === workspaceGeneration && chooser.isConnected && !workspaceMode && scopeKey() === initialScope;
+    const projectUrl = `/api/projects/${encodeURIComponent(context)}/chat`;
+    const readActivity = async mode => {
+      if (mode === 'terminal') {
+        const result = await api(`/api/terminals?projectId=${encodeURIComponent(context)}`, { method: 'GET' });
+        return (result.sessions || []).filter(session => session.project_id === context && session.isAlive);
+      }
+      if (mode === 'chat') return (await api(`${projectUrl}/activity`)).running;
+      return (await api('/api/editor')).editor.running;
+    };
+    const stopping = new Set(), pendingStops = new Set();
+    async function refreshActivity() {
+      const attempt = ++statusAttempt;
+      await Promise.all(['chat', 'terminal', 'vscode'].map(async mode => {
+        const button = chooser.querySelector(`[data-stop-mode="${mode}"]`);
+        const status = chooser.querySelector(`[data-mode-status="${mode}"]`);
+        button.disabled = true;
+        if (mode !== 'terminal' && (state.activeHostId !== 'local' || state.user?.role !== 'admin')) { status.textContent = 'Unavailable here'; return; }
+        status.textContent = 'Checking…';
+        try {
+          const activity = await readActivity(mode);
+          if (!presentChooser() || attempt !== statusAttempt) return;
+          const running = mode === 'terminal' ? activity.length > 0 : activity;
+          status.textContent = running ? mode === 'terminal' ? `${activity.length} running` : mode === 'vscode' ? 'Running · shared by all projects' : 'Running · your project' : 'Not running';
+          button.disabled = !running || stopping.has(mode);
+        } catch (err) {
+          if (presentChooser() && attempt === statusAttempt) { status.textContent = 'Status unavailable'; status.title = err.message; }
+        }
+      }));
+    }
+    chooser.querySelectorAll('[data-stop-mode]').forEach(button => {
+      button.onclick = async () => {
+        const mode = button.dataset.stopMode;
+        if (!presentChooser() || button.disabled || stopping.has(mode)) return;
+        stopping.add(mode); button.disabled = true;
+        let activity;
+        try { activity = await readActivity(mode); }
+        catch (err) { if (presentChooser()) showToast(err.message, 'error'); stopping.delete(mode); if (presentChooser()) refreshActivity(); return; }
+        if (!presentChooser()) { stopping.delete(mode); return; }
+        if (!(mode === 'terminal' ? activity.length : activity)) { stopping.delete(mode); refreshActivity(); return; }
+        openModal({
+          title: button.textContent,
+          bodyHtml: `<p>${mode === 'terminal' ? `Stop ${activity.length} registered terminal session(s) in ${escapeHtml(currentProject.name)}? Their shells and running commands will be terminated.` : mode === 'vscode' ? 'Stop the shared VS Code process for ALL projects? Save work first. Extension hosts and integrated terminals will also stop.' : `Stop your Chat engine for ${escapeHtml(currentProject.name)} and cancel its active work? Saved conversations and history are kept.`}</p>`,
+          confirmText: button.textContent,
+          onClose: () => { if (!pendingStops.has(mode)) stopping.delete(mode); if (presentChooser()) refreshActivity(); },
+          onConfirm: async () => {
+            if (!presentChooser() || pendingStops.has(mode)) return;
+            pendingStops.add(mode);
+            try {
+              if (mode === 'terminal') {
+                const results = await Promise.allSettled(activity.map(session => api(`/api/terminals/${encodeURIComponent(session.id)}`, { method: 'DELETE' }).then(() => {
+                  if (scopeKey() === initialScope) {
+                    const item = state.terminals.get(session.id);
+                    if (item) { disposeTerminalItem(item); state.terminals.delete(session.id); }
+                  }
+                })));
+                if (generation === workspaceGeneration && scopeKey() === initialScope) {
+                  terminalStarted = false; terminalReady = false;
+                  surface.querySelector('.workspace-container')?.remove();
+                  await loadSessions();
+                }
+                const failed = results.filter(result => result.status === 'rejected');
+                if (failed.length) throw new Error(`${failed.length} terminal session(s) could not be stopped. ${failed[0].reason.message}`);
+              } else if (mode === 'chat') await api(`${projectUrl}/stop`, { method: 'POST' });
+              else await api('/api/editor', { method: 'DELETE' });
+            } finally {
+              pendingStops.delete(mode); stopping.delete(mode);
+              if (scopeKey() === initialScope) {
+                await window.CitadelProjectTools.refreshRuntime();
+                renderSidebarNav();
+              }
+              if (presentChooser()) await refreshActivity();
+            }
+          },
+        });
+      };
+    });
     const choose = (mode, remember = true) => {
       if (generation !== workspaceGeneration || !surface.isConnected) return;
       if (mode && workspaceMode === mode) return;
@@ -2497,11 +2639,17 @@
       if (!mode) {
         if (!terminalReady) terminalStarted = false;
         surface.append(chooser);
-        chooser.querySelector('button:not(:disabled)').focus();
+        chooser.querySelector('[data-workspace-mode]:not(:disabled)').focus();
+        refreshActivity();
       } else if (mode === 'chat' || mode === 'vscode') {
         if (!terminalReady) terminalStarted = false;
-        const options = { content: surface, onClose: () => choose(null) };
-        if (mode === 'chat') window.CitadelChat.open(currentProject, options);
+        const refresh = async () => {
+          if (scopeKey() !== initialScope) return;
+          await window.CitadelProjectTools.refreshRuntime();
+          if (scopeKey() === initialScope) renderSidebarNav();
+        };
+        const options = { content: surface, onClose: () => choose(null), onOpened: refresh };
+        if (mode === 'chat') window.CitadelChat.open(currentProject, options).then(refresh);
         else window.CitadelBrowserEditor.open(currentProject, options);
       } else {
         if (!terminalStarted) {
@@ -2526,54 +2674,22 @@
     choose(['terminal', 'chat', 'vscode'].includes(remembered) && (remembered === 'terminal' || state.activeHostId === 'local') ? remembered : null, false);
   }
 
-  // Landing selector shown when the "Workspace" parent is opened.
-  function renderWorkspaceOverview() {
-    const content = document.getElementById('main-content');
-    content.style.padding = '24px';
-    const titleEl = document.getElementById('top-bar-title');
-    if (titleEl) titleEl.textContent = 'Workspaces';
-
-    const sysCount = sessionsForContext('system').length;
-    content.innerHTML = `
-      <div style="margin-bottom:24px;">
-        <h2 style="font-size:18px;margin-bottom:6px;">Workspaces</h2>
-        <p style="color:var(--text-secondary);font-size:13px;">
-          Open the host shell or a project's persistent terminal.
-        </p>
-      </div>
-      <div class="ws-grid">
-        ${workspaceCardHtml('system', 'System (host)', 'Host shell', sysCount)}
-        ${state.projects.map((p) => workspaceCardHtml(p.id, p.name, p.path, sessionsForContext(p.id).length)).join('')}
-      </div>
-    `;
-
-    document.querySelectorAll('.ws-open-btn').forEach((btn) => {
-      btn.onclick = () => openWorkspace(btn.getAttribute('data-context'));
-    });
-  }
-
-  function workspaceCardHtml(context, label, subtitle, count) {
-    return `
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <strong>${escapeHtml(label)}</strong>
-          <span class="badge ${count > 0 ? 'badge-success' : 'badge-muted'}">${count} terminal${count === 1 ? '' : 's'}</span>
-        </div>
-        <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:12px;min-height:16px;word-break:break-all;">${escapeHtml(subtitle || '')}</div>
-        <button class="btn btn-primary btn-sm ws-open-btn" data-context="${context}">Open</button>
-      </div>
-    `;
-  }
-
   async function loadSessions() {
+    const scope = window.CitadelProjectTools.scopeKey(null);
     try {
       const res = await api('/api/terminals');
+      if (scope !== window.CitadelProjectTools.scopeKey(null)) return;
       state.allSessions = (res.sessions || []).filter((s) => s.isAlive);
       state.tmuxAvailable = !!res.tmuxAvailable;
+      state.sessionsAvailable = true;
+      renderSidebarNav();
+      return true;
     } catch {
-      // Keep the previous list; the sidebar simply stays as it was.
+      if (scope !== window.CitadelProjectTools.scopeKey(null)) return false;
+      state.sessionsAvailable = false;
+      renderSidebarNav();
+      return false;
     }
-    renderSidebarNav();
   }
 
 

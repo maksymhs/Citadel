@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const { getDatabase } = require('../database/db');
 const { PROJECTS_DIR } = require('../config');
 const { sanitizeSlug, validateSafePath } = require('../security/guard');
+const terminalManager = require('./terminalManager');
 
 class ProjectService {
   /**
@@ -323,6 +324,9 @@ class ProjectService {
     if (!project) throw new Error('Project not found.');
 
     const db = getDatabase();
+    if (terminalManager.listSessions(project.id).some(session => session.isAlive)) {
+      throw Object.assign(new Error('Project has live terminals. Stop them before removal.'), { statusCode: 409 });
+    }
     // Delete project from database (cascades or set null to sessions & deployments)
     db.prepare('DELETE FROM projects WHERE id = ?').run(project.id);
 

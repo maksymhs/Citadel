@@ -614,9 +614,12 @@ html.is-mobile-ui #app-container {
   color: var(--text-primary);
 }
 
-/* Mobile navigation toggle & backdrop */
-.hamburger-btn {
+.sidebar.desktop-folded {
   display: none;
+}
+
+.hamburger-btn {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 36px;
@@ -893,13 +896,17 @@ html.is-mobile-ui #app-container {
 .workspace-project { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .workspace-surface { flex: 1; min-height: 0; position: relative; }
 #ws-close-mode:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+.workspace-heading { display: flex; align-items: center; justify-content: space-between; }
+.project-system { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+
 .workspace-chooser { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: 24px; text-align: center; }
 .workspace-chooser p { color: var(--text-secondary); margin: 12px 0 24px; }
 .workspace-mode-cards { display: flex; justify-content: center; flex-wrap: wrap; gap: 16px; }
-.workspace-mode-card { display: flex; flex-direction: column; gap: 12px; width: 200px; padding: 28px 20px; color: var(--text-primary); cursor: pointer; font: inherit; }
+.workspace-mode-card { display: flex; flex-direction: column; gap: 12px; width: 220px; padding: 20px; color: var(--text-primary); font: inherit; }
+.workspace-mode-select { display: flex; flex: 1; flex-direction: column; gap: 12px; align-items: center; padding: 8px 0 16px; border: 0; background: none; color: inherit; cursor: pointer; font: inherit; }
 .workspace-mode-card span { color: var(--text-secondary); font-size: 13px; }
-.workspace-mode-card:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 3px; }
-.workspace-mode-card:disabled, .ctx-item:disabled { opacity: .5; cursor: not-allowed; }
+.workspace-mode-select:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 3px; }
+.workspace-mode-select:disabled, .ctx-item:disabled { opacity: .5; cursor: not-allowed; }
 .workspace-selecting > :not(.workspace-chooser), .editor-host > :not(.browser-editor) { visibility: hidden; }
 .browser-editor.browser-editor-embedded { position: absolute; inset: 0; z-index: 1; }
 .workspace-container {
@@ -1450,6 +1457,13 @@ html.is-mobile-ui .sidebar.open {
 
 html.is-mobile-ui .sidebar-backdrop.open {
   display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  html.is-mobile-ui .sidebar {
+    transition: none;
+  }
 }
 
 html.is-mobile-ui .main-wrapper {
@@ -2973,3 +2987,11 @@ label.mon-row:hover { border-color: var(--border-hover); }
   .gateway-power { grid-template-columns: 1fr; }
   .gateway-power > .gateway-muted { grid-column: auto; }
 }
+.chat-command-list { border: 1px solid var(--border-color); border-radius: 8px; max-height: 220px; overflow-y: auto; margin-bottom: 8px; background: var(--bg-secondary); }
+.chat-command-list[hidden], .chat-command-info[hidden] { display: none; }
+.chat-command-option { padding: 9px 12px; cursor: pointer; overflow-wrap: anywhere; }
+.chat-command-option[aria-selected="true"] { background: var(--accent-bg); outline: 1px solid var(--accent-color); outline-offset: -1px; }
+.chat-command-info { padding: 12px; margin-bottom: 10px; border: 1px solid var(--border-color); border-radius: 8px; max-height: 260px; overflow-y: auto; overflow-wrap: anywhere; font-size: 13px; }
+.chat-command-info > .chat-link { float: right; }
+.chat-command-info p { margin: 8px 0; }
+.chat-command-info button:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }

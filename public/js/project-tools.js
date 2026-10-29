@@ -16,7 +16,9 @@
     const panel = document.createElement('section');
     panel.className = 'card project-discovery';
     panel.hidden = true;
-    content.prepend(panel);
+    const system = content.querySelector('.project-system');
+    if (system) system.after(panel);
+    else content.prepend(panel);
     const hostId = state.activeHostId;
     try {
       const result = await api('/api/projects/discover');
@@ -72,8 +74,42 @@
     return value;
   }
 
-  function reset() { preferences.clear(); }
+  let runtime = new Map(), runtimeScope = null, refreshAttempt = 0;
+  const hostScope = () => scopeKey(null);
+  function projectRuntime(projectId) {
+    return runtimeScope === hostScope() ? runtime.get(projectId) || {} : {};
+  }
+  let refreshedAt = 0;
+  async function refreshRuntime(force = true) {
+    const scope = hostScope();
+    if (!state.user) return;
+    if (!force && runtimeScope === scope && Date.now() - refreshedAt < 5000) return;
+    const attempt = ++refreshAttempt;
+    const projects = state.projects.slice();
+    const next = new Map();
+    let editor;
+    if (state.activeHostId === 'local' && state.user?.role === 'admin') {
+      try { editor = (await api('/api/editor')).editor.running; } catch {}
+    }
+    await Promise.all(projects.map(async project => {
+      let chat;
+      if (state.activeHostId === 'local' && state.user?.role === 'admin') {
+        try { chat = (await api(`/api/projects/${encodeURIComponent(project.id)}/chat/activity`)).running; } catch {}
+      }
+      next.set(project.id, {
+        chat,
+        editor,
+        vscode: editor === true && workspacePreference(project.id).editorOpened === true,
+      });
+    }));
+    if (scope !== hostScope() || attempt !== refreshAttempt) return;
+    if (editor === false) {
+      for (const project of projects) workspacePreference(project.id, { editorOpened: false });
+    }
+    runtime = next; runtimeScope = scope; refreshedAt = Date.now();
+  }
+  function reset() { preferences.clear(); runtime.clear(); runtimeScope = null; refreshAttempt++; }
   function showChat(project) { return openWorkspace(project.id, 'chat'); }
 
-  window.CitadelProjectTools = { init, mountDiscovery, showEditor, showChat, scopeKey, workspacePreference, reset };
+  window.CitadelProjectTools = { init, mountDiscovery, showEditor, showChat, scopeKey, workspacePreference, projectRuntime, refreshRuntime, reset };
 })();

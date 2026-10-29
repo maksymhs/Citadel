@@ -58,7 +58,7 @@ Connect Claude and ChatGPT separately, choose discovered models for planning, ex
 <td valign="top">
 
 ### 📁 Projects & Git
-Register, create, import and clone repositories with live branch status. Connect GitHub or GitLab and clone your private repos in one click. Open optional [browser VS Code](docs/browser-editor.md) without SSH and return to Citadel with one button.
+Register, create, import and clone repositories with live branch status. Connect GitHub or GitLab and clone your private repos in one click. Open optional [browser VS Code](docs/browser-editor.md) without SSH and return to Citadel with one button. Fold the sidebar with the header toggle for more workspace space; desktop remembers your choice, while mobile keeps its overlay.
 
 </td>
 <td valign="top">
@@ -159,7 +159,7 @@ Every extra capability is opt-in:
 
 To just look at the panel without installing anything on the machine, there is a development-only Docker image: `docker compose up --build` (see [docs/installation.md](docs/installation.md#try-it-without-installing-docker)). It is not the supported deployment.
 
-Projects discovers folders under `PROJECTS_DIR`; import a suggestion and use **More actions → Open VS Code in browser** or **Chat**. Project workspaces first offer **Chat / Terminal / VS Code** cards, then remember the choice per owner/machine/project. VS Code stays inside Citadel with the sidebar visible; closing a view returns to mode selection without stopping work. Opening remembered Chat or VS Code does not create a terminal. Fresh installs retain the OpenCode CLI; Chat requires opt-in gateway subscription reuse, with no native-provider fallback. Chat and browser VS Code require the machine's own panel, not paired-machine transport. [Setup and limits](docs/installation.md#project-folders-vs-code-and-chat).
+Projects is the first-entry screen, with **System (host)** terminals first, and discovers folders under `PROJECTS_DIR`. Import a suggestion and use **More actions → VS Code**, **Chat** or **Open terminal**. The sidebar Workspace group appears only for projects with observed running work (VS Code uses a browser-local opened hint, not authoritative folder tracking). **Remove from Citadel** keeps files; disk deletion is a separate exact-path confirmation. Removal refuses live registered terminals, a project Chat engine belonging to any owner, or the shared editor process. Project workspaces first offer **Chat / Terminal / VS Code** cards, then remember the choice per owner/machine/project. VS Code stays inside Citadel with the sidebar visible; **Choose mode** returns to the cards without stopping work. Separate confirmed stops target your project's Chat engine or registered terminals; VS Code stop explicitly affects the shared editor across all projects. Opening remembered Chat or VS Code does not create a terminal. Fresh installs retain the OpenCode CLI; Chat requires opt-in gateway subscription reuse, with no native-provider fallback. Chat and browser VS Code require the machine's own panel, not paired-machine transport. [Setup and limits](docs/installation.md#project-folders-vs-code-and-chat).
 
 ### Requirements
 

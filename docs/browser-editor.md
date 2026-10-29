@@ -1,6 +1,47 @@
 # Native Chat and browser VS Code
 
+## Sidebar space
+
+Use the toggle beside the page title to open or close the sidebar. Desktop starts
+with the sidebar visible and remembers your choice in this browser per signed-in
+owner and panel origin, independently of project, machine and workspace mode.
+Choosing Chat, Terminal or VS Code never folds it automatically. On mobile the
+same button opens the existing overlay; navigation, backdrop click or Escape
+closes it without changing the desktop preference. Hidden navigation is excluded
+from keyboard focus; closing it while focused inside returns focus to the toggle.
+
+## Projects and removal
+
+New browser sessions start in Projects; an existing saved screen is restored.
+System (host) is always the first Projects card and is not listed under Workspace.
+Workspace appears only for projects with observed live terminals, your running
+Chat engine, or a running shared editor plus this browser's opened-project hint.
+Saved mode and chat history alone do not mark a project open. VS Code hints are
+not authoritative: another tab can open a folder, and closing an iframe does not
+prove that its folder is closed in the shared editor. Unavailable status is not
+reported as stopped.
+
+**Remove from Citadel** sends `deleteFiles=false` and preserves files on disk.
+**Delete project files from disk** is a separate action requiring the exact path.
+Both recheck status before submitting. The server rejects live registered project
+terminals or a running project Chat engine for any owner, without exposing owner
+or session details. Chat removal checks and synchronous deletion share the engine
+queue, so Chat startup cannot interleave. Because shared VS Code cannot report
+which project folders remain open, removal conservatively requires the shared
+editor to be stopped, including when it was opened from another project. This
+is not a guarantee that arbitrary host processes are idle. Existing managed-tree
+restrictions still apply to explicit disk deletion.
+
 ## Native Chat
+
+The composer supports `/new`, `/reset`, `/context`, `/model` and `/help` with
+keyboard suggestions. `/reset` confirms a new session, retaining history and
+never cancelling active work; busy engines reject session creation. `/context`
+reports bounded latest-assistant counters and configured gateway model limits,
+not a live context percentage or session total. `/model` shows gateway aliases
+and can switch Plan/Build when idle, not select a native provider. Commands and
+unknown slash input never reach the model. Tool activity exposes names/status
+only, not raw tool inputs; permission requests remain separate approvals.
 
 On first opening a project, choose a centered **Chat**, **Terminal** or **VS Code**
 card. No terminal, Chat session or editor starts until you select a mode. The selection
@@ -9,10 +50,20 @@ existing Terminal/Chat preferences. Use the sidebar's three-dot workspace menu o
 **Projects → More actions** to switch modes; there is no workspace mode toolbar.
 An already mounted terminal stays mounted when switching modes. Entering a workspace
 remembered in Chat or VS Code does not create or attach a terminal.
-The compact **X** in Citadel's global header (**Close view and choose mode**) appears
+The **Choose mode** back button in Citadel's global header appears
 only in a selected project mode. It clears only the mode preference and returns to the cards;
 terminal and Chat session selections, drafts and running work are retained. Navigating
 away closes the view but remembers the mode. There is no Chat toolbar above the conversation.
+Each chooser card has a separate stop button and read-only running status; checking
+status never starts a mode. Stops require confirmation. **Stop terminals** terminates
+only the alive registered terminal sessions listed for this project (not arbitrary
+host processes). **Stop Chat** cancels the signed-in owner's active work and stops
+only the matching owner/project/canonical-directory engine, preserving saved histories.
+It refuses unowned busy sessions and reports engine/abort failures rather than claiming
+success. **Stop shared editor** stops the one VS Code process for **all projects**,
+including its integrated terminals and extension hosts; save work first. These controls
+are disabled when nothing is running or status is unavailable. Chat/editor management
+requires a local administrator session. No process is stopped by merely returning here.
 This is not an embedded
 OpenCode GUI: the old GUI, bundle adapter, `/opencode/*`, `/api/opencode-web` and
 root API proxies have been removed. VS Code and native terminal agents remain available.

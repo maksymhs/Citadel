@@ -19,7 +19,7 @@ const settings = { token: 'isolated-test-only', baseUrl: 'http://127.0.0.1:1', o
 fs.writeFileSync(launchFile, JSON.stringify(settings), { mode: 0o600 });
 let configValid = true, completedPrompt = null, failPrompt = false, overrideResponse = null, transformConfig = value => value;
 const projects = { p1: path.join(root, 'projects', 'one'), p2: path.join(root, 'projects', 'two') };
-const requiredPaths = { '/event': ['get'], '/session': ['post'], '/session/status': ['get'], '/session/{sessionID}': ['get', 'patch'], '/session/{sessionID}/message': ['get'], '/session/{sessionID}/prompt_async': ['post'], '/session/{sessionID}/abort': ['post'], '/permission': ['get'], '/question': ['get'], '/permission/{requestID}/reply': ['post'], '/question/{requestID}/reply': ['post'], '/question/{requestID}/reject': ['post'] };
+const requiredPaths = { '/provider': ['get'], '/event': ['get'], '/session': ['post'], '/session/status': ['get'], '/session/{sessionID}': ['get', 'patch'], '/session/{sessionID}/message': ['get'], '/session/{sessionID}/prompt_async': ['post'], '/session/{sessionID}/abort': ['post'], '/permission': ['get'], '/question': ['get'], '/permission/{requestID}/reply': ['post'], '/question/{requestID}/reply': ['post'], '/question/{requestID}/reject': ['post'] };
 function service(dataDir = root) {
   return createChatService({ dataDir, getProject: id => projects[id] ? { path: projects[id] } : null, validatePath: value => value,
     registry: { findBinary: () => '/fake/opencode' }, gateway: { status: () => ({ enabled, opencodeEnabled: enabled, running: enabled }), launchOptions: () => enabled ? { command: 'wrapper', args: ['launch', launchFile, '--client', 'opencode'] } : null },
@@ -45,6 +45,7 @@ before(async () => {
     const send = data => res.end(JSON.stringify(data));
     if (url.pathname === '/global/health') return send({ healthy: true, version: '1.19.3' });
     if (url.pathname === '/config') return send(configValid ? transformConfig(JSON.parse(require('../scripts/gateway-launch').opencodeEnvironment(launchSeen.options.env, settings).OPENCODE_CONFIG_CONTENT)) : { enabled_providers: ['native'] });
+    if (url.pathname === '/provider') return send({ all: [{ id: 'citadel', key: 'never-return-provider-key', models: { 'citadel-execution': { limit: { context: 64000 } }, 'citadel-planning': { limit: { context: 128000 } } } }], default: { citadel: 'citadel-execution' }, connected: ['citadel'] });
     if (url.pathname === '/doc') return send({ paths: Object.fromEntries(Object.entries(requiredPaths).map(([key, methods]) => [key, Object.fromEntries(methods.map(method => [method, {}]))])) });
     if (url.pathname === '/event') { res.setHeader('content-type', 'text/event-stream'); res.write('data: {"type":"server.connected"}\n\n'); streamResponse = res; return; }
     if (url.pathname === '/session/status') return send(statuses);
@@ -72,6 +73,20 @@ before(async () => {
 });
 after(async () => { await app.close(); upstream.closeAllConnections(); await new Promise(resolve => upstream.close(resolve)); closeDatabase(); fs.rmSync(root, { recursive: true, force: true }); });
 
+test('project removal serializes with startup and blocks engines regardless of owner', async () => {
+  let removed = false;
+  await chat.withProjectRemoval('p1', () => { removed = true; });
+  assert.equal(removed, true);
+  const created = chat.create(other, 'p2');
+  const removal = chat.withProjectRemoval('p2', () => { throw new Error('must not remove'); });
+  await created;
+  await assert.rejects(removal, err => err.statusCode === 409 && /running Chat/.test(err.message));
+  await chat.withProjectRemoval('p1', () => {});
+  await chat.stopProject(other, 'p2');
+  await chat.withProjectRemoval('p2', () => {});
+  launchSeen = undefined;
+});
+
 test('gateway-only eligibility fails closed without spawning', async () => {
   enabled = false;
   assert.equal(chat.status().ready, false);
@@ -86,6 +101,21 @@ test('gateway runtime launch settings are checked, not just saved flags', async 
   assert.equal(launchSeen, undefined);
   fs.writeFileSync(launchFile, JSON.stringify(settings));
   assert.equal(chat.status().ready, true);
+});
+test('project activity and stop are read-only when no engine exists and enforce route guards', async () => {
+  const url = '/api/projects/p1/chat/activity';
+  const count = requests.length;
+  assert.equal((await app.inject({ url })).statusCode, 401);
+  assert.equal((await app.inject({ url, cookies: cookie, headers: { origin: 'https://evil.example' } })).statusCode, 403);
+  assert.equal((await app.inject({ url: `${url}?owner=other`, cookies: cookie })).statusCode, 400);
+  assert.deepEqual((await app.inject({ url, cookies: cookie })).json(), { running: false });
+  assert.deepEqual(await chat.stopProject(user.id, 'p1'), { stopped: false });
+  assert.equal(launchSeen, undefined);
+  assert.equal(requests.length, count);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/projects/p1/chat/stop', cookies: cookie, payload: { owner: other } })).statusCode, 400);
+  getDatabase().prepare("UPDATE users SET role = 'viewer' WHERE id = ?").run(user.id);
+  assert.equal((await app.inject({ url, cookies: cookie })).statusCode, 403);
+  getDatabase().prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(user.id);
 });
 test('creates only registered canonical project sessions using private wrapper environment', async () => {
   await assert.rejects(chat.create(user.id, 'missing'), /Project not found/);
@@ -115,11 +145,33 @@ test('ownership and directory checked for snapshots, sends, actions and events',
   assert.equal(result.messages[0].parts.length, 1);
   assert.equal(JSON.stringify(result).includes('foreign secret'), false);
 });
+test('snapshot exposes only scoped counters and gateway model limits without metadata requests per command', async () => {
+  const count = prompts;
+  try {
+    overrideResponse = (req, url) => url.pathname.endsWith('/message') ? { body: JSON.stringify([
+      { info: { id: 'msg_usage', sessionID: sessionId, role: 'assistant', providerID: 'citadel', modelID: 'citadel-execution', tokens: { input: 120, output: 30, reasoning: 10, cache: { read: 50, write: 5 }, secret: 'never-return' } }, parts: [] },
+      { info: { sessionID: 'foreign', role: 'assistant', tokens: { input: 99999 } }, parts: [] }
+    ]) } : null;
+    const snapshot = await chat.snapshot(user.id, 'p1', sessionId);
+    assert.deepEqual(snapshot.messages[0].tokens, { input: 120, output: 30, reasoning: 10, cache: { read: 50, write: 5 } });
+    assert.equal(snapshot.messages[0].model, 'citadel/citadel-execution');
+    assert.deepEqual(snapshot.models, { build: { model: 'citadel/citadel-execution', limitTokens: 64000 }, plan: { model: 'citadel/citadel-planning', limitTokens: 128000 } });
+    assert.doesNotMatch(JSON.stringify(snapshot), /never-return|99999/);
+    const providersBefore = requests.filter(item => item.path === '/provider').length;
+    for (const invalid of [-1, '12', null, Number.MAX_SAFE_INTEGER + 1]) {
+      overrideResponse = (req, url) => url.pathname.endsWith('/message') ? { body: JSON.stringify([{ info: { sessionID: sessionId, role: 'assistant', tokens: { input: invalid, output: 0, reasoning: invalid, cache: { read: invalid, write: 0 } } }, parts: [] }]) } : null;
+      const result = await chat.snapshot(user.id, 'p1', sessionId);
+      assert.deepEqual(result.messages[0].tokens, { input: null, output: 0, reasoning: null, cache: { read: null, write: 0 } });
+    }
+    assert.equal(requests.filter(item => item.path === '/provider').length, providersBefore);
+    assert.equal(prompts, count);
+  } finally { overrideResponse = null; }
+});
 test('strict authenticated API rejects browser config and persistent approvals', async () => {
   const url = `/api/projects/p1/chat/sessions/${sessionId}`;
   assert.equal((await app.inject({ url })).statusCode, 401);
   assert.equal((await app.inject({ url, cookies: cookie, headers: { origin: 'https://evil.example' } })).statusCode, 403);
-  for (const payload of [null, [], { text: ' \n ', role: 'build', requestId: 'r' }, { text: 'nul\0text', role: 'plan', requestId: 'r' }, { text: 'x'.repeat(32001), role: 'build', requestId: 'r' }, { text: 'hi', role: 'build', requestId: 'r', directory: '/' }, { text: '', role: 'plan', requestId: 'r' }, { text: 'hi', role: 'root', requestId: 'r' }, { text: 'hi', role: 'build', requestId: '../r' }]) assert.equal((await app.inject({ method: 'POST', url: `${url}/messages`, cookies: cookie, payload })).statusCode, 400);
+  for (const payload of [{ text: '/help', role: 'build', requestId: 'slash' }, { text: ' /unknown argument', role: 'plan', requestId: 'slash2' }, null, [], { text: ' \n ', role: 'build', requestId: 'r' }, { text: 'nul\0text', role: 'plan', requestId: 'r' }, { text: 'x'.repeat(32001), role: 'build', requestId: 'r' }, { text: 'hi', role: 'build', requestId: 'r', directory: '/' }, { text: '', role: 'plan', requestId: 'r' }, { text: 'hi', role: 'root', requestId: 'r' }, { text: 'hi', role: 'build', requestId: '../r' }]) assert.equal((await app.inject({ method: 'POST', url: `${url}/messages`, cookies: cookie, payload })).statusCode, 400);
   assert.equal((await app.inject({ method: 'POST', url: `${url}/permissions/per_test/reply`, cookies: cookie, payload: { reply: 'always' } })).statusCode, 400);
   assert.equal((await app.inject({ url: `${url}?directory=/`, cookies: cookie })).statusCode, 400);
   getDatabase().prepare("UPDATE users SET role = 'viewer' WHERE id = ?").run(user.id);
@@ -223,6 +275,37 @@ test('empty acknowledgements work but required JSON and upstream errors are safe
   } finally { overrideResponse = null; }
 });
 
+test('project stop checks owner, project, directory and every busy session before stopping; histories survive', async () => {
+  assert.deepEqual(await chat.activity(user.id, 'p1'), { running: true });
+  const count = requests.length;
+  assert.deepEqual(await chat.activity(other, 'p1'), { running: false });
+  assert.deepEqual(await chat.stopProject(other, 'p1'), { stopped: false });
+  assert.deepEqual(await chat.stopProject(user.id, 'p2'), { stopped: false });
+  const original = projects.p1;
+  projects.p1 = projects.p2;
+  assert.deepEqual(await chat.stopProject(user.id, 'p1'), { stopped: false });
+  projects.p1 = original;
+  assert.equal(requests.length, count);
+  statuses = { foreign: { type: 'busy' } };
+  await assert.rejects(chat.stopProject(user.id, 'p1'), /Chat not found/);
+  assert.equal(requests.slice(count).some(r => r.path.endsWith('/abort')), false);
+  statuses = {};
+  await chat.message(user.id, 'p1', sessionId, { text: 'stop fixture', role: 'build', requestId: 'project-stop' });
+  overrideResponse = (req, url) => url.pathname.endsWith('/abort') ? { status: 503, body: 'private upstream' } : null;
+  await assert.rejects(chat.stopProject(user.id, 'p1'), /POST \/session\/:id\/abort: HTTP 503/);
+  assert.deepEqual(await chat.activity(user.id, 'p1'), { running: true });
+  overrideResponse = null;
+  const result = await app.inject({ method: 'POST', url: '/api/projects/p1/chat/stop', cookies: cookie, payload: {} });
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.json(), { stopped: true });
+  assert.deepEqual(await chat.activity(user.id, 'p1'), { running: false });
+  assert.ok(requests.some(r => r.path === `/session/${sessionId}/abort`));
+  assert.ok(chat.list(user.id, 'p1').sessions.some(s => s.id === sessionId));
+  const afterStop = requests.length;
+  assert.deepEqual(await chat.stopProject(user.id, 'p1'), { stopped: false });
+  assert.equal(requests.length, afterStop);
+});
+
 test('effective engine config must be gateway-only', async () => {
   await chat.close();
   chat = service();
@@ -251,6 +334,9 @@ test('installed OpenCode capability, creation and snapshot contract without prom
     const snapshot = await real.snapshot(user.id, 'p1', created.session.id);
     assert.deepEqual(snapshot.messages, []);
     assert.equal(snapshot.status, 'idle');
+    assert.equal(snapshot.models.build.model, 'citadel/citadel-execution');
+    assert.equal(snapshot.models.build.limitTokens, 1000000);
+    assert.equal(snapshot.models.plan.model, 'citadel/citadel-planning');
     assert.deepEqual(snapshot.permissions, []);
     assert.deepEqual(snapshot.questions, []);
     assert.equal(observed['/global/health'], '1.19.3');

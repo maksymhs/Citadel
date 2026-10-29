@@ -15,6 +15,8 @@ function getChildEnv(base = process.env) {
   return Object.fromEntries(['PATH', 'LANG', 'LC_ALL', 'TZ', 'SHELL', 'TMPDIR', 'SSL_CERT_FILE', 'SSL_CERT_DIR'].filter(key => typeof base[key] === 'string').map(key => [key, base[key]]));
 }
 const bounded = (value, max = 2000) => typeof value === 'string' ? value.slice(0, max) : '';
+const counter = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER ? value : null;
+const tokenUsage = value => ({ input: counter(value?.input), output: counter(value?.output), reasoning: counter(value?.reasoning), cache: { read: counter(value?.cache?.read), write: counter(value?.cache?.write) } });
 const identifier = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,180}$/.test(value);
 const rules = role => [{ permission: '*', pattern: '*', action: 'ask' }, ...(role === 'plan' ? ['edit', 'bash', 'task', 'external_directory'].map(permission => ({ permission, pattern: '*', action: 'deny' })) : [])];
 
@@ -194,13 +196,20 @@ function createChatService({ dataDir = DATA_DIR, getProject = id => projectServi
       if (!health?.healthy) throw failure('Chat engine startup failed (GET /global/health: unavailable). Check OpenCode and AI Gateway in Settings.');
       if (!/^1\.19\./.test(health.version)) throw failure('Native chat requires OpenCode 1.19.x. Update OpenCode in Settings → Tools.');
       const doc = await request(rt, '/doc', 'GET', undefined, 4 * 1024 * 1024);
-      for (const [route, method] of [['/event', 'get'], ['/session', 'post'], ['/session/status', 'get'], ['/session/{sessionID}', 'get'], ['/session/{sessionID}', 'patch'], ['/session/{sessionID}/message', 'get'], ['/session/{sessionID}/prompt_async', 'post'], ['/session/{sessionID}/abort', 'post'], ['/permission', 'get'], ['/question', 'get'], ['/permission/{requestID}/reply', 'post'], ['/question/{requestID}/reply', 'post'], ['/question/{requestID}/reject', 'post']]) if (!doc.paths?.[route]?.[method]) throw failure('Unsupported OpenCode API. Update OpenCode in Settings → Tools.');
+      for (const [route, method] of [['/provider', 'get'], ['/event', 'get'], ['/session', 'post'], ['/session/status', 'get'], ['/session/{sessionID}', 'get'], ['/session/{sessionID}', 'patch'], ['/session/{sessionID}/message', 'get'], ['/session/{sessionID}/prompt_async', 'post'], ['/session/{sessionID}/abort', 'post'], ['/permission', 'get'], ['/question', 'get'], ['/permission/{requestID}/reply', 'post'], ['/question/{requestID}/reply', 'post'], ['/question/{requestID}/reject', 'post']]) if (!doc.paths?.[route]?.[method]) throw failure('Unsupported OpenCode API. Update OpenCode in Settings → Tools.');
       const config = await request(rt, '/config');
       const provider = config?.provider?.citadel;
       if (config?.enabled_providers?.length !== 1 || config.enabled_providers[0] !== 'citadel' || provider?.npm !== '@ai-sdk/openai-compatible' || provider.options?.baseURL !== `${launch.settings.baseUrl}/v1` || !['{env:CITADEL_GATEWAY_TOKEN}', launch.settings.token].includes(provider.options?.apiKey) || !['model', 'small_model'].every(key => typeof config[key] === 'string' && config[key].startsWith('citadel/')) || !['build', 'plan'].every(role => config.agent?.[role]?.model?.startsWith('citadel/'))) throw failure('Chat engine is not configured exclusively for AI Gateway. Restart AI Gateway and chat.');
       const aliases = launch.settings.aliases || { planning: 'citadel-planning', execution: 'citadel-execution', small: 'citadel-small' };
       if (config.model !== `citadel/${aliases.execution}` || config.small_model !== `citadel/${aliases.small}` || config.agent.build.model !== `citadel/${aliases.execution}` || config.agent.plan.model !== `citadel/${aliases.planning}` || !Object.values(aliases).every(alias => Object.hasOwn(provider.models || {}, alias))) throw failure('Chat engine gateway model aliases do not match AI Gateway. Restart AI Gateway and chat.');
       if (config.permission !== 'ask' && config.permission?.['*'] !== 'ask' || !['edit', 'bash', 'task', 'external_directory'].every(key => config.agent.plan.permission?.[key] === 'deny')) throw failure('Chat engine permission configuration is unsafe. Reopen chat.');
+      const providers = await request(rt, '/provider');
+      const models = Array.isArray(providers?.all) ? providers.all.find(item => item.id === 'citadel')?.models : null;
+      rt.models = Object.fromEntries(['build', 'plan'].map(role => {
+        const model = config.agent[role].model;
+        const limit = counter(models?.[model.slice('citadel/'.length)]?.limit?.context);
+        return [role, { model: bounded(model, 200), limitTokens: limit > 0 ? limit : null }];
+      }));
       lastError = null; stream(rt); return rt;
     } catch (err) { await stopRuntime(); lastError = err.message; throw err; }
   }
@@ -229,10 +238,10 @@ function createChatService({ dataDir = DATA_DIR, getProject = id => projectServi
     if (!Array.isArray(raw)) throw failure('Invalid chat messages.');
     let budget = 400000;
     const text = (value, limit = 16000) => { const result = bounded(value, Math.min(limit, Math.max(0, budget))); budget -= result.length; return result; };
-    const messages = raw.slice(-100).filter(m => m.info?.sessionID === id && ['user', 'assistant'].includes(m.info.role)).map(m => ({ id: bounded(m.info.id, 180), role: m.info.role, parts: (Array.isArray(m.parts) ? m.parts : []).slice(0, 100).filter(p => ['text', 'reasoning', 'tool'].includes(p.type)).map(p => ({ id: bounded(p.id, 180), type: p.type, text: p.type === 'tool' ? text(p.tool, 120) : text(p.text), ...(p.type === 'tool' ? { state: { status: bounded(p.state?.status, 30) } } : {}) })) }));
+    const messages = raw.slice(-100).filter(m => m.info?.sessionID === id && ['user', 'assistant'].includes(m.info.role)).map(m => ({ id: bounded(m.info.id, 180), role: m.info.role, ...(m.info.role === 'assistant' ? { tokens: tokenUsage(m.info.tokens), model: m.info.providerID === 'citadel' && Object.values(rt.models).some(item => item.model === `citadel/${m.info.modelID}`) ? bounded(`citadel/${m.info.modelID}`, 200) : null } : {}), parts: (Array.isArray(m.parts) ? m.parts : []).slice(0, 100).filter(p => ['text', 'reasoning', 'tool'].includes(p.type)).map(p => ({ id: bounded(p.id, 180), type: p.type, text: p.type === 'tool' ? text(p.tool, 120) : text(p.text), ...(p.type === 'tool' ? { state: { status: bounded(p.state?.status, 30) } } : {}) })) }));
     const permissions = state.permissions.filter(p => p.sessionID === id).slice(0, 30).map(p => ({ id: bounded(p.id, 180), permission: text(p.permission, 120), patterns: (Array.isArray(p.patterns) ? p.patterns : []).slice(0, 20).map(v => text(v, 500)) }));
     const questions = state.questions.filter(q => q.sessionID === id).slice(0, 20).map(q => ({ id: bounded(q.id, 180), questions: (q.questions || []).slice(0, 20).map(v => ({ header: text(v.header, 200), question: text(v.question, 2000), multiple: v.multiple === true, custom: v.custom !== false, options: (v.options || []).slice(0, 30).map(o => ({ label: text(o.label, 200), description: text(o.description, 1000) })) })) }));
-    return { session: publicSession(row), messages, status: state.statuses[id]?.type && state.statuses[id].type !== 'idle' || active?.id === id || permissions.length || questions.length ? 'busy' : rt.dead || rt.streamError || lastError ? 'error' : 'idle', permissions, questions };
+    return { session: publicSession(row), messages, models: rt.models, status: state.statuses[id]?.type && state.statuses[id].type !== 'idle' || active?.id === id || permissions.length || questions.length ? 'busy' : rt.dead || rt.streamError || lastError ? 'error' : 'idle', permissions, questions };
   });
   const message = (owner, project, id, input) => exclusive(async () => {
     const s = scope(owner, project), { rt } = await verified(s, id);
@@ -267,7 +276,27 @@ function createChatService({ dataDir = DATA_DIR, getProject = id => projectServi
     return () => listeners.delete(listener);
   }
   async function check(owner, project, id) { return exclusive(async () => { await verified(scope(owner, project), id); }); }
+  const activity = (owner, project) => exclusive(() => {
+    const s = scope(owner, project);
+    return { running: Boolean(runtime && !runtime.dead && runtime.scope.key === s.key) };
+  });
+  const stopProject = (owner, project) => exclusive(async () => {
+    const s = scope(owner, project), rt = runtime;
+    if (!rt || rt.dead || rt.scope.key !== s.key) return { stopped: false };
+    const state = await pending(rt);
+    const ids = new Set([...Object.entries(state.statuses).filter(([, value]) => value.type !== 'idle').map(([id]) => id), ...state.permissions.map(item => item.sessionID), ...state.questions.map(item => item.sessionID), ...(active ? [active.id] : [])]);
+    for (const id of ids) owned(s, id);
+    for (const id of ids) await request(rt, `/session/${id}/abort`, 'POST', {});
+    for (const listener of listeners) if (listener.owner === owner && listener.project === project) { listener.update(true); listeners.delete(listener); }
+    await stopRuntime();
+    lastError = null;
+    return { stopped: true };
+  });
+  const withProjectRemoval = (project, remove) => exclusive(() => {
+    if (runtime && !runtime.dead && runtime.scope.project === project) throw failure('Project has a running Chat engine. Stop it before removal.', 409);
+    return remove();
+  });
   async function close() { closing = true; for (const listener of listeners) listener.update(true); listeners.clear(); await tail; await stopRuntime(); if (database) { database.close(); database = null; } }
-  return { status, list, create, snapshot, message, action, subscribe, check, close };
+  return { status, activity, stopProject, withProjectRemoval, list, create, snapshot, message, action, subscribe, check, close };
 }
 module.exports = { ...createChatService(), createChatService, getChildEnv };

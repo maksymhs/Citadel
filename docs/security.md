@@ -62,6 +62,15 @@ backend binds only to loopback, with server-side authentication; browser session
 credentials are filtered at the proxy. It runs as the Citadel user and is not a
 project sandbox. Stopping it terminates its editor process group.
 
+Project registration removal preserves files by default; the UI separates explicit
+disk deletion with exact-path confirmation. Server removal guards reject live
+registered terminals, any owner's running project Chat engine (without revealing
+identity/history), and the shared editor process. Chat startup and guarded deletion
+are serialized. Editor status is global, not authoritative per-folder tracking, so
+all project removals conservatively require that process stopped. These checks do
+not detect arbitrary host processes or provide filesystem/OS isolation. Existing
+explicit `deleteFiles=true` API behavior and managed-tree validation remain.
+
 ## Native Chat boundaries
 
 [Native Chat](browser-editor.md#native-chat) requires an administrator's browser
