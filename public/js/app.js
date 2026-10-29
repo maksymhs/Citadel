@@ -664,10 +664,10 @@
         <!-- Main Wrapper -->
         <div class="main-wrapper">
           <header class="top-bar">
-            <button class="hamburger-btn" id="mobile-menu-btn" type="button" aria-controls="app-sidebar" aria-expanded="true" aria-label="Close sidebar" title="Close sidebar">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
-            </button>
             <div class="top-bar-lead">
+              <button class="hamburger-btn" id="mobile-menu-btn" type="button" aria-controls="app-sidebar" aria-expanded="true" aria-label="Close sidebar" title="Close sidebar">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+              </button>
               <button class="top-bar-back" id="top-bar-back" hidden aria-label="Back" title="Back">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                 <span>Back</span>
@@ -1014,7 +1014,7 @@
   function workspaceNavHtml() {
     const projects = state.projects.filter(p => {
       const activity = window.CitadelProjectTools.projectRuntime(p.id);
-      return sessionsForContext(p.id).some(s => s.isAlive) || activity.chat === true || activity.vscode;
+      return sessionsForContext(p.id).some(s => s.isAlive) || activity.vscode;
     });
     if (!projects.length) return '';
     const open = state.workspaceNavOpen !== false;
@@ -1037,7 +1037,7 @@
     const isActiveCtx = state.currentView === 'workspace' && state.workspaceContext === context;
     const activeClass = isActiveCtx ? ' active' : '';
     const activity = window.CitadelProjectTools.projectRuntime(context);
-    const running = Boolean(session?.isAlive || activity.chat || activity.vscode);
+    const running = Boolean(session?.isAlive || activity.vscode);
     return `<a class="nav-item nav-subitem${activeClass}" data-workspace-context="${escapeHtml(context)}" title="${escapeHtml(subtitle || label)}">
       <span class="nav-dot${running ? ' nav-dot-on' : ''}"></span><span class="nav-label">${escapeHtml(label)}</span>
       <button class="nav-item-menu" data-ws-menu-context="${escapeHtml(context)}" title="Workspace menu" aria-label="Workspace menu">&#8942;</button></a>`;
@@ -1087,7 +1087,6 @@
         openContextMenu(menu, [
           { label: 'Open terminal', onSelect: () => openWorkspace(context, 'terminal') },
           ...(context === 'system' ? [] : [
-            { label: 'Chat', disabled: state.activeHostId !== 'local', onSelect: () => openWorkspace(context, 'chat') },
             { label: 'VS Code', disabled: state.activeHostId !== 'local', onSelect: () => openWorkspace(context, 'vscode') },
           ]),
           { label: 'Stop terminal', danger: true, disabled: !sessionForContext(context), onSelect: () => closeWorkspaceTerminal(context) },
@@ -1217,9 +1216,9 @@
   }
 
   function navigateTo(view) {
-    window.CitadelChat.close();
     window.CitadelBrowserEditor.close();
     workspaceGeneration++;
+    document.getElementById('ws-close-mode')?.remove();
     chooseWorkspaceMode = null;
     workspaceMode = null;
     view = resolveView(view);
@@ -1562,7 +1561,7 @@
               <div class="proj-name">
                 <strong>${escapeHtml(p.name)}</strong>
                 ${p.existsOnDisk ? '' : '<span class="badge badge-danger">Missing</span>'}
-                <span class="badge badge-muted">${sessions || activity.chat || activity.vscode ? 'Open' : state.sessionsAvailable && activity.chat === false && activity.editor === false ? 'Stopped' : 'Status unavailable'}</span>
+                <span class="badge badge-muted">${sessions || activity.vscode ? 'Open' : state.sessionsAvailable && activity.editor === false ? 'Stopped' : 'Status unavailable'}</span>
                 ${sessions > 0 ? `<span class="badge badge-success" title="Persistent terminals running">${sessions} terminal${sessions === 1 ? '' : 's'}</span>` : ''}
               </div>
               ${p.description ? `<div class="proj-desc">${escapeHtml(p.description)}</div>` : ''}
@@ -1630,7 +1629,6 @@
         openContextMenu(btn, [
           { label: 'Open terminal', onSelect: () => openWorkspace(id, 'terminal') },
           { label: 'VS Code', disabled: state.activeHostId !== 'local', onSelect: () => window.CitadelProjectTools.showEditor(project) },
-          { label: 'Chat', disabled: state.activeHostId !== 'local', onSelect: () => window.CitadelProjectTools.showChat(project) },
           { label: 'Associate a folder…', onSelect: () => showAssociateRepoModal(project) },
           { label: 'Clone a repository here…', onSelect: () => showCloneRepoModal(project) },
           { sep: true },
@@ -1650,7 +1648,7 @@
       title: deleteFiles ? `Delete files — ${name}` : `Remove from Citadel — ${name}`,
       bodyHtml: deleteFiles
         ? `<p>Permanently delete this project directory and remove its registration? Save and back up your work first. Files outside the managed projects directory cannot be deleted.</p><p><code>${escapeHtml(project.path)}</code></p><label>Type the exact directory path to confirm<input class="form-input" id="delete-project-path" autocomplete="off"></label>`
-        : '<p>Remove this project registration from Citadel? Files on disk are kept untouched. Stop open terminals, Chat and editor work first.</p>',
+        : '<p>Remove this project registration from Citadel? Files on disk are kept untouched. Stop open terminals and editor work first.</p>',
       confirmText: deleteFiles ? 'Delete files and registration' : 'Remove from Citadel',
       onConfirm: async () => {
         if (scope !== window.CitadelProjectTools.scopeKey(id)) throw new Error('Machine or user changed. Reopen this action.');
@@ -1659,7 +1657,7 @@
         if (!sessionsAvailable) throw new Error('Terminal status unavailable. Try again before removal.');
         if (scope !== window.CitadelProjectTools.scopeKey(id)) throw new Error('Machine or user changed. Reopen this action.');
         const activity = window.CitadelProjectTools.projectRuntime(id);
-        if (sessionsForContext(id).some(s => s.isAlive) || activity.chat !== false || activity.editor !== false) throw new Error('Stop project terminals, Chat and the shared editor before removal. All runtime statuses must be available.');
+        if (sessionsForContext(id).some(s => s.isAlive) || activity.editor !== false) throw new Error('Stop project terminals and the shared editor before removal. All runtime statuses must be available.');
         await api(`/api/projects/${encodeURIComponent(id)}?deleteFiles=${deleteFiles}`, { method: 'DELETE' });
         if (scope !== window.CitadelProjectTools.scopeKey(id)) return;
         window.CitadelProjectTools.workspacePreference(id, { mode: null, editorOpened: false });
@@ -2227,7 +2225,6 @@
   function teardownSession() {
     workspaceGeneration++;
     document.getElementById('ws-close-mode')?.remove();
-    window.CitadelChat.reset();
     window.CitadelBrowserEditor.close();
     window.CitadelProjectTools.reset();
     chooseWorkspaceMode = null;
@@ -2443,9 +2440,9 @@
   // Open a workspace section (System or a project) from the sidebar/overview.
   function openWorkspace(context, mode) {
     if (mode && context !== 'system') {
-      if (!['terminal', 'chat', 'vscode'].includes(mode)) return;
+      if (!['terminal', 'vscode'].includes(mode)) return;
       if (mode !== 'terminal' && state.activeHostId !== 'local') {
-        showToast('Open this machine’s own Citadel panel to use Chat or VS Code.', 'error');
+        showToast('Open this machine’s own Citadel panel to use VS Code.', 'error');
         return;
       }
       if (state.currentView === 'workspace' && state.workspaceContext === context && chooseWorkspaceMode) {
@@ -2527,33 +2524,31 @@
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.id = 'ws-close-mode';
-    closeButton.className = 'btn btn-secondary btn-sm';
+    closeButton.className = 'top-bar-back';
     closeButton.setAttribute('aria-label', 'Choose mode');
     closeButton.title = 'Choose mode';
-    closeButton.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m7-7-7 7 7 7"/></svg><span>Choose mode</span>';
+    closeButton.innerHTML = '<svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5m7-7-7 7 7 7"/></svg>';
     const chooser = document.createElement('section');
     chooser.className = 'workspace-chooser';
     chooser.setAttribute('aria-label', 'Choose workspace mode');
-    chooser.innerHTML = `<div><h2>How do you want to work?</h2><p>${escapeHtml(currentProject.name)} · Choose a mode. Running work is kept when you switch.</p><div class="workspace-mode-cards">${[['chat', 'Chat', 'Talk to an AI agent'], ['terminal', 'Terminal', 'Open a persistent shell'], ['vscode', 'VS Code', 'Edit in your browser']].map(([mode, label, description]) => `<div class="card workspace-mode-card"><button type="button" class="workspace-mode-select" data-workspace-mode="${mode}" ${mode !== 'terminal' && state.activeHostId !== 'local' ? 'disabled' : ''}><strong>${label}</strong><span>${mode !== 'terminal' && state.activeHostId !== 'local' ? 'Open this machine’s own Citadel panel' : description}</span></button><span data-mode-status="${mode}" role="status">Checking…</span><button type="button" class="btn btn-secondary btn-sm" data-stop-mode="${mode}" disabled>${mode === 'terminal' ? 'Stop terminals' : mode === 'vscode' ? 'Stop shared editor' : 'Stop Chat'}</button></div>`).join('')}</div></div>`;
+    chooser.innerHTML = `<div><h2>How do you want to work?</h2><p>${escapeHtml(currentProject.name)} · Choose a mode. Running work is kept when you switch.</p><div class="workspace-mode-cards">${[['terminal', 'Terminal', 'Open a persistent shell'], ['vscode', 'VS Code', 'Edit in your browser']].map(([mode, label, description]) => `<div class="card workspace-mode-card"><button type="button" class="workspace-mode-select" data-workspace-mode="${mode}" ${mode !== 'terminal' && state.activeHostId !== 'local' ? 'disabled' : ''}><strong>${label}</strong><span>${mode !== 'terminal' && state.activeHostId !== 'local' ? 'Open this machine’s own Citadel panel' : description}</span></button><span data-mode-status="${mode}" role="status">Checking…</span><button type="button" class="btn btn-secondary btn-sm" data-stop-mode="${mode}" disabled>${mode === 'terminal' ? 'Stop terminals' : 'Stop shared editor'}</button></div>`).join('')}</div></div>`;
     const title = document.getElementById('top-bar-title');
     if (title) title.textContent = `Workspace — ${currentProject.name}`;
     let terminalStarted = false, terminalReady = false, terminalAttempt = 0, statusAttempt = 0;
     const scopeKey = () => JSON.stringify([state.user?.id ?? state.user?.username, state.hostIdentity?.instanceId, state.activeHostId, state.workspaceContext]);
     const initialScope = scopeKey();
     const presentChooser = () => generation === workspaceGeneration && chooser.isConnected && !workspaceMode && scopeKey() === initialScope;
-    const projectUrl = `/api/projects/${encodeURIComponent(context)}/chat`;
     const readActivity = async mode => {
       if (mode === 'terminal') {
         const result = await api(`/api/terminals?projectId=${encodeURIComponent(context)}`, { method: 'GET' });
         return (result.sessions || []).filter(session => session.project_id === context && session.isAlive);
       }
-      if (mode === 'chat') return (await api(`${projectUrl}/activity`)).running;
       return (await api('/api/editor')).editor.running;
     };
     const stopping = new Set(), pendingStops = new Set();
     async function refreshActivity() {
       const attempt = ++statusAttempt;
-      await Promise.all(['chat', 'terminal', 'vscode'].map(async mode => {
+      await Promise.all(['terminal', 'vscode'].map(async mode => {
         const button = chooser.querySelector(`[data-stop-mode="${mode}"]`);
         const status = chooser.querySelector(`[data-mode-status="${mode}"]`);
         button.disabled = true;
@@ -2563,7 +2558,7 @@
           const activity = await readActivity(mode);
           if (!presentChooser() || attempt !== statusAttempt) return;
           const running = mode === 'terminal' ? activity.length > 0 : activity;
-          status.textContent = running ? mode === 'terminal' ? `${activity.length} running` : mode === 'vscode' ? 'Running · shared by all projects' : 'Running · your project' : 'Not running';
+          status.textContent = running ? mode === 'terminal' ? `${activity.length} running` : 'Running · shared by all projects' : 'Not running';
           button.disabled = !running || stopping.has(mode);
         } catch (err) {
           if (presentChooser() && attempt === statusAttempt) { status.textContent = 'Status unavailable'; status.title = err.message; }
@@ -2582,7 +2577,7 @@
         if (!(mode === 'terminal' ? activity.length : activity)) { stopping.delete(mode); refreshActivity(); return; }
         openModal({
           title: button.textContent,
-          bodyHtml: `<p>${mode === 'terminal' ? `Stop ${activity.length} registered terminal session(s) in ${escapeHtml(currentProject.name)}? Their shells and running commands will be terminated.` : mode === 'vscode' ? 'Stop the shared VS Code process for ALL projects? Save work first. Extension hosts and integrated terminals will also stop.' : `Stop your Chat engine for ${escapeHtml(currentProject.name)} and cancel its active work? Saved conversations and history are kept.`}</p>`,
+          bodyHtml: `<p>${mode === 'terminal' ? `Stop ${activity.length} registered terminal session(s) in ${escapeHtml(currentProject.name)}? Their shells and running commands will be terminated.` : 'Stop the shared VS Code process for ALL projects? Save work first. Extension hosts and integrated terminals will also stop.'}</p>`,
           confirmText: button.textContent,
           onClose: () => { if (!pendingStops.has(mode)) stopping.delete(mode); if (presentChooser()) refreshActivity(); },
           onConfirm: async () => {
@@ -2603,8 +2598,7 @@
                 }
                 const failed = results.filter(result => result.status === 'rejected');
                 if (failed.length) throw new Error(`${failed.length} terminal session(s) could not be stopped. ${failed[0].reason.message}`);
-              } else if (mode === 'chat') await api(`${projectUrl}/stop`, { method: 'POST' });
-              else await api('/api/editor', { method: 'DELETE' });
+              } else await api('/api/editor', { method: 'DELETE' });
             } finally {
               pendingStops.delete(mode); stopping.delete(mode);
               if (scopeKey() === initialScope) {
@@ -2621,16 +2615,15 @@
       if (generation !== workspaceGeneration || !surface.isConnected) return;
       if (mode && workspaceMode === mode) return;
       if (mode && mode !== 'terminal' && state.activeHostId !== 'local') {
-        showToast('Open this machine’s own Citadel panel to use Chat or VS Code.', 'error');
+        showToast('Open this machine’s own Citadel panel to use VS Code.', 'error');
         return;
       }
       workspaceMode = mode;
       const attempt = ++terminalAttempt;
       if (remember) window.CitadelProjectTools.workspacePreference(context, { mode });
-      if (mode) actions?.append(closeButton);
+      if (mode) document.getElementById('mobile-menu-btn')?.after(closeButton);
       else closeButton.remove();
       state.terminalSelectionGeneration++;
-      window.CitadelChat.close();
       window.CitadelBrowserEditor.close();
       chooser.remove();
       surface.classList.toggle('workspace-selecting', !mode);
@@ -2641,7 +2634,7 @@
         surface.append(chooser);
         chooser.querySelector('[data-workspace-mode]:not(:disabled)').focus();
         refreshActivity();
-      } else if (mode === 'chat' || mode === 'vscode') {
+      } else if (mode === 'vscode') {
         if (!terminalReady) terminalStarted = false;
         const refresh = async () => {
           if (scopeKey() !== initialScope) return;
@@ -2649,8 +2642,7 @@
           if (scopeKey() === initialScope) renderSidebarNav();
         };
         const options = { content: surface, onClose: () => choose(null), onOpened: refresh };
-        if (mode === 'chat') window.CitadelChat.open(currentProject, options).then(refresh);
-        else window.CitadelBrowserEditor.open(currentProject, options);
+        window.CitadelBrowserEditor.open(currentProject, options);
       } else {
         if (!terminalStarted) {
           terminalStarted = true;
@@ -2671,7 +2663,7 @@
     chooser.querySelectorAll('[data-workspace-mode]').forEach(button => { button.onclick = () => choose(button.dataset.workspaceMode); });
     chooseWorkspaceMode = choose;
     const remembered = window.CitadelProjectTools.workspacePreference(context).mode;
-    choose(['terminal', 'chat', 'vscode'].includes(remembered) && (remembered === 'terminal' || state.activeHostId === 'local') ? remembered : null, false);
+    choose(['terminal', 'vscode'].includes(remembered) && (remembered === 'terminal' || state.activeHostId === 'local') ? remembered : null, false);
   }
 
   async function loadSessions() {
@@ -4233,7 +4225,6 @@
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
-  window.CitadelChat.init({ api, state, openSettingsAt, showToast, workspacePreference: (...args) => window.CitadelProjectTools.workspacePreference(...args) });
   window.CitadelBrowserEditor.init({ api, escapeHtml, showToast, state });
   window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state, openWorkspace });
   window.CitadelRepos.init({ api, escapeHtml, loadProjects, openModal, renderProjectsView, showToast });

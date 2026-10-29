@@ -64,24 +64,32 @@ project sandbox. Stopping it terminates its editor process group.
 
 Project registration removal preserves files by default; the UI separates explicit
 disk deletion with exact-path confirmation. Server removal guards reject live
-registered terminals, any owner's running project Chat engine (without revealing
-identity/history), and the shared editor process. Chat startup and guarded deletion
-are serialized. Editor status is global, not authoritative per-folder tracking, so
-all project removals conservatively require that process stopped. These checks do
+registered terminals, any owner's running legacy Chat engine (without revealing
+identity/history), and the shared editor process. Legacy Chat startup and guarded
+deletion are serialized. The panel checks only terminal/editor status; the server's
+legacy Chat guard remains authoritative even though the GUI is removed. Editor
+status is global, not authoritative per-folder tracking, so all project removals
+conservatively require that process stopped. These checks do
 not detect arbitrary host processes or provide filesystem/OS isolation. Existing
 explicit `deleteFiles=true` API behavior and managed-tree validation remain.
 
-## Native Chat boundaries
+## Legacy Chat API boundaries
 
-[Native Chat](browser-editor.md#native-chat) requires an administrator's browser
-session cookie; bearer/peer credentials are not accepted. Routes reject unexpected
+The native Chat GUI and all panel entry points have been removed. The panel no
+longer makes Chat API calls or offers Chat status/stop controls. `chatRoutes`,
+`chatService` and their storage/tests remain for legacy API compatibility and
+server-side project removal safety. Removing the GUI does not delete histories,
+preferences or user data and does not stop existing engines.
+
+The retained API requires an administrator's browser session cookie; bearer/peer
+credentials are not accepted. Routes reject unexpected
 origins, cross-site fetches and query parameters, use `no-store`, validate bounded
 inputs and check owner, project and canonical directory for every session operation.
 SSE periodically rechecks the signed-in administrator and session scope. Audit
 entries record action/project identity, not prompts, answers or transcripts.
 
-Chat requires an installed OpenCode 1.19.x engine and an explicitly opted-in,
-running OpenCode AI Gateway configuration. Startup checks required APIs and the
+The legacy service requires an installed OpenCode 1.19.x engine and an explicitly
+opted-in, running OpenCode AI Gateway configuration. Startup checks required APIs and the
 resolved gateway-only provider/model configuration; no native-provider fallback
 or CLI login-cache import is allowed. The engine listens on loopback with random
 Basic authentication held server-side. Browser cookies and engine credentials
@@ -96,26 +104,30 @@ separate from the main schema. Transcripts/state persist in hashed HOME/XDG tree
 scoped to owner, project and canonical directory. Chat uses an allowlisted child
 environment and disables project config, external skills, Claude Code config
 loading, sharing and auto-update. Build defaults to ask; Plan additionally denies
-edit, bash, task and external-directory permissions. The UI offers only one-time
-allow/reject and question replies/rejection. These are logical/application
-boundaries, **not a sandbox**: the engine and approved tools run as the shared
-Citadel service user and can access files that user can access. Chat does not
+edit, bash, task and external-directory permissions. The legacy API supports
+one-time allow/reject and question replies/rejection, not permanent grants.
+These are logical/application boundaries, **not a sandbox**: the engine and
+approved tools run as the shared Citadel service user and can access files that
+user can access. Chat does not
 encrypt its metadata/transcripts; treat the whole tree and backups as sensitive.
 
-Browser localStorage remembers only workspace mode and terminal/Chat session IDs,
-scoped by owner, panel instance, selected host and project. These are untrusted
-selection hints; server ownership/canonical-directory checks remain authoritative.
-Draft text and Plan/Build choice are page-memory only and cleared on logout or
-machine switch, not stored durably. Browser storage is not encrypted or a security
-boundary against same-origin scripts or people with access to the browser profile.
+Disconnecting or closing the panel does not cancel an existing legacy runtime.
+The retained cancellation/stop endpoints and clean server shutdown keep their
+existing behavior; shutdown kills its process group. Legacy SSE provides update
+notifications and bounded snapshots, not guaranteed full history/event replay.
+Paired-machine Chat transport remains unavailable. Backend fixtures and an
+isolated installed-engine capability/session/snapshot check do not establish
+real-model or browser compatibility.
 
-Disconnecting or closing the panel does not cancel work. Stop requests engine
-cancellation; clean server shutdown kills its process group. SSE reconnect reloads
-bounded snapshots, not guaranteed full history/event replay. The UI renders literal
-text/fenced code, not arbitrary HTML or full Markdown. Only the machine's own panel
-supports Chat; paired-machine transport is unavailable. Current verification uses
-fixtures/jsdom and an isolated installed-engine capability/session/snapshot check,
-not a real browser or model prompt.
+## Browser workspace preferences
+
+Browser localStorage remembers Terminal/VS Code mode and selection hints scoped
+by owner, panel instance, selected host and project; terminal selection and editor
+state are independent. Stored choices are not authorization. Old Chat preferences
+are retained but an old saved Chat mode opens the chooser without starting work.
+Server ownership and canonical-directory checks remain authoritative. Browser
+storage is not encrypted or a security boundary against same-origin scripts or
+people with access to the browser profile.
 
 ## AI Gateway boundaries
 

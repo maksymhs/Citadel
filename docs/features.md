@@ -10,7 +10,8 @@ Which files make up each feature. Start here when a task is phrased in product t
 | AI agents (launch, install, reinstall/update, remove) | `agentRoutes` → `agentRegistry`, `agentInstallService`, `agentLifecycle`, `agentCatalogue` | `app.js`, `monitor.js` | `agents`, `agent-install`, `agent-lifecycle` | [architecture §7](architecture.md) |
 | Credential vault, `citadel-creds` | `secretRoutes` → `secretStore`, `secretSyncService`, `security/secrets.js`; CLI `scripts/citadel-creds.js` | `app.js` (Settings) | `secrets`, `secret-sync`, `gitcred` | [security](security.md) |
 | Browser VS Code (optional) | `editorRoutes` → `editorService`, `releaseDownload` | `browser-editor.js`, `project-tools.js`, `app.js` (embedded workspace, chooser, sidebar and project actions) | `editor`, `ui-smoke` | [browser editor](browser-editor.md) |
-| Native Chat (admin, local projects, gateway-only OpenCode 1.19.x API; owner-private sessions, independent Terminal/Chat/VS Code workspace modes with Projects-first navigation, conditional Workspace, first-entry chooser and scoped selection memory, Plan/Build, slash commands and approvals) | `chatRoutes` → `chatService`; `gatewayService`, `scripts/gateway-launch.js`; separate `DATA_DIR/chat/metadata.sqlite` | `chat.js`, `project-tools.js`, `app.js`; `public/index.html`, `public/css/app.css` | `chat`, `chat-commands`, `ui-smoke`, `editor` (retired GUI/root routes absent) | [native Chat](browser-editor.md#native-chat) · [AI Gateway](ai-gateway.md) |
+| Project workspace modes (Terminal/VS Code two-card chooser, independent remembered state, Projects-first navigation, conditional Workspace and confirmed scoped stops) | `projectRoutes`, `terminalRoutes`, `editorRoutes` → `projectService`, `terminalManager`, `editorService` | `app.js`, `project-tools.js`, `browser-editor.js`; `public/index.html`, `public/css/app.css` | `ui-smoke`, `projects`, `terminal`, `editor` | [project workspaces](browser-editor.md#terminal-and-vs-code-modes) |
+| Legacy Chat API compatibility and removal safety (retained backend/storage, admin-local, gateway-only OpenCode 1.19.x; no native Chat GUI or panel API calls) | `chatRoutes` → `chatService`; `projectRoutes` (removal guard), `gatewayService`, `scripts/gateway-launch.js`; separate `DATA_DIR/chat/metadata.sqlite` | None (native `chat.js` removed) | `chat`, `projects`, `editor` (retired GUI/root routes absent) | [legacy API security](security.md#legacy-chat-api-boundaries) · [architecture](architecture.md#retained-legacy-chat-backend) |
 | Files explorer | `fileRoutes` → `fileService`; `scripts/fsAgent.js` (privileged ops) | `files.js` | `files`, `ui-smoke` | [installation](installation.md) |
 | Disk usage and quick cleanup | `fileRoutes` (`/api/files/cleanup`) → `fileService`, `scripts/fsAgent.js` | `disk-cleanup.js` | `files` | [installation](installation.md) |
 | Machine switching (one URL, many hosts) | `hostRoutes`, `remoteProxyRoutes` → `hostService` | `app.js` (machine selector) | `remote-proxy`, `known-peers` | [architecture §3](architecture.md) |
@@ -34,8 +35,9 @@ Which files make up each feature. Start here when a task is phrased in product t
 | Database and migrations | `database/db.js` | — | `db-upgrade` | [architecture §9](architecture.md) |
 | Configuration | `config.js`, `.env.example` | — | `config-paths` | [installation](installation.md) |
 
-The native Chat files are listed explicitly here because they have no source-purpose
-header comments; the generated code map may show missing-header placeholders rather
-than useful descriptions. Do not infer that Chat is absent from that map's summaries.
+The legacy Chat backend is retained for API compatibility and project removal
+safety, not advertised as a workspace mode. Removing its native GUI does not delete
+histories/preferences/user data or stop existing engines. Old saved Chat modes
+return to the Terminal/VS Code chooser without starting work.
 
 Some names above are prefixes (`task-*` covers `task-execution`, `task-leases`, `task-node-*`; `sentinel*` covers `sentinel`, `sentinel-env`, `sentinel-process`, `sentinel-report`). Check a suite exists with `ls tests | grep <name>`.

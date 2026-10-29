@@ -95,7 +95,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('every feature script registers and the app shell renders', () => {
-    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelProjectTools', 'CitadelGatewaySettings', 'CitadelBrowserEditor', 'CitadelChat', 'CitadelTerminalImages']) {
+    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelProjectTools', 'CitadelGatewaySettings', 'CitadelBrowserEditor', 'CitadelTerminalImages']) {
       assert.equal(typeof w[name], 'object', `window.${name} is missing`);
     }
     assert.ok(w.document.querySelector('.nav-item'), 'the sidebar should render after sign-in');
@@ -206,40 +206,39 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.ok(w.document.getElementById('projects-system-open'));
   });
 
-  test('runtime uses read-only activity, not saved mode or history, and isolates scope', async () => {
+  test('runtime uses read-only editor status, not saved mode or history, and isolates scope', async () => {
     const isolated = new JSDOM('', { runScripts: 'dangerously', url: base });
     const win = isolated.window;
     try {
       win.eval(fs.readFileSync(path.join(ROOT, 'public/js/project-tools.js'), 'utf8'));
       const tools = win.CitadelProjectTools;
       const state = { user: { id: 'alice', role: 'admin' }, activeHostId: 'local', hostIdentity: { instanceId: 'one' }, projects: [{ id: 'a' }, { id: 'b' }] };
-      let running = false, editor = false, finish;
+      let editor = false, finish;
       const calls = [];
       tools.init({ state, escapeHtml: String, renderProjectsView() {}, showToast() {}, openWorkspace() {}, api: async url => {
         calls.push(url);
-        if (url === '/api/editor') return { editor: { running: editor } };
         if (finish === true) return new Promise(resolve => { finish = resolve; });
-        return { running: running && url.includes('/a/') };
+        return { editor: { running: editor } };
       } });
       tools.workspacePreference('a', { mode: 'chat', chatSessionId: 'retained', editorOpened: true });
       await tools.refreshRuntime();
-      assert.equal(tools.projectRuntime('a').chat, false);
       assert.equal(tools.projectRuntime('a').vscode, false);
-      running = true; editor = true;
+      assert.equal(tools.projectRuntime('a').editor, false);
+      editor = true;
       tools.workspacePreference('a', { editorOpened: true });
       await tools.refreshRuntime();
-      assert.equal(tools.projectRuntime('a').chat, true);
       assert.equal(tools.projectRuntime('a').vscode, true);
       assert.equal(tools.projectRuntime('b').vscode, false, 'shared process does not open every project');
-      assert.ok(calls.every(url => url === '/api/editor' || url.endsWith('/chat/activity')));
+      assert.ok(calls.length > 0 && calls.every(url => url === '/api/editor'), 'runtime never queries retired Chat activity');
+      assert.equal(Object.hasOwn(tools.projectRuntime('a'), 'chat'), false);
       state.user = { id: 'bob', role: 'admin' };
-      assert.equal(tools.projectRuntime('a').chat, undefined);
+      assert.equal(tools.projectRuntime('a').editor, undefined);
       state.user = { id: 'alice', role: 'admin' };
       finish = true;
       const pending = tools.refreshRuntime(); await sleep(0);
       tools.reset(); state.activeHostId = 'peer';
-      finish({ running: true }); await pending;
-      assert.equal(tools.projectRuntime('a').chat, undefined);
+      finish({ editor: { running: true } }); await pending;
+      assert.equal(tools.projectRuntime('a').editor, undefined);
     } finally { win.close(); }
   });
 
@@ -494,15 +493,18 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   test('project removal preserves files by default and disk deletion requires the exact path', async () => {
     const originalFetch = w.fetch, calls = [];
     const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
-    let running = false;
+    let running = false, backendBusy = false, blockedRemovals = 0;
     w.fetch = (url, opts = {}) => {
       url = String(url);
       if (opts.method === 'DELETE' && url.startsWith('/api/projects/')) {
+        if (backendBusy) {
+          blockedRemovals++;
+          return Promise.resolve({ ok: false, status: 409, json: async () => ({ error: 'Stop active project work before removal.' }) });
+        }
         calls.push(url); return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
       }
       if (url === '/api/editor') return Promise.resolve({ ok: true, json: async () => ({ editor: { running: false } }) });
-      if (url.endsWith('/chat/activity')) return Promise.resolve({ ok: true, json: async () => ({ running }) });
-      if (url === '/api/terminals') return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      if (url === '/api/terminals') return Promise.resolve({ ok: true, json: async () => ({ sessions: running ? [{ id: 'busy-project', project_id: projectId, isAlive: true }] : [] }) });
       return originalFetch(url, opts);
     };
     const action = label => {
@@ -518,8 +520,16 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       running = true;
       action('Remove from Citadel…');
       w.document.getElementById('modal-confirm-btn').click(); await sleep(60);
-      assert.equal(calls.length, 0, 'running Chat blocks removal');
+      assert.equal(calls.length, 0, 'running project terminals block removal');
       w.document.getElementById('modal-cancel-btn').click(); running = false;
+      backendBusy = true;
+      action('Remove from Citadel…');
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(60);
+      assert.equal(blockedRemovals, 1, 'backend still rejects active work not tracked by the frontend');
+      assert.equal(calls.length, 0);
+      assert.ok(w.document.getElementById('modal-confirm-btn'), 'server refusal keeps the confirmation open');
+      assert.match(w.document.getElementById('toast-root').textContent, /Stop active project work/);
+      w.document.getElementById('modal-cancel-btn').click(); backendBusy = false;
       action('Remove from Citadel…');
       w.document.getElementById('modal-confirm-btn').click(); await sleep(150);
       assert.ok(calls[0].endsWith('deleteFiles=false'));
@@ -585,76 +595,55 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
-  test('native Chat entry preserves the terminal and shell without OpenCode GUI controls', async () => {
+  test('retired native Chat entry points and OpenCode GUI controls are absent', () => {
+    assert.equal(w.CitadelChat, undefined);
+    assert.equal(w.CitadelProjectTools.showChat, undefined);
+    assert.equal(w.document.querySelector('script[src^="/js/chat.js"]'), null);
+    assert.equal(w.document.querySelector('[data-view="chat"], [data-workspace-mode="chat"], #ws-chat-btn, .chat-panel'), null);
+    const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
+    w.document.querySelector(`.proj-menu-btn[data-project-id="${projectId}"]`).click();
+    assert.equal([...w.document.querySelectorAll('.ctx-item')].some(item => item.textContent.trim() === 'Chat'), false);
+    w.document.body.click();
+    assert.equal(w.CitadelBrowserEditor.openCode, undefined);
+    assert.equal(w.CitadelProjectTools.showOpenCode, undefined);
+    assert.equal(w.document.getElementById('ws-opencode-btn'), null);
+    for (const file of ['app.js', 'browser-editor.js', 'project-tools.js']) assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'public/js', file), 'utf8'), /CitadelChat|opencode-web|openCode\(/);
+  });
+
+  test('workspace remembers VS Code, keeps mounted terminals and ignores late terminal lists outside Terminal', async () => {
     const originalFetch = w.fetch;
+    const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
+    w.CitadelProjectTools.workspacePreference(projectId, { mode: 'vscode' });
+    let creates = 0, finishTerminals;
     w.fetch = (url, opts = {}) => {
-      if (String(url).includes('/api/terminals') && opts.method === 'POST') return Promise.reject(new Error('Terminal creation disabled in UI fixture'));
-      if (String(url) === '/api/chat/status') return Promise.resolve({ ok: true, json: async () => ({ installed: false, ready: false, error: '<img src=x onerror=alert(1)> Install OpenCode' }) });
+      if (String(url).includes('/api/terminals?projectId=') && !opts.method) return new Promise(resolve => { finishTerminals = () => resolve({ ok: true, json: async () => ({ sessions: [], tmuxAvailable: false }) }); });
+      if (String(url).includes('/api/terminals') && opts.method === 'POST') { creates++; return Promise.reject(new Error('Fixture terminal disabled')); }
+      if (String(url) === '/api/editor') return Promise.resolve({ ok: true, json: async () => ({ editor: { installed: false, running: false } }) });
       return originalFetch(url, opts);
     };
     try {
-      w.document.querySelector('.open-workspace-btn').click(); await sleep(700);
-      const viewport = w.document.getElementById('terminal-viewport');
-      const workspace = w.document.querySelector('.workspace-container');
-      w.document.getElementById('ws-close-mode').click();
-      w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(30);
-      assert.ok(w.document.querySelector('.chat-panel'));
-      assert.equal(w.document.querySelector('.chat-panel iframe'), null);
-      assert.equal(w.document.querySelector('.chat-panel img'), null);
-      assert.match(w.document.querySelector('.chat-notices').textContent, /Install OpenCode/);
-      assert.equal(w.document.querySelector('.chat-notices').hidden, false);
-      assert.equal(w.document.querySelector('.chat-header'), null);
-      assert.ok(w.document.querySelector('.chat-composer .chat-notices'));
-      assert.equal(workspace.hasAttribute('inert'), true);
-      assert.equal(w.getComputedStyle(workspace).visibility, 'hidden');
+      w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
+      assert.ok(w.document.querySelector('.browser-editor-embedded'));
+      assert.ok(w.document.querySelector('.top-bar-lead #ws-close-mode'));
+      assert.equal(creates, 0);
       assert.equal(w.getComputedStyle(w.document.querySelector('.sidebar')).visibility, 'visible');
       assert.equal(w.getComputedStyle(w.document.querySelector('.top-bar')).visibility, 'visible');
       w.document.getElementById('mobile-menu-btn').click();
       assert.equal(w.document.querySelector('.sidebar').classList.contains('desktop-folded'), true);
       assert.equal(w.document.getElementById('mobile-menu-btn').getAttribute('aria-expanded'), 'false');
       w.document.getElementById('mobile-menu-btn').click();
-      w.CitadelChat.close();
-      assert.equal(w.document.getElementById('terminal-viewport'), viewport);
-      assert.equal(viewport.isConnected, true);
-      assert.equal(workspace.hasAttribute('inert'), false);
-      assert.equal(w.CitadelBrowserEditor.openCode, undefined);
-      assert.equal(w.CitadelProjectTools.showOpenCode, undefined);
-      assert.equal(w.document.getElementById('ws-opencode-btn'), null);
-      for (const file of ['app.js', 'browser-editor.js', 'project-tools.js']) assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'public/js', file), 'utf8'), /opencode-web|openCode\(/);
-    } finally {
-      w.CitadelChat.close(); w.fetch = originalFetch;
-      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
-    }
-    assert.deepEqual(errors, []);
-  });
-
-  test('workspace remembers Chat on return, keeps mounted terminals and does not create on Chat entry', async () => {
-    const originalFetch = w.fetch;
-    let creates = 0, finishTerminals;
-    w.fetch = (url, opts = {}) => {
-      if (String(url).includes('/api/terminals?projectId=') && !opts.method) return new Promise(resolve => { finishTerminals = () => resolve({ ok: true, json: async () => ({ sessions: [], tmuxAvailable: false }) }); });
-      if (String(url).includes('/api/terminals') && opts.method === 'POST') { creates++; return Promise.reject(new Error('Fixture terminal disabled')); }
-      if (String(url) === '/api/chat/status') return Promise.resolve({ ok: true, json: async () => ({ ready: false, error: 'Fixture gateway unavailable' }) });
-      return originalFetch(url, opts);
-    };
-    try {
-      w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
-      assert.ok(w.document.querySelector('.chat-panel'));
-      assert.ok(w.document.querySelector('#top-bar-actions #ws-close-mode'));
-      assert.equal(creates, 0);
-      const input = w.document.querySelector('.chat-input'); input.value = 'project draft';
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
       w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
-      assert.equal(w.document.querySelector('.chat-input').value, 'project draft');
+      assert.ok(w.document.querySelector('.browser-editor-embedded'));
       assert.equal(creates, 0);
       w.document.getElementById('ws-close-mode').click();
       w.document.querySelector('[data-workspace-mode="terminal"]').click(); await sleep(400);
       const viewport = w.document.getElementById('terminal-viewport');
       w.document.getElementById('ws-close-mode').click();
-      w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(0);
+      w.document.querySelector('[data-workspace-mode="vscode"]').click(); await sleep(0);
       assert.equal(typeof finishTerminals, 'function');
       finishTerminals(); await sleep(50);
-      assert.equal(creates, 0, 'late empty terminal list cannot spawn a shell in Chat');
+      assert.equal(creates, 0, 'late empty terminal list cannot spawn a shell in VS Code');
       w.document.getElementById('ws-close-mode').click();
       w.document.querySelector('[data-workspace-mode="terminal"]').click(); await sleep(100);
       const mountedViewport = w.document.getElementById('terminal-viewport');
@@ -662,8 +651,10 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       const before = creates;
       for (let i = 0; i < 3; i++) {
         w.document.getElementById('ws-close-mode').click();
-        w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(0);
+        w.document.querySelector('[data-workspace-mode="vscode"]').click(); await sleep(0);
         assert.equal(w.document.getElementById('ws-close-mode').closest('[inert]'), null);
+        assert.equal(w.document.getElementById('terminal-viewport'), mountedViewport);
+        assert.equal(mountedViewport.isConnected, true);
         w.document.getElementById('ws-close-mode').click();
         w.document.querySelector('[data-workspace-mode="terminal"]').click();
         assert.equal(w.document.getElementById('terminal-viewport'), mountedViewport);
@@ -671,21 +662,22 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.notEqual(mountedViewport, viewport);
       assert.equal(creates, before);
       w.document.getElementById('ws-close-mode').click();
-      w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(0);
-      assert.equal(w.document.querySelector('.chat-back'), null);
+      w.document.querySelector('[data-workspace-mode="vscode"]').click(); await sleep(0);
+      assert.equal(w.document.getElementById('editor-back'), null);
       w.document.getElementById('ws-close-mode').click();
       assert.ok(w.document.querySelector('.workspace-chooser'));
       assert.equal(w.document.getElementById('terminal-viewport'), mountedViewport);
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
       w.document.querySelector('.open-workspace-btn').click(); await sleep(500);
-      assert.equal(w.document.querySelector('.chat-panel'), null);
+      assert.ok(w.document.querySelector('.workspace-chooser'));
+      assert.equal(w.document.querySelector('.browser-editor'), null);
     } finally {
-      w.CitadelChat.close(); w.fetch = originalFetch;
+      w.fetch = originalFetch;
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
     }
   });
 
-  test('workspace chooser, sidebar modes and remembered VS Code share the embedded workspace lifecycle', async () => {
+  test('legacy Chat preference falls back to the two-mode chooser and preserves workspace lifecycle', async () => {
     const originalFetch = w.fetch;
     const calls = [];
     let finishEditor;
@@ -693,13 +685,12 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       calls.push({ url: String(url), method: opts.method || 'GET' });
       if (String(url) === '/api/editor') return Promise.resolve({ ok: true, json: async () => ({ editor: { installed: true, running: true } }) });
       if (String(url).endsWith('/editor') && opts.method === 'POST') return new Promise(resolve => { finishEditor = () => resolve({ ok: true, json: async () => ({ url: `/editor/${projectId}/?folder=test` }) }); });
-      if (String(url) === '/api/chat/status') return Promise.resolve({ ok: true, json: async () => ({ ready: false, error: 'Fixture gateway unavailable' }) });
       if (String(url) === '/api/terminals' && opts.method === 'POST') return Promise.reject(new Error('Fixture terminal disabled'));
       return originalFetch(url, opts);
     };
     const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
     const tools = w.CitadelProjectTools;
-    tools.workspacePreference(projectId, { mode: 'invalid', terminalId: 'saved-terminal', chatSessionId: 'saved-chat' });
+    tools.workspacePreference(projectId, { mode: 'chat', terminalId: 'saved-terminal', chatSessionId: 'saved-chat' });
     const enter = async () => { w.document.querySelector('.open-workspace-btn').click(); await sleep(350); };
     const leave = async () => {
       const close = w.document.getElementById('ws-close-mode');
@@ -712,31 +703,36 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     const sidebar = label => {
       const entry = w.document.querySelector(`[data-ws-menu-context="${projectId}"]`);
       if (!entry) {
-        const mode = { 'VS Code': 'vscode', Chat: 'chat', 'Open terminal': 'terminal' }[label];
+        const mode = { 'VS Code': 'vscode', 'Open terminal': 'terminal' }[label];
         w.document.querySelector(`[data-workspace-mode="${mode}"]`).click();
         return;
       }
       entry.click();
+      assert.equal([...w.document.querySelectorAll('.ctx-item')].some(item => item.textContent.trim() === 'Chat'), false);
       const button = [...w.document.querySelectorAll('.ctx-item')].find(item => item.textContent === label);
       assert.ok(button); button.click();
     };
     try {
       await enter();
-      assert.equal(w.document.querySelectorAll('.workspace-mode-card').length, 3);
+      assert.ok(w.document.querySelector('.workspace-chooser'), 'retired saved mode opens the chooser instead of launching a service');
+      assert.deepEqual([...w.document.querySelectorAll('[data-workspace-mode]')].map(button => button.dataset.workspaceMode), ['terminal', 'vscode']);
+      assert.equal(w.document.querySelectorAll('.workspace-mode-card').length, 2);
       assert.equal(w.document.getElementById('ws-close-mode'), null);
-      for (const selector of ['.workspace-modes', '#ws-terminal-mode', '#ws-chat-btn', '#ws-vscode-mode']) assert.equal(w.document.querySelector(selector), null);
-      assert.equal(w.document.activeElement.dataset.workspaceMode, 'chat');
-      assert.equal(calls.some(call => call.method !== 'GET' || call.url === '/api/chat/status' || /\/chat\/sessions\//.test(call.url)), false);
-      assert.ok(calls.some(call => call.url.endsWith('/chat/activity')));
-      assert.equal(w.document.querySelectorAll('[data-stop-mode]').length, 3);
+      for (const selector of ['.workspace-modes', '#ws-terminal-mode', '#ws-chat-btn', '#ws-vscode-mode', '.chat-panel']) assert.equal(w.document.querySelector(selector), null);
+      assert.equal(w.document.activeElement.dataset.workspaceMode, 'terminal');
+      assert.equal(calls.some(call => call.method !== 'GET' || /\/chat(?:\/|$)/.test(call.url)), false);
+      assert.equal(w.document.querySelectorAll('[data-stop-mode]').length, 2);
       assert.equal(w.document.querySelector('button button'), null);
       sidebar('VS Code'); await sleep(30);
       assert.equal(tools.workspacePreference(projectId).mode, 'vscode');
-      const close = w.document.querySelector('#top-bar-actions #ws-close-mode');
+      const close = w.document.querySelector('.top-bar-lead #ws-close-mode');
       assert.ok(close);
       assert.equal(close.getAttribute('aria-label'), 'Choose mode');
       assert.equal(close.title, 'Choose mode');
       assert.ok(close.querySelector('svg[aria-hidden="true"]'));
+      assert.equal(close.textContent.trim(), '', 'mode action is an arrow with no visible label');
+      assert.equal(w.document.getElementById('mobile-menu-btn').nextElementSibling, close, 'mode action sits directly beside the sidebar toggle');
+      assert.equal(w.document.querySelector('#top-bar-actions #ws-close-mode'), null);
       assert.match(w.document.getElementById('top-bar-title').textContent, /ui-discovered/);
       assert.ok(w.document.querySelector('.workspace-surface > .browser-editor-embedded'));
       w.document.getElementById('ws-close-mode').click();
@@ -745,7 +741,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.ok(w.document.querySelector('.workspace-chooser'));
       assert.equal(tools.workspacePreference(projectId).mode, null);
       assert.equal(w.document.getElementById('ws-close-mode'), null);
-      assert.equal(w.document.activeElement.dataset.workspaceMode, 'chat');
+      assert.equal(w.document.activeElement.dataset.workspaceMode, 'terminal');
       assert.equal(tools.workspacePreference(projectId).terminalId, 'saved-terminal');
       assert.equal(tools.workspacePreference(projectId).chatSessionId, 'saved-chat');
       w.document.querySelector('[data-workspace-mode="vscode"]').click(); await sleep(20);
@@ -755,14 +751,10 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await leave(); assert.equal(w.document.querySelector('.browser-editor'), null);
       await enter(); await sleep(20); finishEditor(); await sleep(20);
       assert.equal(tools.workspacePreference(projectId).mode, 'vscode');
-      assert.ok(w.document.querySelector('#top-bar-actions #ws-close-mode'));
+      assert.ok(w.document.querySelector('.top-bar-lead #ws-close-mode'));
       assert.ok(w.document.querySelector('.workspace-surface iframe'));
-      sidebar('Chat'); await sleep(30);
-      assert.equal(w.document.querySelector('.browser-editor'), null);
-      assert.ok(w.document.querySelector('.chat-panel'));
-      await leave(); await enter();
-      assert.ok(w.document.querySelector('.chat-panel'));
       sidebar('Open terminal'); await sleep(100);
+      assert.equal(w.document.querySelector('.browser-editor'), null);
       const viewport = w.document.getElementById('terminal-viewport');
       assert.ok(viewport);
       const creates = calls.filter(call => call.url === '/api/terminals' && call.method === 'POST').length;
@@ -774,7 +766,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(calls.filter(call => call.url === '/api/terminals' && call.method === 'POST').length, creates);
       await leave(); await enter();
       assert.equal(tools.workspacePreference(projectId).mode, 'terminal');
-      assert.ok(w.document.querySelector('#top-bar-actions #ws-close-mode'));
+      assert.ok(w.document.querySelector('.top-bar-lead #ws-close-mode'));
       assert.equal(calls.some(call => call.method === 'DELETE' || call.url.endsWith('/cancel')), false);
       w.document.getElementById('ws-close-mode').click();
       await leave(); await enter();
@@ -788,15 +780,13 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   test('chooser stops are separate, confirmed, scoped and never launch modes', async () => {
     const originalFetch = w.fetch, calls = [];
     const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
-    let alive = true, chatRunning = true, editorRunning = true, failTerminal = false;
+    let alive = true, editorRunning = true, failTerminal = false;
     w.CitadelProjectTools.workspacePreference(projectId, { mode: null });
     w.fetch = (url, opts = {}) => {
       url = String(url);
       const method = opts.method || 'GET'; calls.push({ url, method });
       const response = data => Promise.resolve({ ok: true, json: async () => data });
       if (url.startsWith('/api/terminals?projectId=')) return response({ sessions: [{ id: 'own-stop', project_id: projectId, isAlive: alive }, { id: 'other-stop', project_id: 'other-project', isAlive: true }, { id: 'dead-stop', project_id: projectId, isAlive: false }] });
-      if (url.endsWith('/chat/activity')) return response({ running: chatRunning });
-      if (url.endsWith('/chat/stop')) { chatRunning = false; return response({ stopped: true }); }
       if (url === '/api/editor') { if (method === 'DELETE') editorRunning = false; return response({ editor: { installed: true, running: editorRunning } }); }
       if (url === '/api/terminals/own-stop' && method === 'DELETE') {
         if (failTerminal) return Promise.reject(new Error('Fixture stop failed'));
@@ -829,24 +819,32 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       stop('vscode').click(); await sleep(20);
       w.document.getElementById('modal-confirm-btn').click(); await sleep(30);
       assert.equal(stop('vscode').disabled, true);
-      stop('chat').click(); await sleep(20);
-      w.document.getElementById('modal-confirm-btn').click(); await sleep(30);
-      assert.equal(stop('chat').disabled, true);
-      assert.ok(calls.some(c => c.url === `/api/projects/${projectId}/chat/stop` && c.method === 'POST'));
-      assert.equal(calls.some(c => c.method === 'POST' && !c.url.endsWith('/chat/stop')), false);
-      assert.equal(calls.some(c => /\/chat\/sessions\//.test(c.url)), false);
+      assert.equal(stop('chat'), null);
+      assert.equal(calls.some(c => c.method === 'POST' || /\/chat(?:\/|$)/.test(c.url)), false);
       assert.ok(w.document.querySelector('.workspace-chooser'));
+      editorRunning = true;
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+      w.document.querySelector('.open-workspace-btn').click(); await sleep(400);
+      const staleStop = stop('vscode');
+      assert.equal(staleStop.disabled, false);
       let finishStatus;
       const fixtureFetch = w.fetch;
-      w.fetch = (url, opts) => String(url).endsWith('/chat/activity') ? new Promise(resolve => { finishStatus = () => resolve({ ok: true, json: async () => ({ running: true }) }); }) : fixtureFetch(url, opts);
-      w.document.querySelector('[data-workspace-mode="chat"]').click(); await sleep(20);
-      w.document.getElementById('ws-close-mode').click(); await sleep(20);
-      const staleStop = stop('chat');
+      w.fetch = (url, opts = {}) => {
+        if (String(url) === '/api/editor' && !opts.method && !finishStatus) {
+          return new Promise(resolve => { finishStatus = () => resolve({ ok: true, json: async () => ({ editor: { running: true } }) }); });
+        }
+        return fixtureFetch(url, opts);
+      };
+      staleStop.click(); await sleep(20);
+      assert.equal(typeof finishStatus, 'function');
       const stopCalls = calls.filter(c => c.method !== 'GET').length;
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
       finishStatus(); await sleep(20);
+      staleStop.disabled = false;
+      const reads = calls.filter(c => c.url === '/api/editor').length;
       staleStop.click(); await sleep(20);
-      assert.equal(w.document.getElementById('active-modal-overlay'), null);
+      assert.equal(w.document.getElementById('active-modal-overlay'), null, 'late status cannot open a stop confirmation after navigation');
+      assert.equal(calls.filter(c => c.url === '/api/editor').length, reads, 'detached chooser action cannot even recheck activity');
       assert.equal(calls.filter(c => c.method !== 'GET').length, stopCalls);
     } finally {
       w.document.getElementById('modal-cancel-btn')?.click();
@@ -970,416 +968,43 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     } finally { win.CitadelBrowserEditor.close(); isolated.window.close(); }
   });
 
-  test('workspace preferences and Chat drafts isolate project, owner and host', async () => {
-    const isolated = new JSDOM('<main id="main-content"></main>', { runScripts: 'dangerously', url: base });
+  test('workspace preferences isolate project, owner and host while preserving saved selections', () => {
+    const isolated = new JSDOM('', { runScripts: 'dangerously', url: base });
     const win = isolated.window;
     try {
-      for (const file of ['project-tools.js', 'chat.js']) win.eval(fs.readFileSync(path.join(ROOT, 'public/js', file), 'utf8'));
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/project-tools.js'), 'utf8'));
       const state = { activeHostId: 'local', user: { id: 'alice' }, hostIdentity: { instanceId: 'one' } };
       const tools = win.CitadelProjectTools;
       const launches = [];
       tools.init({ state, api() {}, escapeHtml() {}, renderProjectsView() {}, showToast() {}, openWorkspace: (...args) => launches.push(args) });
-      tools.showEditor({ id: 'editor' }); tools.showChat({ id: 'a' });
-      assert.deepEqual(launches, [['editor', 'vscode'], ['a', 'chat']]);
-      tools.workspacePreference('a', { mode: 'chat', terminalId: 'term-a' });
+      tools.showEditor({ id: 'editor' });
+      assert.deepEqual(launches, [['editor', 'vscode']]);
+      assert.equal(tools.showChat, undefined);
+      tools.workspacePreference('a', { mode: 'terminal', terminalId: 'term-a' });
       tools.workspacePreference('b', { mode: 'terminal', terminalId: 'term-b' });
-      tools.workspacePreference('editor', { mode: 'vscode' });
-      assert.equal(tools.workspacePreference('a').mode, 'chat');
+      tools.workspacePreference('editor', { mode: 'vscode', editorOpened: true });
+      tools.workspacePreference('legacy', { mode: 'chat', chatSessionId: 'saved-history' });
+      assert.equal(tools.workspacePreference('a').terminalId, 'term-a');
       assert.equal(tools.workspacePreference('b').terminalId, 'term-b');
-      win.CitadelChat.init({ state, showToast() {}, openSettingsAt() {}, workspacePreference: tools.workspacePreference, api: async url => {
-        if (url.endsWith('/status')) return { ready: true };
-        if (url.endsWith('/sessions')) return { sessions: [{ id: 'latest' }, { id: 'older' }] };
-        return { status: 'busy', messages: [] };
-      } });
-      const open = async id => { await win.CitadelChat.open({ id, name: id }); await sleep(0); };
-      await open('a');
-      win.document.querySelector('.chat-input').value = 'private draft a';
-      win.document.querySelector('.chat-role').value = 'plan';
-      const history = win.document.querySelector('.chat-sessions'); history.value = 'older'; history.dispatchEvent(new win.Event('change'));
-      await open('b'); assert.equal(win.document.querySelector('.chat-input').value, '');
-      win.document.querySelector('.chat-input').value = 'private draft b';
-      await open('a'); assert.equal(win.document.querySelector('.chat-input').value, 'private draft a');
-      assert.equal(win.document.querySelector('.chat-role').value, 'plan');
-      assert.equal(win.document.querySelector('.chat-sessions').value, 'older');
       for (const field of ['user', 'activeHostId', 'hostIdentity']) {
         const original = state[field];
         state[field] = field === 'user' ? { id: 'bob' } : field === 'activeHostId' ? 'peer' : { instanceId: 'two' };
         assert.equal(tools.workspacePreference('a').mode, undefined);
         assert.equal(tools.workspacePreference('editor').mode, undefined);
-        if (field !== 'activeHostId') { await open('a'); assert.equal(win.document.querySelector('.chat-input').value, ''); }
+        assert.equal(tools.workspacePreference('legacy').chatSessionId, undefined);
         state[field] = original;
       }
-      await open('b'); assert.equal(win.document.querySelector('.chat-input').value, 'private draft b');
-      assert.ok([...Array(win.localStorage.length).keys()].every(index => !win.localStorage.getItem(win.localStorage.key(index)).includes('private draft')));
-      win.CitadelChat.reset(); tools.reset();
-      assert.equal(win.document.querySelector('.chat-panel'), null);
-      await open('a'); assert.equal(win.document.querySelector('.chat-input').value, '', 'logout clears drafts even for the same owner');
-      assert.equal(tools.workspacePreference('a').mode, 'chat', 'non-secret selections survive logout');
-      win.CitadelChat.reset();
-      let finishStatus;
-      win.CitadelChat.init({ state, showToast() {}, openSettingsAt() {}, api: () => new Promise(resolve => { finishStatus = resolve; }) });
-      const opening = win.CitadelChat.open({ id: 'a', name: 'a' });
-      win.CitadelChat.reset(); state.user = { id: 'bob' };
-      finishStatus({ ready: true }); await opening;
-      assert.equal(win.document.querySelector('.chat-panel'), null, 'late status cannot reopen Chat after logout');
-    } finally { win.CitadelChat.close(); isolated.window.close(); }
+      tools.reset();
+      assert.equal(tools.workspacePreference('a').mode, 'terminal', 'non-secret selections survive logout');
+      assert.equal(tools.workspacePreference('editor').mode, 'vscode');
+      assert.equal(tools.workspacePreference('legacy').chatSessionId, 'saved-history', 'retiring the GUI does not erase history references');
+    } finally { isolated.window.close(); }
   });
 
-  test('Chat sessions, bounded named streaming, send, Stop and explicit approvals', async () => {
-    const isolated = new JSDOM('<main id="main-content"><div id="terminal">Mounted terminal</div></main>', { runScripts: 'dangerously', url: base });
-    const win = isolated.window;
-    try {
-      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/chat.js'), 'utf8'));
-      const calls = [], sources = [], notices = [], settings = [];
-      const state = { activeHostId: 'local' };
-      let snapshot = { session: { id: 'ses_1', title: '<img src=x>' }, messages: [], status: 'idle', permissions: [], questions: [] };
-      let deferred, block = false, inflight = 0, maxInflight = 0;
-      win.EventSource = class {
-        constructor(url) { this.url = url; this.listeners = {}; sources.push(this); }
-        addEventListener(name, handler) { this.listeners[name] = handler; }
-        close() { this.closed = true; }
-        update() { this.listeners.update(); }
-      };
-      win.CitadelChat.init({ state, showToast: message => notices.push(message), openSettingsAt: section => settings.push(section), api: async (url, opts = {}) => {
-        calls.push({ url, ...opts });
-        if (url === '/api/chat/status') return { installed: true, ready: true };
-        if (url.endsWith('/sessions')) return opts.method === 'POST' ? { session: { id: 'ses_2', title: 'New chat' } } : { sessions: [{ id: 'ses_1', title: '<script>bad()</script>' }] };
-        if (opts.method === 'POST') return { accepted: true };
-        inflight++; maxInflight = Math.max(maxInflight, inflight);
-        const result = block ? await new Promise(resolve => { deferred = resolve; }) : snapshot;
-        inflight--; return result;
-      } });
-      const query = selector => win.document.querySelector(selector);
-      const click = text => {
-        const target = [...win.document.querySelectorAll('button')].find(element => element.textContent === text);
-        assert.ok(target, `missing ${text}`); assert.equal(target.disabled, false, `${text} disabled`); target.click();
-      };
-      const update = async () => { sources.at(-1).update(); await sleep(300); };
-      await win.CitadelChat.open({ id: 'project', name: '<svg onload=bad()>' }); await sleep(10);
-      assert.equal(sources[0].url, '/api/projects/project/chat/sessions/ses_1/events');
-      assert.equal(query('svg, script, img, iframe'), null);
-      assert.equal(query('#terminal').isConnected, true);
-      assert.equal(query('#terminal').hasAttribute('inert'), true);
-      assert.equal(calls.filter(call => call.method === 'POST').length, 0);
-      assert.match(query('.chat-welcome h2').textContent, /help you build/);
-      assert.equal(query('.chat-suggestions').children.length, 4);
-      assert.ok(query('.chat-box textarea'));
-      assert.equal(query('.chat-header, .chat-title'), null);
-      assert.equal(query('.chat-panel').firstElementChild, query('.chat-log'));
-      assert.equal(query('.chat-notices').hidden, true);
-      assert.equal(query('.chat-notices p').textContent, '');
-      assert.equal(query('.chat-menu').open, false);
-      assert.equal(query('.chat-menu summary').textContent, 'Chat options');
-      assert.equal(query('.chat-menu select').getAttribute('aria-label'), 'Chat session history');
-      assert.ok(query('.chat-composer .chat-menu .chat-back'));
-      const postsBeforeSuggestion = calls.filter(call => call.method === 'POST').length;
-      query('.chat-suggestion').click();
-      assert.match(query('textarea').value, /project is structured/);
-      assert.equal(win.document.activeElement, query('textarea'));
-      assert.equal(calls.filter(call => call.method === 'POST').length, postsBeforeSuggestion);
-      query('.chat-menu summary').click();
-      assert.equal(query('.chat-menu').open, true);
-      click('New chat'); await sleep(10);
-      assert.equal(query('.chat-menu').open, false);
-      assert.equal(sources[0].closed, true);
-      assert.equal(query('.chat-sessions').value, 'ses_2');
-      const input = query('textarea'); input.value = 'hello\nworld'; input.dispatchEvent(new win.Event('input'));
-      input.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      assert.equal(calls.filter(call => call.url.endsWith('/messages')).length, 0);
-      query('[aria-label="Agent mode"]').value = 'plan';
-      input.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })); await sleep(10);
-      const sent = calls.find(call => call.url.endsWith('/messages'));
-      assert.equal(sent.body.text, 'hello\nworld'); assert.equal(sent.body.role, 'plan');
-      assert.match(sent.body.requestId, /^[a-f0-9-]{36}$/);
-      assert.equal(input.value, '');
-      snapshot = { ...snapshot, status: 'busy', messages: [{ role: 'assistant', parts: [{ type: 'text', text: '<img src=x onerror=bad()>\n```html\n<script>bad()</script>\n```' }, { type: 'tool', text: 'bash', state: { status: 'running', input: 'SECRET', output: 'SECRET' } }] }], permissions: [{ id: 'perm_1', permission: '<svg>', patterns: ['<img>'] }], questions: [{ id: 'q_1', questions: [{ header: 'Choices', question: '<script>unsafe</script>', multiple: true, custom: true, options: [{ label: 'A', description: '<img>' }, { label: 'B' }] }, { header: 'Single', question: 'Pick', multiple: false, custom: false, options: [{ label: 'C' }, { label: 'D' }] }] }] };
-      await update();
-      assert.equal(query('img, script, svg, iframe'), null);
-      assert.match(query('pre code').textContent, /<script>bad/);
-      assert.doesNotMatch(query('.chat-log').textContent, /SECRET/);
-      assert.equal(calls.filter(call => /permissions|questions/.test(call.url)).length, 0);
-      click('Allow once'); await sleep(10);
-      assert.equal(calls.at(-1).body.reply, 'once');
-      await sleep(280); click('Reject'); await sleep(10);
-      assert.equal(calls.at(-1).body.reply, 'reject');
-      const fields = win.document.querySelectorAll('fieldset');
-      fields[0].querySelectorAll('input[type="checkbox"]')[0].checked = true;
-      fields[0].querySelectorAll('input[type="checkbox"]')[1].checked = true;
-      const custom = fields[0].querySelector('input[type="text"]'); custom.value = 'Custom'; custom.dispatchEvent(new win.Event('input'));
-      fields[1].querySelector('input').checked = true;
-      await sleep(280); click('Answer'); await sleep(10);
-      assert.equal(JSON.stringify(calls.at(-1).body), JSON.stringify({ answers: [['A', 'B', 'Custom'], ['C']] }));
-      await sleep(280); click('Reject question'); await sleep(10);
-      assert.ok(calls.at(-1).url.endsWith('/questions/q_1/reject'));
-      await sleep(280); click('Stop'); await sleep(10);
-      assert.ok(calls.at(-1).url.endsWith('/cancel'));
-      await sleep(280);
-      block = true;
-      const before = calls.length;
-      for (let i = 0; i < 100; i++) sources.at(-1).update();
-      await sleep(280);
-      for (let i = 0; i < 100; i++) sources.at(-1).update();
-      assert.equal(calls.length, before + 1);
-      assert.equal(maxInflight, 1);
-      block = false; deferred(snapshot); await sleep(300);
-      assert.equal(calls.length, before + 2);
-      const after = calls.length; await sleep(350); assert.equal(calls.length, after, 'no polling without events');
-      const source = sources.at(-1); source.onerror();
-      assert.notEqual(source.closed, true); assert.match(query('.chat-notices').textContent, /agent may still be running/);
-      assert.equal(query('.chat-notices').hidden, false);
-      const cancellations = calls.filter(call => call.url.endsWith('/cancel')).length;
-      win.CitadelChat.close(); source.update(); await sleep(300);
-      assert.equal(calls.filter(call => call.url.endsWith('/cancel')).length, cancellations);
-      assert.equal(query('#terminal').hasAttribute('inert'), false);
-      assert.equal(query('#terminal').textContent, 'Mounted terminal');
-      assert.equal(query('.chat-panel'), null);
-      state.activeHostId = 'peer'; await win.CitadelChat.open({ id: 'remote', name: 'Remote' });
-      assert.match(notices.at(-1), /machine’s own Citadel panel/);
-      state.activeHostId = 'local'; await win.CitadelChat.open({ id: 'project', name: 'Project' }); await sleep(10);
-      assert.equal(query('.chat-notices').hidden, true);
-      sources.at(-1).onerror();
-      assert.equal(query('.chat-notices').hidden, false);
-      click('Settings'); assert.deepEqual(settings, ['gateway']);
-      click('Reconnect'); await sleep(10);
-      assert.equal(query('.chat-notices').hidden, true);
-      query('.chat-menu summary').click(); click('Choose workspace mode');
-      assert.equal(query('.chat-panel'), null);
-    } finally { win.CitadelChat.close(); isolated.window.close(); }
-  });
-
-  test('Chat resumes the latest server session per project and creates empty projects exactly once', async () => {
-    const isolated = new JSDOM('<main id="main-content"><button id="terminal">Terminal</button></main>', { runScripts: 'dangerously', url: base });
-    const win = isolated.window, calls = [], sources = [];
-    let created, finishCreate, finishList;
-    const projects = {
-      first: [{ id: 'latest', updatedAt: '2026-10-28T12:00:00Z' }, { id: 'older', updatedAt: '2026-10-27T12:00:00Z' }],
-      second: [{ id: 'second-only' }],
-      empty: [],
-      delayed: []
-    };
-    try {
-      win.EventSource = class {
-        constructor(url) { this.url = url; sources.push(this); }
-        addEventListener() {}
-        close() { this.closed = true; }
-      };
-      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/chat.js'), 'utf8'));
-      win.CitadelChat.init({ state: { activeHostId: 'local' }, showToast() {}, openSettingsAt() {}, api: async (url, opts = {}) => {
-        calls.push({ url, ...opts });
-        if (url === '/api/chat/status') return { ready: true };
-        const project = decodeURIComponent(url.split('/')[3]);
-        if (url.endsWith('/sessions')) {
-          if (opts.method === 'POST') {
-            await new Promise(resolve => { finishCreate = resolve; });
-            created = { id: `${project}-new` }; projects[project].unshift(created);
-            return { session: created };
-          }
-          if (project === 'delayed') return new Promise(resolve => { finishList = resolve; });
-          return { sessions: projects[project] };
-        }
-        return { status: 'idle', messages: [] };
-      } });
-      const query = selector => win.document.querySelector(selector);
-      const open = async id => { await win.CitadelChat.open({ id, name: id }); await sleep(0); };
-      await open('first');
-      assert.equal(query('.chat-sessions').value, 'latest');
-      query('.chat-menu summary').click();
-      query('.chat-sessions').value = 'older'; query('.chat-sessions').dispatchEvent(new win.Event('change'));
-      await sleep(0);
-      assert.equal(query('.chat-menu').open, false);
-      assert.equal(query('.chat-sessions').value, 'older');
-      win.CitadelChat.close();
-      await open('first');
-      assert.equal(query('.chat-sessions').value, 'older', 'reopening retains the selected project session');
-      sources.at(-1).onerror();
-      projects.first = [{ id: 'newest' }, ...projects.first];
-      query('.chat-notices button:last-child').click(); await sleep(0);
-      assert.equal(query('.chat-sessions').value, 'older', 'reconnect preserves the selected session when still available');
-      const firstSource = sources.at(-1), beforeSecond = calls.length;
-      await open('second');
-      assert.equal(firstSource.closed, true);
-      assert.equal(query('.chat-sessions').value, 'second-only');
-      assert.ok(calls.slice(beforeSecond).filter(call => call.url !== '/api/chat/status').every(call => call.url.startsWith('/api/projects/second/chat/sessions')));
-      assert.equal(query('.chat-welcome-sub').textContent, 'Working in second');
-      const opening = open('empty'); await sleep(0);
-      assert.equal(query('.chat-new').disabled, true);
-      query('.chat-new').onclick(); query('.chat-notices button:last-child').onclick();
-      assert.equal(calls.filter(call => call.method === 'POST').length, 1);
-      finishCreate(); await opening;
-      assert.equal(query('.chat-sessions').value, 'empty-new');
-      assert.equal(query('.chat-notices').hidden, true);
-      assert.equal(query('.chat-new').disabled, false);
-      assert.equal(sources.at(-1).url, '/api/projects/empty/chat/sessions/empty-new/events');
-      await open('empty');
-      assert.equal(calls.filter(call => call.method === 'POST').length, 1, 'reopening a created project does not create again');
-      projects.empty = [];
-      const staleCreate = open('empty'); await sleep(0);
-      await open('second');
-      const currentSource = sources.at(-1);
-      finishCreate(); await staleCreate;
-      assert.equal(query('.chat-sessions').value, 'second-only');
-      assert.equal(sources.at(-1), currentSource, 'late creation cannot select a session in another project');
-      const staleList = open('delayed'); await sleep(0);
-      await open('first');
-      finishList({ sessions: [] }); await staleList;
-      assert.equal(calls.filter(call => call.method === 'POST' && call.url.includes('/delayed/')).length, 0);
-      assert.equal(query('.chat-sessions').value, 'older');
-      assert.equal(win.localStorage.length, 0);
-    } finally { win.CitadelChat.close(); isolated.window.close(); }
-  });
-
-  test('Chat locks stale send and approvals until recovery snapshots, preserves drafts and keeps explicit Stop', async () => {
-    const isolated = new JSDOM('<main id="main-content"></main>', { runScripts: 'dangerously', url: base });
-    const win = isolated.window, sources = [], calls = [], timers = new Map();
-    let timerId = 0, deferred, actionDeferred, block = false, fail = false, blockAction = false;
-    let snapshot = { status: 'idle', messages: [], permissions: [{ id: 'permission', permission: 'bash' }], questions: [{ id: 'question', questions: [{ question: 'Continue?', options: [{ label: 'Yes' }] }] }] };
-    try {
-      win.setTimeout = run => { timers.set(++timerId, run); return timerId; };
-      win.clearTimeout = id => timers.delete(id);
-      win.EventSource = class {
-        constructor() { this.listeners = {}; sources.push(this); }
-        addEventListener(name, handler) { this.listeners[name] = handler; }
-        close() { this.closed = true; }
-      };
-      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/chat.js'), 'utf8'));
-      win.CitadelChat.init({ state: { activeHostId: 'local' }, showToast() {}, openSettingsAt() {}, api: async (url, opts = {}) => {
-        calls.push({ url, ...opts });
-        if (url.endsWith('/status')) return { ready: true };
-        if (url.endsWith('/sessions')) return { sessions: [{ id: 'one' }] };
-        if (opts.method === 'POST') return blockAction ? new Promise(resolve => { actionDeferred = resolve; }) : { accepted: true };
-        if (block) return new Promise((resolve, reject) => { deferred = { resolve, reject }; });
-        if (fail) throw new Error('Snapshot unavailable');
-        return snapshot;
-      } });
-      const query = selector => win.document.querySelector(selector);
-      const button = text => [...win.document.querySelectorAll('button')].find(element => element.textContent === text);
-      const flush = async () => {
-        const pending = [...timers.values()]; timers.clear();
-        for (const run of pending) run();
-        await sleep(0);
-      };
-      const locked = () => {
-        assert.equal(button('Send').disabled, true);
-        assert.ok([...win.document.querySelectorAll('.chat-prompts button')].every(element => element.disabled));
-        assert.equal(button('Stop').disabled, false, 'explicit cancel remains safe when the last known idle state is stale');
-      };
-      await win.CitadelChat.open({ id: 'project', name: 'Project' }); await sleep(0);
-      const source = sources[0], input = query('textarea');
-      input.value = 'unsent draft'; input.dispatchEvent(new win.Event('input'));
-      assert.equal(button('Send').disabled, false);
-      assert.equal(button('Stop').disabled, true);
-      block = true; source.listeners.update(); await flush();
-      source.onerror(); locked();
-      assert.notEqual(source.closed, true, 'EventSource retains its native reconnect');
-      const before = calls.length;
-      query('.chat-composer').dispatchEvent(new win.Event('submit', { cancelable: true }));
-      button('Allow once').onclick();
-      query('.chat-prompts input').checked = true;
-      query('.chat-prompts form').dispatchEvent(new win.Event('submit', { cancelable: true }));
-      assert.equal(calls.length, before, 'handlers guard stale actions, not just disabled buttons');
-      source.onopen(); locked();
-      deferred.resolve(snapshot); await sleep(0); locked();
-      assert.equal(timers.size, 1, 'recovery queues a fresh snapshot after the pre-disconnect fetch');
-      block = false; await flush();
-      assert.equal(button('Send').disabled, false);
-      assert.equal(button('Allow once').disabled, false);
-      assert.equal(input.value, 'unsent draft');
-      fail = true; source.listeners.update(); await flush(); locked();
-      assert.match(query('.chat-notices').textContent, /Snapshot unavailable/);
-      assert.equal(query('.chat-notices').hidden, false);
-      button('Stop').click(); await sleep(0);
-      assert.ok(calls.at(-1).url.endsWith('/cancel'));
-      await flush(); locked();
-      fail = false; source.listeners.update(); await flush();
-      snapshot = { ...snapshot, status: 'error' };
-      source.listeners.update(); await flush(); locked();
-      assert.equal(query('.chat-notices').hidden, false);
-      assert.match(query('.chat-notices').textContent, /Chat engine error/);
-      snapshot = { ...snapshot, status: 'busy' };
-      source.listeners.update(); await flush();
-      assert.equal(query('.chat-notices').hidden, true);
-      blockAction = true; button('Allow once').click(); await sleep(0);
-      source.onerror(); actionDeferred({ accepted: true }); await sleep(0); locked();
-      assert.equal(button('Allow once').disabled, true, 'action finally cannot unlock disconnected approvals');
-      win.dispatchEvent(new win.Event('offline')); locked();
-      await flush(); locked();
-      blockAction = false; snapshot = { ...snapshot, status: 'idle' };
-      win.dispatchEvent(new win.Event('online')); locked(); await flush();
-      assert.equal(button('Send').disabled, false);
-      block = true;
-      Object.defineProperty(win.document, 'visibilityState', { configurable: true, value: 'visible' });
-      win.document.dispatchEvent(new win.Event('visibilitychange')); locked(); await flush();
-      block = false; deferred.resolve(snapshot); await sleep(0);
-      assert.equal(button('Send').disabled, false, 'mobile resume requires a fresh authoritative snapshot');
-      assert.equal(input.value, 'unsent draft');
-      source.listeners.update(); assert.equal(timers.size, 1);
-      win.CitadelChat.close();
-      assert.equal(source.closed, true);
-      assert.equal(timers.size, 0, 'close clears queued refresh timers');
-      const closedCalls = calls.length;
-      source.onopen(); source.onerror(); source.listeners.update();
-      win.document.dispatchEvent(new win.Event('visibilitychange'));
-      win.dispatchEvent(new win.Event('online')); win.dispatchEvent(new win.Event('offline'));
-      await flush();
-      assert.equal(calls.length, closedCalls);
-      assert.equal(timers.size, 0);
-    } finally { win.CitadelChat.close(); isolated.window.close(); }
-  });
-
-  test('Chat ignores stale snapshots, actions and failures across selection, navigation, host and logout cleanup', async () => {
-    const isolated = new JSDOM('<main id="main-content"><div id="terminal"></div></main>', { runScripts: 'dangerously', url: base });
-    const win = isolated.window;
-    try {
-      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/chat.js'), 'utf8'));
-      const state = { activeHostId: 'local' }, sources = [], pending = [], calls = [];
-      let block = false;
-      win.EventSource = class {
-        constructor() { sources.push(this); }
-        addEventListener(name, handler) { this[name] = handler; }
-        close() { this.closed = true; }
-      };
-      const snapshot = title => ({ session: { title }, status: 'idle', messages: [{ role: 'assistant', parts: [{ type: 'text', text: title }] }], permissions: [], questions: [] });
-      win.CitadelChat.init({ state, showToast() {}, openSettingsAt() {}, api: async (url, opts = {}) => {
-        calls.push({ url, ...opts });
-        if (url.endsWith('/status')) return { installed: true, ready: true };
-        if (url.endsWith('/sessions')) return { sessions: [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }] };
-        if (block) return new Promise((resolve, reject) => pending.push({ resolve, reject }));
-        return snapshot('Current');
-      } });
-      const project = { id: 'project', name: 'Project' };
-      block = true; await win.CitadelChat.open(project); await sleep(10);
-      const stale = pending.shift(), source = sources.at(-1);
-      block = false;
-      const selector = win.document.querySelector('.chat-sessions'); selector.value = 'two'; selector.dispatchEvent(new win.Event('change')); await sleep(10);
-      stale.resolve(snapshot('STALE')); source.update(); await sleep(300);
-      assert.equal(source.closed, true);
-      assert.doesNotMatch(win.document.querySelector('.chat-log').textContent, /STALE/);
-      for (const mode of ['navigation', 'host', 'logout', 'failure']) {
-        win.CitadelChat.close(); block = true; await win.CitadelChat.open(project); await sleep(10);
-        const late = pending.shift(), currentSource = sources.at(-1);
-        if (mode === 'navigation') { win.document.getElementById('main-content').replaceChildren(win.document.createElement('div')); await sleep(10); }
-        else if (mode === 'host') { win.CitadelChat.close(); state.activeHostId = 'peer'; }
-        else win.CitadelChat.close();
-        if (mode === 'failure') late.reject(new Error('Late failure'));
-        else late.resolve(snapshot('STALE'));
-        currentSource.update(); await sleep(300);
-        assert.equal(currentSource.closed, true);
-        assert.equal(win.document.querySelector('.chat-panel'), null);
-        assert.equal(win.document.getElementById('main-content').classList.contains('chat-host'), false);
-        state.activeHostId = 'local';
-      }
-      block = false; await win.CitadelChat.open(project); await sleep(10);
-      const input = win.document.querySelector('textarea'); input.value = 'request'; input.dispatchEvent(new win.Event('input'));
-      block = true; [...win.document.querySelectorAll('button')].find(button => button.textContent === 'Send').click(); await sleep(10);
-      const lateAction = pending.shift(); win.CitadelChat.close();
-      block = false; await win.CitadelChat.open(project); await sleep(10);
-      const replacement = win.document.querySelector('.chat-panel'); lateAction.resolve({ accepted: true }); await sleep(300);
-      assert.equal(win.document.querySelector('.chat-panel'), replacement);
-      assert.equal(calls.filter(call => call.url.endsWith('/cancel')).length, 0);
-      const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
-      assert.match(appSource, /function navigateTo\(view\) \{\s*window.CitadelChat.close\(\)/);
-      assert.match(appSource, /function teardownSession\(\) \{\s*workspaceGeneration\+\+;\s*document.getElementById\('ws-close-mode'\)\?\.remove\(\);\s*window.CitadelChat.reset\(\)/);
-    } finally { win.CitadelChat.close(); isolated.window.close(); }
+  test('session teardown invalidates workspace actions and resets retained frontend state', () => {
+    const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+    assert.match(appSource, /function teardownSession\(\) \{\s*workspaceGeneration\+\+;\s*document.getElementById\('ws-close-mode'\)\?\.remove\(\);\s*window.CitadelBrowserEditor.close\(\);\s*window.CitadelProjectTools.reset\(\);\s*chooseWorkspaceMode = null;\s*workspaceMode = null;/);
+    assert.doesNotMatch(appSource, /CitadelChat/);
   });
 
   test('retired project management scripts and navigation are absent', () => {

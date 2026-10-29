@@ -1,5 +1,5 @@
 /**
- * Project folder discovery and browser editor entry point.
+ * Project folder discovery, workspace preferences and browser editor status.
  */
 (function () {
   'use strict';
@@ -91,17 +91,12 @@
     if (state.activeHostId === 'local' && state.user?.role === 'admin') {
       try { editor = (await api('/api/editor')).editor.running; } catch {}
     }
-    await Promise.all(projects.map(async project => {
-      let chat;
-      if (state.activeHostId === 'local' && state.user?.role === 'admin') {
-        try { chat = (await api(`/api/projects/${encodeURIComponent(project.id)}/chat/activity`)).running; } catch {}
-      }
+    for (const project of projects) {
       next.set(project.id, {
-        chat,
         editor,
         vscode: editor === true && workspacePreference(project.id).editorOpened === true,
       });
-    }));
+    }
     if (scope !== hostScope() || attempt !== refreshAttempt) return;
     if (editor === false) {
       for (const project of projects) workspacePreference(project.id, { editorOpened: false });
@@ -109,7 +104,5 @@
     runtime = next; runtimeScope = scope; refreshedAt = Date.now();
   }
   function reset() { preferences.clear(); runtime.clear(); runtimeScope = null; refreshAttempt++; }
-  function showChat(project) { return openWorkspace(project.id, 'chat'); }
-
-  window.CitadelProjectTools = { init, mountDiscovery, showEditor, showChat, scopeKey, workspacePreference, projectRuntime, refreshRuntime, reset };
+  window.CitadelProjectTools = { init, mountDiscovery, showEditor, scopeKey, workspacePreference, projectRuntime, refreshRuntime, reset };
 })();

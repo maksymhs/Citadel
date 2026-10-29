@@ -44,7 +44,7 @@ Self-hosted, lightweight and secure. Runs on a VPS, a Mac or a spare laptop.
 <td width="50%" valign="top">
 
 ### 🤖 AI agent launcher
-Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries. Missing agents install with one click, once for every user. Native [Chat](docs/browser-editor.md#native-chat) adds Plan/Build, approvals and questions for local projects through an explicitly enabled AI Gateway and OpenCode 1.19.x; it replaces the embedded OpenCode GUI, not terminal agents.
+Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries in persistent terminals. Missing agents install with one click, once for every user.
 
 </td>
 <td width="50%" valign="top">
@@ -159,7 +159,7 @@ Every extra capability is opt-in:
 
 To just look at the panel without installing anything on the machine, there is a development-only Docker image: `docker compose up --build` (see [docs/installation.md](docs/installation.md#try-it-without-installing-docker)). It is not the supported deployment.
 
-Projects is the first-entry screen, with **System (host)** terminals first, and discovers folders under `PROJECTS_DIR`. Import a suggestion and use **More actions → VS Code**, **Chat** or **Open terminal**. The sidebar Workspace group appears only for projects with observed running work (VS Code uses a browser-local opened hint, not authoritative folder tracking). **Remove from Citadel** keeps files; disk deletion is a separate exact-path confirmation. Removal refuses live registered terminals, a project Chat engine belonging to any owner, or the shared editor process. Project workspaces first offer **Chat / Terminal / VS Code** cards, then remember the choice per owner/machine/project. VS Code stays inside Citadel with the sidebar visible; **Choose mode** returns to the cards without stopping work. Separate confirmed stops target your project's Chat engine or registered terminals; VS Code stop explicitly affects the shared editor across all projects. Opening remembered Chat or VS Code does not create a terminal. Fresh installs retain the OpenCode CLI; Chat requires opt-in gateway subscription reuse, with no native-provider fallback. Chat and browser VS Code require the machine's own panel, not paired-machine transport. [Setup and limits](docs/installation.md#project-folders-vs-code-and-chat).
+Projects is the first-entry screen, with **System (host)** terminals first, and discovers folders under `PROJECTS_DIR`. Import a suggestion and use **Open terminal** or **More actions → VS Code**. Project workspaces offer two cards, **Terminal / VS Code**, and remember the choice and independent workspace state per owner/machine/project. VS Code stays inside Citadel with the sidebar visible; the icon-only **Choose mode** arrow beside the sidebar toggle returns to the cards without stopping work. Separate confirmed stops target registered project terminals or the shared editor across **all projects**. Opening remembered VS Code does not create a terminal; an old saved Chat mode returns to the chooser without starting work. The sidebar Workspace group reflects observed terminals and browser-local editor hints, not saved mode choices. **Remove from Citadel** keeps files; disk deletion requires exact-path confirmation. Server safeguards still refuse live terminals, the shared editor or any owner's active legacy Chat engine. Browser VS Code requires the machine's own panel, not paired-machine transport. OpenCode and other terminal agents and AI Gateway remain available; the native Chat GUI is removed without deleting saved data or stopping existing engines. [Setup and limits](docs/installation.md#project-folders-and-vs-code).
 
 ### Requirements
 
@@ -226,7 +226,7 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 | [Remote access](docs/remote-access.md) | QR pairing, Cloudflare tunnels, own domain |
 | [Task mesh](docs/task-mesh.md) | Parallel work across paired nodes |
 | [AI Gateway](docs/ai-gateway.md) | Optional Claude/ChatGPT routing, model choices, usage windows and limitations |
-| [Chat and browser VS Code](docs/browser-editor.md) | Gateway-only native Chat, private storage, approvals, bounded history and optional editor |
+| [Project workspaces and browser VS Code](docs/browser-editor.md) | Terminal/VS Code chooser, remembered workspace state, safe stops and optional editor setup |
 | [Feature map](docs/features.md) | Which files make up each feature, with their tests and guide |
 | [Code map](docs/code-map.md) | Every source file with its purpose, and where each screen lives |
 | [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) | How it is built and why |

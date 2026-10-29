@@ -86,8 +86,9 @@ SQLite in WAL mode at `DATA_DIR/citadel.db`; fresh databases get the `CREATE TAB
 | Observability | `events`, `metric_samples` |
 | Platform | `app_config` (key/value), `plugins`, `schema_migrations` |
 
-Native Chat uses a **separate** WAL database, `DATA_DIR/chat/metadata.sqlite`,
-created lazily by `chatService`, not the main schema/migrations. Its `sessions`
+The retained legacy Chat backend uses a **separate** WAL database,
+`DATA_DIR/chat/metadata.sqlite`, created lazily by `chatService`, not the main
+schema/migrations. Removing the native GUI does not delete this data. Its `sessions`
 table scopes engine IDs to owner, project and canonical directory; `requests`
 stores message request IDs/digests for deduplication. It does not store full
 message bodies there. OpenCode owns transcripts/state in the hashed per-owner/
@@ -128,36 +129,49 @@ demand through an administrator-only HTTP/WebSocket bridge to a protected loopba
 listener. Browser/peer credentials are not passed upstream; a return action remains
 outside its iframe. Its install, lifecycle and native terminal gateway paths are unchanged.
 
-Native Chat is a separate Citadel UI (`public/js/chat.js`) backed by `chatRoutes`
-and `chatService`, registered in `server/index.js`. It starts the installed
-`opencode serve` through the opt-in OpenCode AI Gateway launcher only, never native
-provider fallback. Startup requires OpenCode 1.19.x, checks the required API
-operations and verifies gateway-exclusive provider/model configuration. Build/Plan
-use execution/planning aliases; permissions default to ask, with edit/bash/task/
-external-directory denied in Plan. The panel supports one-time approval/rejection,
-questions and cancellation. Session-cookie administrator auth, origin checks and
-owner/project/canonical-directory checks apply to snapshots, mutations and SSE;
-peer tokens are not accepted. Paired-machine transport is unsupported: use the
-machine's own panel.
-
 Projects is the first-entry screen; System terminals have a separate first card.
-The sidebar Workspace group is derived from observed terminal/owner Chat activity
-and browser-local editor hints, not saved mode choices. The shared editor has no
-authoritative per-folder state. Removal defaults to registration-only, while disk
-deletion is separately confirmed. The delete route serializes its guard and
-synchronous deletion through the Chat queue, rejecting any owner's running project
-engine, and checks live registered terminals and the shared editor before mutation.
-Slash commands are local composer actions, never model prompts; snapshots include
-bounded assistant token counters and verified gateway alias/context-limit metadata.
+Project workspaces offer **Terminal / VS Code** cards and remember the selected
+mode per owner/panel/host/project, preserving independent terminal selection and
+editor state. The icon-only **Choose mode** arrow beside the sidebar toggle clears
+only the mode choice; navigation and mode switching do not stop work. An old saved
+Chat mode returns to the chooser without starting a runtime. Opening remembered
+VS Code does not create a terminal. Explicit confirmed stops target registered
+project terminals or the shared editor across all projects.
 
-The browser receives bounded snapshots through project/session APIs and SSE update
-notifications, refreshing after reconnect rather than replaying a complete event
-history. Rendering is literal text plus fenced code blocks and tool status, not
-full Markdown or full transcript/tool output. One engine is active at a time;
-busy work blocks owner/project switching. Returning to the mounted terminal or
-closing Chat does not cancel work. Clean shutdown stops both editor and Chat
-process groups. The embedded OpenCode GUI, bundle adapter and root API proxies
-are removed; VS Code remains an iframe. See [Chat and browser editor](browser-editor.md).
+The sidebar Workspace group is derived from observed terminal activity and
+browser-local editor hints, not saved mode choices or legacy Chat activity. The
+shared editor has no authoritative per-folder state. Removal defaults to
+registration-only, while disk deletion is separately confirmed. The panel checks
+terminal/editor status before submitting removal. The server additionally
+serializes its guard and synchronous deletion through the retained Chat queue,
+rejecting any owner's running project engine, and checks live registered terminals
+and the shared editor before mutation.
+
+### Retained legacy Chat backend
+
+The native Chat GUI (`public/js/chat.js`), its entry points and slash-command
+composer are removed. The panel makes no Chat API calls and offers no Chat status
+or stop controls. Existing histories, preferences and user data are retained;
+removing the GUI does not stop existing engines. `chatRoutes` and `chatService`
+remain registered in `server/index.js` for legacy API compatibility and project
+removal safety, with their backend tests and storage intact.
+
+The legacy service starts the installed `opencode serve` through the opt-in
+OpenCode AI Gateway launcher only, never native provider fallback. Startup requires
+OpenCode 1.19.x, checks required API operations and verifies gateway-exclusive
+provider/model configuration. Build/Plan use execution/planning aliases;
+permissions default to ask, with edit/bash/task/external-directory denied in Plan.
+Session-cookie administrator auth, origin checks and owner/project/canonical-
+directory checks apply to snapshots, mutations and SSE; peer tokens are not
+accepted, and paired-machine Chat transport remains unsupported. Its bounded
+snapshots, approvals, questions and cancellation endpoints remain legacy API
+capabilities, not panel features. One engine is active at a time; busy work blocks
+owner/project switching. Clean shutdown still stops editor and legacy Chat process
+groups. See [legacy Chat API boundaries](security.md#legacy-chat-api-boundaries).
+
+The earlier embedded OpenCode GUI, bundle adapter and root API proxies remain
+removed; VS Code remains an iframe. Native terminal agents and gateway routing
+are unchanged. See [project workspaces and browser editor](browser-editor.md).
 
 ## Retired project management
 

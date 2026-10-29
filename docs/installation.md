@@ -136,7 +136,7 @@ running `opencode` or `codex`. Native CLI installations are still required.
 Exit Claude and reopen an existing project terminal after activation. It binds only to loopback,
 requires no sudo and remains off by default. This experimental integration offers opt-in Auto fallback after both providers are connected. See [setup and limitations](ai-gateway.md).
 
-### Project folders, VS Code and Chat
+### Project folders and VS Code
 
 Opening **Projects**, or clicking **Refresh**, scans immediate non-hidden folders
 under `PROJECTS_DIR`. Suggestions are read-only; choose **Import folder** to
@@ -145,30 +145,33 @@ are directory symlinks and `node_modules`. Scans stop after 500 entries or 100
 suggestions and never recurse or execute repository code. Use **Import folder**
 for other folders or to choose a different project name.
 
-A project's **More actions** menu offers **Open VS Code in browser** and **Chat**;
-the workspace cards, compact mode controls and sidebar three-dot menu offer
-**Chat / Terminal / VS Code**. First entry waits for a choice, then remembers it per
-owner/panel/host/project. VS Code embeds inside the workspace with the Citadel sidebar
-and header visible and retains its optional first-use code-server install. Chat is
-Citadel's native panel, not the retired embedded OpenCode GUI. **Close view / Choose mode**
-returns to the cards and clears only the mode selection, preserving mounted terminals,
-Chat session selection and running work; navigating away remembers the mode.
+Use **Open terminal** or a project's **More actions → VS Code**.
+The workspace chooser has two cards, **Terminal / VS Code**; the sidebar three-dot
+menu also switches modes. First entry waits for a choice, then remembers it per
+owner/panel/host/project, with independent terminal selection and editor state.
+VS Code embeds inside the workspace with the Citadel sidebar and header visible
+and retains its optional first-use code-server install. The icon-only **Choose
+mode** arrow beside the sidebar toggle returns to the cards and clears only the
+mode selection, preserving mounted terminals, editor state and running work;
+navigating away remembers the mode. Opening remembered VS Code never creates a
+terminal. Confirmed stop controls target registered project terminals or the
+shared editor across **all projects**; save editor work first. Merely checking
+status or returning to the chooser starts or stops nothing.
 
-Fresh installs still include the OpenCode CLI, without auto-starting it. For Chat,
-install/update OpenCode through Tools as needed: **1.19.x** with the required
-session/prompt/SSE/approval APIs is required. Explicitly connect your subscriptions,
-select **OpenCode**, save and start **Settings → AI Gateway**. Chat is gateway-only;
-it does not import CLI login caches or fall back to native providers. Terminal
-OpenCode can still run natively when not opted in, and terminal gateway routing
-is unchanged. Chat offers Plan/Build, ask-based approvals/questions and Stop;
-SSE reconnect refreshes bounded history, not full Markdown or a complete transcript.
+Browser VS Code requires administrator access and runs only on the machine
+serving the panel; paired-machine editor transport is unsupported, so open that
+machine's own panel. See [workspace and browser editor setup](browser-editor.md)
+for the pinned download, resource costs, idle shutdown and access limitations.
 
-Chat stores owner-private metadata in `DATA_DIR/chat/metadata.sqlite`, separate
-from the main schema, and OpenCode transcripts in per-owner/project/directory HOME
-and XDG storage beneath `DATA_DIR/chat`. This is not a sandbox or encrypted Chat
-storage. Both actions require administrator access and run only on the machine
-serving the panel; paired-machine transports are unsupported, so open that
-machine's own panel. See [Chat and browser editor setup](browser-editor.md).
+The native Chat GUI and its panel entry points are removed. An old saved Chat
+mode opens the chooser without starting work; histories, preferences and user
+data are retained, and existing engines are not stopped by the GUI removal.
+Legacy Chat routes, service and storage remain for API compatibility and safety.
+The panel checks terminal/editor status before project removal; the server also
+refuses any owner's active legacy Chat runtime. See [legacy API boundaries](security.md#legacy-chat-api-boundaries).
+Fresh installs still include the OpenCode CLI without auto-starting it. OpenCode
+and other terminal agents work as before; optional [AI Gateway](ai-gateway.md)
+routing is unchanged, and terminal OpenCode can still run natively when not opted in.
 
 ## Updating an existing installation
 
