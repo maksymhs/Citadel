@@ -1524,7 +1524,7 @@
     const scope = window.CitadelProjectTools.scopeKey(null);
     await Promise.all([loadProjects(), loadSessions()]);
     if (state.currentView !== 'projects' || scope !== window.CitadelProjectTools.scopeKey(null)) return;
-    const systemCard = '<section class="card project-system"><div><strong>System (host)</strong><p class="mon-muted">Host terminals, independent of projects.</p></div><button type="button" class="btn btn-secondary btn-sm" id="projects-system-open">Open System terminals</button></section>';
+    const systemCard = '<section class="card project-system"><strong>System (host)</strong><button type="button" class="btn btn-secondary btn-sm" id="projects-system-open">Open terminal</button></section>';
     const mountSystem = () => {
       content.insertAdjacentHTML('afterbegin', systemCard);
       document.getElementById('projects-system-open').onclick = () => openWorkspace('system');
@@ -1559,17 +1559,16 @@
           <div class="proj-row">
             <div class="proj-main">
               <div class="proj-name">
-                <strong>${escapeHtml(p.name)}</strong>
+                <strong${p.description ? ` title="${escapeHtml(p.description)}"` : ''}>${escapeHtml(p.name)}</strong>
                 ${p.existsOnDisk ? '' : '<span class="badge badge-danger">Missing</span>'}
-                <span class="badge badge-muted">${sessions || activity.vscode ? 'Open' : state.sessionsAvailable && activity.editor === false ? 'Stopped' : 'Status unavailable'}</span>
                 ${sessions > 0 ? `<span class="badge badge-success" title="Persistent terminals running">${sessions} terminal${sessions === 1 ? '' : 's'}</span>` : ''}
+                ${activity.vscode ? '<span class="badge badge-muted">VS Code</span>' : ''}
               </div>
-              ${p.description ? `<div class="proj-desc">${escapeHtml(p.description)}</div>` : ''}
               <div class="proj-path">${escapeHtml(p.path)}</div>
             </div>
             <div class="proj-actions">
               <button class="btn btn-secondary btn-sm toggle-repos-btn" data-project-id="${p.id}" aria-expanded="false">
-                ${repos} repo${repos === 1 ? '' : 's'} <span class="proj-caret">&#9662;</span>
+                ${repos > 0 ? `${repos} repo${repos === 1 ? '' : 's'}` : 'Repos'} <span class="proj-caret">&#9662;</span>
               </button>
               <button class="btn btn-primary btn-sm open-workspace-btn" data-project-id="${p.id}">Open</button>
               <button class="btn btn-secondary btn-sm proj-menu-btn" data-project-id="${p.id}" data-project-name="${escapeHtml(p.name)}" aria-label="More actions" title="More actions">&#8943;</button>
@@ -2531,86 +2530,12 @@
     const chooser = document.createElement('section');
     chooser.className = 'workspace-chooser';
     chooser.setAttribute('aria-label', 'Choose workspace mode');
-    chooser.innerHTML = `<div><h2>How do you want to work?</h2><p>${escapeHtml(currentProject.name)} · Choose a mode. Running work is kept when you switch.</p><div class="workspace-mode-cards">${[['terminal', 'Terminal', 'Open a persistent shell'], ['vscode', 'VS Code', 'Edit in your browser']].map(([mode, label, description]) => `<div class="card workspace-mode-card"><button type="button" class="workspace-mode-select" data-workspace-mode="${mode}" ${mode !== 'terminal' && state.activeHostId !== 'local' ? 'disabled' : ''}><strong>${label}</strong><span>${mode !== 'terminal' && state.activeHostId !== 'local' ? 'Open this machine’s own Citadel panel' : description}</span></button><span data-mode-status="${mode}" role="status">Checking…</span><button type="button" class="btn btn-secondary btn-sm" data-stop-mode="${mode}" disabled>${mode === 'terminal' ? 'Stop terminals' : 'Stop shared editor'}</button></div>`).join('')}</div></div>`;
+    chooser.innerHTML = `<div class="workspace-mode-cards">${[['terminal', 'Terminal'], ['vscode', 'VS Code']].map(([mode, label]) => `<button type="button" class="card workspace-mode-card workspace-mode-select" data-workspace-mode="${mode}" ${mode === 'vscode' && state.activeHostId !== 'local' ? 'disabled' : ''}><strong>${label}</strong>${mode === 'vscode' && state.activeHostId !== 'local' ? '<span>Open this machine’s own Citadel panel</span>' : ''}</button>`).join('')}</div>`;
     const title = document.getElementById('top-bar-title');
     if (title) title.textContent = `Workspace — ${currentProject.name}`;
-    let terminalStarted = false, terminalReady = false, terminalAttempt = 0, statusAttempt = 0;
+    let terminalStarted = false, terminalReady = false, terminalAttempt = 0;
     const scopeKey = () => JSON.stringify([state.user?.id ?? state.user?.username, state.hostIdentity?.instanceId, state.activeHostId, state.workspaceContext]);
     const initialScope = scopeKey();
-    const presentChooser = () => generation === workspaceGeneration && chooser.isConnected && !workspaceMode && scopeKey() === initialScope;
-    const readActivity = async mode => {
-      if (mode === 'terminal') {
-        const result = await api(`/api/terminals?projectId=${encodeURIComponent(context)}`, { method: 'GET' });
-        return (result.sessions || []).filter(session => session.project_id === context && session.isAlive);
-      }
-      return (await api('/api/editor')).editor.running;
-    };
-    const stopping = new Set(), pendingStops = new Set();
-    async function refreshActivity() {
-      const attempt = ++statusAttempt;
-      await Promise.all(['terminal', 'vscode'].map(async mode => {
-        const button = chooser.querySelector(`[data-stop-mode="${mode}"]`);
-        const status = chooser.querySelector(`[data-mode-status="${mode}"]`);
-        button.disabled = true;
-        if (mode !== 'terminal' && (state.activeHostId !== 'local' || state.user?.role !== 'admin')) { status.textContent = 'Unavailable here'; return; }
-        status.textContent = 'Checking…';
-        try {
-          const activity = await readActivity(mode);
-          if (!presentChooser() || attempt !== statusAttempt) return;
-          const running = mode === 'terminal' ? activity.length > 0 : activity;
-          status.textContent = running ? mode === 'terminal' ? `${activity.length} running` : 'Running · shared by all projects' : 'Not running';
-          button.disabled = !running || stopping.has(mode);
-        } catch (err) {
-          if (presentChooser() && attempt === statusAttempt) { status.textContent = 'Status unavailable'; status.title = err.message; }
-        }
-      }));
-    }
-    chooser.querySelectorAll('[data-stop-mode]').forEach(button => {
-      button.onclick = async () => {
-        const mode = button.dataset.stopMode;
-        if (!presentChooser() || button.disabled || stopping.has(mode)) return;
-        stopping.add(mode); button.disabled = true;
-        let activity;
-        try { activity = await readActivity(mode); }
-        catch (err) { if (presentChooser()) showToast(err.message, 'error'); stopping.delete(mode); if (presentChooser()) refreshActivity(); return; }
-        if (!presentChooser()) { stopping.delete(mode); return; }
-        if (!(mode === 'terminal' ? activity.length : activity)) { stopping.delete(mode); refreshActivity(); return; }
-        openModal({
-          title: button.textContent,
-          bodyHtml: `<p>${mode === 'terminal' ? `Stop ${activity.length} registered terminal session(s) in ${escapeHtml(currentProject.name)}? Their shells and running commands will be terminated.` : 'Stop the shared VS Code process for ALL projects? Save work first. Extension hosts and integrated terminals will also stop.'}</p>`,
-          confirmText: button.textContent,
-          onClose: () => { if (!pendingStops.has(mode)) stopping.delete(mode); if (presentChooser()) refreshActivity(); },
-          onConfirm: async () => {
-            if (!presentChooser() || pendingStops.has(mode)) return;
-            pendingStops.add(mode);
-            try {
-              if (mode === 'terminal') {
-                const results = await Promise.allSettled(activity.map(session => api(`/api/terminals/${encodeURIComponent(session.id)}`, { method: 'DELETE' }).then(() => {
-                  if (scopeKey() === initialScope) {
-                    const item = state.terminals.get(session.id);
-                    if (item) { disposeTerminalItem(item); state.terminals.delete(session.id); }
-                  }
-                })));
-                if (generation === workspaceGeneration && scopeKey() === initialScope) {
-                  terminalStarted = false; terminalReady = false;
-                  surface.querySelector('.workspace-container')?.remove();
-                  await loadSessions();
-                }
-                const failed = results.filter(result => result.status === 'rejected');
-                if (failed.length) throw new Error(`${failed.length} terminal session(s) could not be stopped. ${failed[0].reason.message}`);
-              } else await api('/api/editor', { method: 'DELETE' });
-            } finally {
-              pendingStops.delete(mode); stopping.delete(mode);
-              if (scopeKey() === initialScope) {
-                await window.CitadelProjectTools.refreshRuntime();
-                renderSidebarNav();
-              }
-              if (presentChooser()) await refreshActivity();
-            }
-          },
-        });
-      };
-    });
     const choose = (mode, remember = true) => {
       if (generation !== workspaceGeneration || !surface.isConnected) return;
       if (mode && workspaceMode === mode) return;
@@ -2633,7 +2558,6 @@
         if (!terminalReady) terminalStarted = false;
         surface.append(chooser);
         chooser.querySelector('[data-workspace-mode]:not(:disabled)').focus();
-        refreshActivity();
       } else if (mode === 'vscode') {
         if (!terminalReady) terminalStarted = false;
         const refresh = async () => {

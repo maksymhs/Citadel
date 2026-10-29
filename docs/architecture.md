@@ -129,14 +129,26 @@ demand through an administrator-only HTTP/WebSocket bridge to a protected loopba
 listener. Browser/peer credentials are not passed upstream; a return action remains
 outside its iframe. Its install, lifecycle and native terminal gateway paths are unchanged.
 
-Projects is the first-entry screen; System terminals have a separate first card.
-Project workspaces offer **Terminal / VS Code** cards and remember the selected
-mode per owner/panel/host/project, preserving independent terminal selection and
-editor state. The icon-only **Choose mode** arrow beside the sidebar toggle clears
-only the mode choice; navigation and mode switching do not stop work. An old saved
-Chat mode returns to the chooser without starting a runtime. Opening remembered
-VS Code does not create a terminal. Explicit confirmed stops target registered
-project terminals or the shared editor across all projects.
+Projects is the first-entry screen: the System (host) terminal card comes first,
+then imported/registered projects, then a compact detected-folders list without
+introductory copy. Each discovery row shows name/path, **Import folder** and a
+dismiss **×**. Dismissal only hides the current suggestion, without deleting files
+or registering a project; Refresh restores it, and dismissing all suggestions
+hides the section. Discovery remains read-only and non-recursive under
+`PROJECTS_DIR`, excluding hidden folders, directory symlinks, `node_modules`,
+registered projects and associated repositories, with limits of 500 entries or
+100 suggestions; it never executes repository code.
+
+Project workspaces offer two compact whole-card buttons, **Terminal** and
+**VS Code**, with no heading, helper descriptions, running statuses or stop
+controls. They remember the selected mode per owner/panel/host/project,
+preserving independent terminal selection and editor state. The icon-only
+**Choose mode** arrow beside the sidebar toggle clears only the mode choice and
+returns to the chooser, preserving mounted terminals and editor processes;
+navigation and mode switching do not stop work. An old saved Chat mode returns
+to the chooser without starting a runtime. Opening remembered VS Code does not
+create a terminal. Existing terminal controls and the standalone editor's
+explicit stop action remain separate and unchanged.
 
 The sidebar Workspace group is derived from observed terminal activity and
 browser-local editor hints, not saved mode choices or legacy Chat activity. The

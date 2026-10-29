@@ -13,7 +13,17 @@ from keyboard focus; closing it while focused inside returns focus to the toggle
 ## Projects and removal
 
 New browser sessions start in Projects; an existing saved screen is restored.
-System (host) is always the first Projects card and is not listed under Workspace.
+System (host) is always the first Projects card, followed by imported/registered
+projects, then a compact detected-folders list without introductory copy. Each
+suggestion shows its name and path, **Import folder**, and a dismiss **×**. Dismiss
+only hides the current discovery suggestion: it neither deletes files nor
+registers the folder. **Refresh** shows it again; dismissing all suggestions hides
+the section. Discovery remains a read-only scan of immediate folders under
+`PROJECTS_DIR`, excluding registered projects, associated repositories, directory
+symlinks, hidden folders and `node_modules`, with limits of 500 entries or 100
+suggestions; it never recurses or executes repository code.
+
+System (host) is not listed under Workspace.
 Workspace appears only for projects with observed live terminals or a running
 shared editor plus this browser's opened-project hint. Saved mode choices alone
 do not mark a project open. VS Code hints are not authoritative: another tab can
@@ -33,7 +43,9 @@ restrictions still apply to explicit disk deletion.
 
 ## Terminal and VS Code modes
 
-On first opening a project, choose a centered **Terminal** or **VS Code** card.
+On first opening a project, choose one of two compact whole-card buttons,
+**Terminal** or **VS Code**. The chooser has no heading, helper descriptions,
+running statuses or stop controls.
 No terminal or editor starts until you select a mode. The selection is remembered
 per signed-in owner, panel instance, selected host and project. Terminal selection
 and editor state remain independent: switching modes does not overwrite the other
@@ -48,13 +60,10 @@ It clears only the mode preference and returns to the two cards; terminal
 selection, editor state and running work are retained. Navigating away closes the
 view but remembers the mode. No process is stopped by merely returning here.
 
-Each chooser card has a separate stop button and read-only running status;
-checking status never starts a mode. Stops require confirmation. **Stop terminals**
-terminates only the alive registered terminal sessions listed for this project
-(not arbitrary host processes). **Stop shared editor** stops the one VS Code
-process for **all projects**, including its integrated terminals and extension
-hosts; save work first. These controls are disabled when nothing is running or
-status is unavailable. Editor management requires a local administrator session.
+The chooser only selects a mode. Existing terminal controls and the standalone
+editor's explicit **Stop editor** action remain separate and unchanged; returning
+to the chooser does not invoke them. Editor management requires a local
+administrator session.
 
 The native Chat GUI, its slash-command composer and its panel entry points have
 been removed. An old saved `mode='chat'` opens the chooser without starting work.

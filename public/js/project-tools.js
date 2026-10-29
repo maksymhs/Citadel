@@ -16,39 +16,55 @@
     const panel = document.createElement('section');
     panel.className = 'card project-discovery';
     panel.hidden = true;
-    const system = content.querySelector('.project-system');
-    if (system) system.after(panel);
-    else content.prepend(panel);
-    const hostId = state.activeHostId;
+    content.append(panel);
+    const scope = scopeKey(null);
+    const present = () => panel.isConnected && scope === scopeKey(null);
     try {
       const result = await api('/api/projects/discover');
-      if (!panel.isConnected || hostId !== state.activeHostId) return;
+      if (!present()) return;
       if (!result.directories.length && !result.truncated) return;
       panel.hidden = false;
-      panel.innerHTML = `<h3>Folders found</h3>
-        <p class="mon-muted">Found in the projects directory. Import a folder to work with it.</p>
+      panel.innerHTML = `<h3>Detected folders</h3>
         ${result.directories.map((dir, index) => `<div class="proj-row">
-          <div class="proj-main"><strong>${escapeHtml(dir.name)}</strong><div class="proj-path">${escapeHtml(dir.path)}</div></div>
-          <button class="btn btn-secondary btn-sm" data-discover-index="${index}">Import folder</button>
+          <div class="proj-main"><strong>${escapeHtml(dir.name)}</strong><div class="proj-path" title="${escapeHtml(dir.path)}">${escapeHtml(dir.path)}</div></div>
+          <div class="proj-actions">
+            <button type="button" class="btn btn-secondary btn-sm" data-discover-index="${index}">Import folder</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-dismiss-discovery="${index}" aria-label="Dismiss ${escapeHtml(dir.name)}" title="Hide suggestion until refresh">&times;</button>
+          </div>
         </div>`).join('')}
         ${result.truncated ? '<p class="mon-muted">Showing a limited scan. Use Import folder for other directories.</p>' : ''}`;
+      panel.querySelectorAll('[data-dismiss-discovery]').forEach((button) => {
+        button.onclick = () => {
+          if (!present() || !button.isConnected || button.disabled) return;
+          const row = button.closest('.proj-row');
+          const next = row.nextElementSibling?.querySelector('[data-discover-index]') || row.previousElementSibling?.querySelector('[data-discover-index]');
+          row.remove();
+          if (!panel.querySelector('.proj-row')) panel.hidden = true;
+          (next || document.getElementById('proj-refresh-btn'))?.focus();
+        };
+      });
       panel.querySelectorAll('[data-discover-index]').forEach((button) => {
         button.onclick = async () => {
           const folder = result.directories[Number(button.dataset.discoverIndex)];
-          if (hostId !== state.activeHostId) return;
+          if (!present() || !button.isConnected || button.disabled) return;
+          const dismiss = button.closest('.proj-row').querySelector('[data-dismiss-discovery]');
           button.disabled = true;
+          dismiss.disabled = true;
           try {
             await api('/api/projects/import', { method: 'POST', body: { name: folder.name, targetPath: folder.path } });
+            if (!present()) return;
             showToast('Project imported.', 'success');
-            if (hostId === state.activeHostId) await renderProjectsView();
+            await renderProjectsView();
           } catch (err) {
+            if (!present()) return;
             showToast(err.message, 'error');
             button.disabled = false;
+            dismiss.disabled = false;
           }
         };
       });
     } catch (err) {
-      if (!panel.isConnected || hostId !== state.activeHostId) return;
+      if (!present()) return;
       panel.hidden = false;
       panel.textContent = `Could not scan project folders: ${err.message}`;
     }

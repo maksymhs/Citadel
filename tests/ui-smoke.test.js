@@ -474,12 +474,30 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   test('project discovery imports a folder and browser editor offers a Citadel return action', async () => {
     w.document.querySelector('.nav-item[data-view="projects"]').click();
     await sleep(800);
-    const importButton = w.document.querySelector('[data-discover-index]');
-    assert.ok(importButton, 'the projects directory is scanned when opening Projects');
-    importButton.click();
+    const content = w.document.getElementById('main-content');
+    assert.ok(w.document.querySelector('[data-discover-index]'), 'the projects directory is scanned when opening Projects');
+    assert.equal(content.firstElementChild.className, 'card project-system');
+    assert.equal(content.lastElementChild.className, 'card project-discovery');
+    w.document.querySelector('[data-dismiss-discovery]').click();
+    assert.equal(w.document.querySelector('.project-discovery').hidden, true);
+    assert.ok(fs.existsSync(path.join(data, 'projects', 'ui-discovered')), 'dismissing a suggestion never deletes its folder');
+    assert.equal(w.document.activeElement.id, 'proj-refresh-btn');
+    w.document.getElementById('proj-refresh-btn').click(); await sleep(400);
+    w.document.querySelector('[data-discover-index]').click();
     await sleep(800);
     assert.ok(w.document.querySelector('.proj-name').textContent.includes('ui-discovered'));
     assert.equal(w.document.querySelector('[data-discover-index]'), null, 'imported folder is not suggested twice');
+    fs.mkdirSync(path.join(data, 'projects', 'ui-later'));
+    w.document.getElementById('proj-refresh-btn').click(); await sleep(400);
+    const list = w.document.getElementById('proj-list');
+    assert.equal(content.firstElementChild.className, 'card project-system');
+    assert.equal(list.nextElementSibling, w.document.querySelector('.project-discovery'), 'detected folders follow registered projects');
+    assert.equal(content.lastElementChild, list.nextElementSibling);
+    assert.equal(list.querySelector('.proj-desc'), null);
+    assert.doesNotMatch(list.textContent, /Status unavailable|Stopped|0 repos/);
+    w.document.querySelector('[data-dismiss-discovery]').click();
+    assert.ok(w.document.querySelector('.open-workspace-btn'), 'dismissal preserves registered projects');
+    assert.ok(fs.existsSync(path.join(data, 'projects', 'ui-later')));
     await w.CitadelBrowserEditor.open({ id: 'fixture-project', name: 'Project', path: '/srv/a # b' });
     assert.ok(w.document.getElementById('editor-back'));
     assert.ok(w.document.getElementById('editor-install'));
@@ -488,6 +506,58 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     w.document.getElementById('editor-back').click();
     assert.equal(w.document.querySelector('.browser-editor'), null);
     assert.deepEqual(errors, []);
+  });
+
+  test('discovery dismissal is read-only and stale import actions cannot affect another workspace scope', async () => {
+    const isolated = new JSDOM('<button id="proj-refresh-btn">Refresh</button><main><section class="project-system"></section><div id="registered"></div></main>', { runScripts: 'dangerously', url: base });
+    const win = isolated.window, calls = [];
+    const state = { user: { id: 1 }, hostIdentity: { instanceId: 'panel-a' }, activeHostId: 'local' };
+    let finishImport, renders = 0;
+    const directories = [{ name: 'first', path: '/projects/first' }, { name: 'second', path: '/projects/second' }];
+    try {
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/project-tools.js'), 'utf8'));
+      win.CitadelProjectTools.init({ state, escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), openWorkspace() {}, showToast() {}, renderProjectsView: () => { renders++; },
+        api: (url, opts = {}) => {
+          calls.push({ url, ...opts });
+          if (url.endsWith('/import')) return new Promise(resolve => { finishImport = resolve; });
+          return Promise.resolve({ directories });
+        } });
+      const content = win.document.querySelector('main');
+      await win.CitadelProjectTools.mountDiscovery(content);
+      let panel = content.querySelector('.project-discovery');
+      assert.equal(panel.previousElementSibling.id, 'registered');
+      assert.equal(panel.querySelector('p'), null, 'discovery has no introductory prose');
+      panel.querySelector('[data-dismiss-discovery]').click();
+      assert.equal(panel.querySelectorAll('.proj-row').length, 1);
+      assert.equal(win.document.activeElement.dataset.discoverIndex, '1');
+      assert.equal(calls.length, 1, 'dismissing a suggestion performs no API mutation or recheck');
+      panel.querySelector('[data-dismiss-discovery]').click();
+      assert.equal(panel.hidden, true);
+      assert.equal(calls.length, 1);
+      panel.remove();
+      await win.CitadelProjectTools.mountDiscovery(content);
+      panel = content.querySelector('.project-discovery');
+      assert.equal(panel.querySelectorAll('.proj-row').length, 2, 'a new scan restores dismissed suggestions');
+      const staleImport = panel.querySelector('[data-discover-index]');
+      const staleDismiss = panel.querySelector('[data-dismiss-discovery]');
+      state.user = { id: 2 };
+      staleImport.click(); staleDismiss.click();
+      assert.equal(calls.length, 2, 'owner changes invalidate both actions');
+      assert.equal(panel.querySelectorAll('.proj-row').length, 2);
+      state.user = { id: 1 };
+      staleImport.click(); staleImport.click();
+      assert.equal(calls.filter(call => call.method === 'POST').length, 1, 'import is submitted once');
+      assert.equal(staleDismiss.disabled, true, 'pending import cannot be dismissed');
+      assert.equal(calls.at(-1).body.targetPath, '/projects/first');
+      state.activeHostId = 'another-host';
+      finishImport({ success: true }); await sleep(0);
+      assert.equal(renders, 0, 'late import cannot redraw a different machine');
+      state.activeHostId = 'local';
+      panel.remove();
+      staleImport.disabled = false; staleDismiss.disabled = false;
+      staleImport.click(); staleDismiss.click();
+      assert.equal(calls.length, 3, 'detached discovery actions do not send requests');
+    } finally { isolated.window.close(); }
   });
 
   test('project removal preserves files by default and disk deletion requires the exact path', async () => {
@@ -721,7 +791,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       for (const selector of ['.workspace-modes', '#ws-terminal-mode', '#ws-chat-btn', '#ws-vscode-mode', '.chat-panel']) assert.equal(w.document.querySelector(selector), null);
       assert.equal(w.document.activeElement.dataset.workspaceMode, 'terminal');
       assert.equal(calls.some(call => call.method !== 'GET' || /\/chat(?:\/|$)/.test(call.url)), false);
-      assert.equal(w.document.querySelectorAll('[data-stop-mode]').length, 2);
+      assert.equal(w.document.querySelectorAll('[data-stop-mode], [data-mode-status]').length, 0);
       assert.equal(w.document.querySelector('button button'), null);
       sidebar('VS Code'); await sleep(30);
       assert.equal(tools.workspacePreference(projectId).mode, 'vscode');
@@ -777,77 +847,54 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
-  test('chooser stops are separate, confirmed, scoped and never launch modes', async () => {
+  test('minimal chooser has only mode buttons and Back preserves work without status requests', async () => {
     const originalFetch = w.fetch, calls = [];
     const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
-    let alive = true, editorRunning = true, failTerminal = false;
     w.CitadelProjectTools.workspacePreference(projectId, { mode: null });
     w.fetch = (url, opts = {}) => {
       url = String(url);
-      const method = opts.method || 'GET'; calls.push({ url, method });
+      calls.push({ url, method: opts.method || 'GET' });
       const response = data => Promise.resolve({ ok: true, json: async () => data });
-      if (url.startsWith('/api/terminals?projectId=')) return response({ sessions: [{ id: 'own-stop', project_id: projectId, isAlive: alive }, { id: 'other-stop', project_id: 'other-project', isAlive: true }, { id: 'dead-stop', project_id: projectId, isAlive: false }] });
-      if (url === '/api/editor') { if (method === 'DELETE') editorRunning = false; return response({ editor: { installed: true, running: editorRunning } }); }
-      if (url === '/api/terminals/own-stop' && method === 'DELETE') {
-        if (failTerminal) return Promise.reject(new Error('Fixture stop failed'));
-        alive = false; return response({ success: true });
-      }
+      if (url.startsWith('/api/terminals?projectId=')) return response({ sessions: [], tmuxAvailable: false });
+      if (url === '/api/terminals' && opts.method === 'POST') return Promise.reject(new Error('Fixture terminal disabled'));
+      if (url === '/api/editor') return response({ editor: { installed: false, running: true } });
       return originalFetch(url, opts);
     };
-    const stop = mode => w.document.querySelector(`[data-stop-mode="${mode}"]`);
+    const assertChooser = () => {
+      const chooser = w.document.querySelector('.workspace-chooser');
+      assert.ok(chooser);
+      assert.equal(chooser.getAttribute('aria-label'), 'Choose workspace mode');
+      assert.deepEqual([...chooser.querySelectorAll('button')].map(button => button.textContent.trim()), ['Terminal', 'VS Code']);
+      assert.equal(chooser.querySelector('h2, p, [data-stop-mode], [data-mode-status], [role="status"]'), null);
+      assert.equal(w.document.activeElement.dataset.workspaceMode, 'terminal');
+    };
     try {
       w.document.querySelector('.open-workspace-btn').click(); await sleep(400);
-      assert.equal(calls.some(c => c.method !== 'GET'), false);
-      assert.ok(stop('terminal') && !stop('terminal').disabled);
-      stop('terminal').click(); await sleep(20);
-      assert.match(w.document.querySelector('.modal-body').textContent, /Stop 1 registered terminal/);
-      w.document.getElementById('modal-cancel-btn').click(); await sleep(20);
-      assert.equal(calls.some(c => c.method === 'DELETE'), false);
-      failTerminal = true;
-      stop('terminal').click(); await sleep(20);
-      w.document.getElementById('modal-confirm-btn').click(); await sleep(50);
-      assert.match(w.document.getElementById('toast-root').textContent, /could not be stopped/);
-      assert.ok(w.document.getElementById('modal-confirm-btn'));
-      failTerminal = false;
-      w.document.getElementById('modal-confirm-btn').click(); await sleep(50);
-      assert.equal(stop('terminal').disabled, true);
-      assert.equal(calls.some(c => /other-stop|dead-stop/.test(c.url)), false);
-      stop('vscode').click(); await sleep(20);
-      assert.match(w.document.querySelector('.modal-body').textContent, /ALL projects/);
-      w.document.getElementById('modal-cancel-btn').click(); await sleep(20);
-      assert.equal(calls.some(c => c.url === '/api/editor' && c.method === 'DELETE'), false);
-      stop('vscode').click(); await sleep(20);
-      w.document.getElementById('modal-confirm-btn').click(); await sleep(30);
-      assert.equal(stop('vscode').disabled, true);
-      assert.equal(stop('chat'), null);
-      assert.equal(calls.some(c => c.method === 'POST' || /\/chat(?:\/|$)/.test(c.url)), false);
-      assert.ok(w.document.querySelector('.workspace-chooser'));
-      editorRunning = true;
-      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
-      w.document.querySelector('.open-workspace-btn').click(); await sleep(400);
-      const staleStop = stop('vscode');
-      assert.equal(staleStop.disabled, false);
-      let finishStatus;
-      const fixtureFetch = w.fetch;
-      w.fetch = (url, opts = {}) => {
-        if (String(url) === '/api/editor' && !opts.method && !finishStatus) {
-          return new Promise(resolve => { finishStatus = () => resolve({ ok: true, json: async () => ({ editor: { running: true } }) }); });
-        }
-        return fixtureFetch(url, opts);
-      };
-      staleStop.click(); await sleep(20);
-      assert.equal(typeof finishStatus, 'function');
-      const stopCalls = calls.filter(c => c.method !== 'GET').length;
-      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
-      finishStatus(); await sleep(20);
-      staleStop.disabled = false;
-      const reads = calls.filter(c => c.url === '/api/editor').length;
-      staleStop.click(); await sleep(20);
-      assert.equal(w.document.getElementById('active-modal-overlay'), null, 'late status cannot open a stop confirmation after navigation');
-      assert.equal(calls.filter(c => c.url === '/api/editor').length, reads, 'detached chooser action cannot even recheck activity');
-      assert.equal(calls.filter(c => c.method !== 'GET').length, stopCalls);
+      assertChooser();
+      assert.equal(calls.some(call => call.method !== 'GET' || call.url.startsWith('/api/terminals?projectId=')), false);
+      w.document.querySelector('[data-workspace-mode="terminal"]').click(); await sleep(100);
+      const viewport = w.document.getElementById('terminal-viewport');
+      assert.ok(viewport);
+      const beforeBack = calls.length;
+      w.document.getElementById('ws-close-mode').click(); await sleep(20);
+      assertChooser();
+      assert.equal(calls.length, beforeBack, 'Back does not query status or stop terminal work');
+      assert.equal(viewport.isConnected, true);
+      assert.ok(viewport.closest('.workspace-container').hasAttribute('inert'));
+      w.document.querySelector('[data-workspace-mode="terminal"]').click(); await sleep(20);
+      assert.equal(w.document.getElementById('terminal-viewport'), viewport);
+      assert.equal(calls.length, beforeBack, 'reopening the mounted terminal does not create another session');
+      w.document.getElementById('ws-close-mode').click();
+      w.document.querySelector('[data-workspace-mode="vscode"]').click(); await sleep(30);
+      assert.ok(w.document.querySelector('.browser-editor'));
+      const beforeEditorBack = calls.length;
+      w.document.getElementById('ws-close-mode').click(); await sleep(20);
+      assertChooser();
+      assert.equal(calls.length, beforeEditorBack, 'Back closes the editor view without a stop/status request');
+      assert.equal(w.document.querySelector('.browser-editor'), null);
+      assert.equal(w.document.getElementById('terminal-viewport'), viewport);
+      assert.equal(calls.some(call => call.method === 'DELETE' || call.url.endsWith('/cancel')), false);
     } finally {
-      w.document.getElementById('modal-cancel-btn')?.click();
       w.fetch = originalFetch;
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
     }

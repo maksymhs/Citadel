@@ -901,11 +901,10 @@ html.is-mobile-ui #app-container {
 .project-system { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
 
 .workspace-chooser { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: 24px; text-align: center; }
-.workspace-chooser p { color: var(--text-secondary); margin: 12px 0 24px; }
-.workspace-mode-cards { display: flex; justify-content: center; flex-wrap: wrap; gap: 16px; }
-.workspace-mode-card { display: flex; flex-direction: column; gap: 12px; width: 220px; padding: 20px; color: var(--text-primary); font: inherit; }
-.workspace-mode-select { display: flex; flex: 1; flex-direction: column; gap: 12px; align-items: center; padding: 8px 0 16px; border: 0; background: none; color: inherit; cursor: pointer; font: inherit; }
-.workspace-mode-card span { color: var(--text-secondary); font-size: 13px; }
+.workspace-mode-cards { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; max-width: 100%; }
+.workspace-mode-card { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; width: 168px; max-width: 100%; min-height: 88px; padding: 20px; color: var(--text-primary); font: inherit; cursor: pointer; }
+.workspace-mode-select:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-hover); }
+.workspace-mode-card span { color: var(--text-secondary); font-size: 12px; }
 .workspace-mode-select:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 3px; }
 .workspace-mode-select:disabled, .ctx-item:disabled { opacity: .5; cursor: not-allowed; }
 .workspace-selecting > :not(.workspace-chooser), .editor-host > :not(.browser-editor) { visibility: hidden; }
@@ -2789,9 +2788,11 @@ label.mon-row:hover { border-color: var(--border-hover); }
 .ts-cmd code { padding: 6px 10px; border-radius: 6px; background: var(--bg-tertiary); font-family: var(--font-mono); font-size: 12px; overflow-x: auto; white-space: nowrap; }
 .ts-url { color: var(--accent-color); font-family: var(--font-mono); word-break: break-all; }
 
-/* Project discovery shares the existing project rows; protocol links stay hidden until valid. */
-.project-discovery { margin-bottom: 20px; }
-.project-discovery .proj-row { margin-top: 12px; gap: 12px; }
+/* Discovery suggestions follow registered projects and never remove folders. */
+.project-discovery { margin-top: 28px; padding: 16px; }
+.project-discovery h3 { margin-bottom: 4px; color: var(--text-secondary); font-size: 13px; font-weight: 500; }
+.project-discovery .proj-row { padding: 12px 0; gap: 12px; }
+.project-discovery .proj-row + .proj-row { border-top: 1px solid var(--border-color); }
 .project-discovery[hidden], #editor-open-link[hidden] { display: none; }
 
 /* Optional browser editor keeps the Citadel return action outside the iframe. */

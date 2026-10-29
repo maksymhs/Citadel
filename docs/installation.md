@@ -138,25 +138,34 @@ requires no sudo and remains off by default. This experimental integration offer
 
 ### Project folders and VS Code
 
+**Projects** shows the **System (host)** terminal first, then imported/registered
+projects, then a compact detected-folders list without introductory copy. Each
+row shows the folder name and path, an **Import folder** action to register it,
+and a dismiss **×**. Dismissing only hides the current discovery suggestion; it
+does not delete files or register the folder. **Refresh** shows it again.
+Dismissing all suggestions hides the section.
+
 Opening **Projects**, or clicking **Refresh**, scans immediate non-hidden folders
-under `PROJECTS_DIR`. Suggestions are read-only; choose **Import folder** to
-register one. Registered projects and associated repositories are excluded, as
-are directory symlinks and `node_modules`. Scans stop after 500 entries or 100
-suggestions and never recurse or execute repository code. Use **Import folder**
-for other folders or to choose a different project name.
+under `PROJECTS_DIR`. The scan remains read-only. Registered projects and
+associated repositories are excluded, as are directory symlinks and
+`node_modules`. Scans stop after 500 entries or 100 suggestions and never recurse
+or execute repository code. Use **Import folder** for other folders or to choose
+a different project name.
 
 Use **Open terminal** or a project's **More actions → VS Code**.
-The workspace chooser has two cards, **Terminal / VS Code**; the sidebar three-dot
-menu also switches modes. First entry waits for a choice, then remembers it per
-owner/panel/host/project, with independent terminal selection and editor state.
+The workspace chooser has two compact whole-card buttons, **Terminal** and
+**VS Code**, with no heading, helper descriptions, running statuses or stop
+controls; the sidebar three-dot menu also switches modes. First entry waits for
+a choice, then remembers it per owner/panel/host/project, with independent
+terminal selection and editor state.
 VS Code embeds inside the workspace with the Citadel sidebar and header visible
 and retains its optional first-use code-server install. The icon-only **Choose
 mode** arrow beside the sidebar toggle returns to the cards and clears only the
 mode selection, preserving mounted terminals, editor state and running work;
 navigating away remembers the mode. Opening remembered VS Code never creates a
-terminal. Confirmed stop controls target registered project terminals or the
-shared editor across **all projects**; save editor work first. Merely checking
-status or returning to the chooser starts or stops nothing.
+terminal. Returning to the chooser starts or stops nothing. Existing terminal
+controls and the standalone editor's explicit **Stop editor** action remain
+unchanged and separate from the chooser.
 
 Browser VS Code requires administrator access and runs only on the machine
 serving the panel; paired-machine editor transport is unsupported, so open that
