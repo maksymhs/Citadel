@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.58.0](https://github.com/maksymhs/Citadel/releases/tag/v0.58.0) · 2026-10-29
+
+### Added
+
+- **workspace**: Simplify project navigation and add chat commands
+
 ## [0.57.0](https://github.com/maksymhs/Citadel/releases/tag/v0.57.0) · 2026-10-28
 
 ### Added

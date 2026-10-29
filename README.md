@@ -195,6 +195,7 @@ Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, wit
 
 | Latest | |
 | --- | --- |
+| [v0.58.0](https://github.com/maksymhs/Citadel/releases/tag/v0.58.0) | Projects-first navigation, collapsible sidebar, scoped mode stops, safer project removal and Chat slash commands |
 | [v0.57.0](https://github.com/maksymhs/Citadel/releases/tag/v0.57.0) | Native Chat, remembered Chat/Terminal/VS Code workspaces and a single global-header close action |
 | [v0.56.0](https://github.com/maksymhs/Citadel/releases/tag/v0.56.0) | AI Gateway By role and Balanced routing, plus ChatGPT-first Auto |
 | [v0.55.0](https://github.com/maksymhs/Citadel/releases/tag/v0.55.0) | Guided AI Gateway setup for Claude Code, OpenCode and experimental Codex CLI routing |
