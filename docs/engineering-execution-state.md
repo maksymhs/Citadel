@@ -838,3 +838,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Verification: focused System/jsdom UI suites passed 51/51. Regression coverage checks the exact same top-bar button/icon for Settings and all three System details, Back to cards, stale navigation, and computed desktop grid rules. Initial expanded smoke runs failed because repeated real CLI-version probes delayed later requests; the added navigation test now fakes only that unrelated read-only integrations endpoint and the rerun passed.
 - Gaps: no real-browser/mobile visual check; README screenshots not regenerated because browser tooling is unavailable. Not committed or released.
 - Final verification: TMPDIR=/var/tmp npm test ran 675 tests: 674 passed, 0 failed, 1 skipped (log /var/tmp/citadel-back-grid-full.log). npm run lint and git diff --check passed.
+
+## 180. Release v0.64.0
+- Packages entry 179: System details reuse Settings' top-bar Back arrow; desktop Settings shows three equal tiles per row, retaining the narrow-screen single-column fallback.
+- Bumps package/lock versions to 0.64.0, all 17 frontend asset tokens to v0640 and README Latest. CHANGELOG.md is generated using the local version tag, amended into the release commit, and the tag moved before publication.
+- Verification: implementation full isolated suite passed 674/675 tests (0 failed, 1 skipped; /var/tmp/citadel-back-grid-full.log). After the version bump, release-notes tests passed 3/3, lint and git diff --check passed, and assertions verified package/lock version agreement and all 17 asset tokens. The full suite was not rerun for metadata-only changes.
+- Gaps: no real-browser/mobile visual check; README screenshots not regenerated because browser tooling is unavailable. No live-host installation, update or restart performed.

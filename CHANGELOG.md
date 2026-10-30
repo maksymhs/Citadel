@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.64.0](https://github.com/maksymhs/Citadel/releases/tag/v0.64.0) · 2026-10-30
+
+### Fixed
+
+- **panel**: Unify System Back arrow and show three Settings tiles per row
+
 ## [0.63.0](https://github.com/maksymhs/Citadel/releases/tag/v0.63.0) · 2026-10-30
 
 ### Added
