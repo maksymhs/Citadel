@@ -2,6 +2,13 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.61.0](https://github.com/maksymhs/Citadel/releases/tag/v0.61.0) · 2026-10-30
+
+### Added
+
+- **panel**: Add System controls and simplify workspaces and Settings
+- **updates**: Roll out latest stable after the initiating machine restarts
+
 ## [0.60.0](https://github.com/maksymhs/Citadel/releases/tag/v0.60.0) · 2026-10-29
 
 ### Added

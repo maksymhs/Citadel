@@ -199,6 +199,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 | Latest | |
 | --- | --- |
+| [v0.61.0](https://github.com/maksymhs/Citadel/releases/tag/v0.61.0) | System runtime controls, Workspace Close all, guarded folder deletion, minimal Settings and sequential stable updates across paired machines |
 | [v0.60.0](https://github.com/maksymhs/Citadel/releases/tag/v0.60.0) | Minimal Terminal/VS Code chooser, non-destructive Back, registered projects above dismissible folder suggestions |
 | [v0.59.0](https://github.com/maksymhs/Citadel/releases/tag/v0.59.0) | Terminal/VS Code-only workspaces, native Chat GUI removed, compact mode arrow beside the sidebar toggle |
 | [v0.58.0](https://github.com/maksymhs/Citadel/releases/tag/v0.58.0) | Projects-first navigation, collapsible sidebar, scoped mode stops, safer project removal and Chat slash commands |
