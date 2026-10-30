@@ -101,9 +101,9 @@ function selfUpdateUsable() {
 function getChannel() {
   try {
     const value = fs.readFileSync(UPDATE_CHANNEL_PATH, 'utf8').trim();
-    return CHANNELS.includes(value) ? value : 'main';
+    return CHANNELS.includes(value) ? value : 'stable';
   } catch {
-    return 'main';
+    return 'stable';
   }
 }
 
@@ -184,7 +184,8 @@ async function fetchLatestTag(headers) {
     if (Array.isArray(tags)) {
       candidates = tags
         .map((t) => (t ? t.name : null))
-        .filter((name) => /^v?\d+\.\d+/.test(String(name || '')))
+        // Match the exact release tags accepted by both updater scripts.
+        .filter((name) => /^v\d+\.\d+\.\d+$/.test(String(name || '')))
         .map((name) => ({
           version: stripV(name),
           name,
@@ -197,7 +198,7 @@ async function fetchLatestTag(headers) {
     const releaseRes = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, { headers });
     if (releaseRes.ok) {
       const rel = await releaseRes.json();
-      if (rel && rel.tag_name) {
+      if (rel && /^v\d+\.\d+\.\d+$/.test(String(rel.tag_name || ''))) {
         candidates.push({
           version: stripV(rel.tag_name),
           name: rel.name || rel.tag_name,
@@ -216,13 +217,13 @@ async function fetchLatestTag(headers) {
   return latest;
 }
 
-async function checkForUpdates({ force = false } = {}) {
+async function checkForUpdates({ force = false, channel = getChannel() } = {}) {
+  if (!CHANNELS.includes(channel)) throw new Error('Unknown update channel.');
   const now = Date.now();
-  if (!force && cache.data && now - cache.at < CACHE_TTL_MS) {
+  if (!force && cache.data && cache.data.channel === channel && now - cache.at < CACHE_TTL_MS) {
     return cache.data;
   }
 
-  const channel = getChannel();
   const result = {
     version: APP_VERSION,
     commit: getCurrentCommit(),

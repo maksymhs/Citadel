@@ -148,9 +148,13 @@ async function systemRoutes(fastify) {
   });
 
   // Check GitHub for a newer release/tag
-  fastify.get('/api/system/updates', async (request) => {
+  fastify.get('/api/system/updates', async (request, reply) => {
     const force = request.query?.force === 'true';
-    return { updates: await updateService.checkForUpdates({ force }) };
+    const channel = request.query?.channel;
+    if (channel && !['stable', 'main'].includes(channel)) {
+      return reply.code(400).send({ error: 'Unknown update channel.' });
+    }
+    return { updates: await updateService.checkForUpdates({ force, channel }) };
   });
 
   // Trigger an update: prefers the privileged helper, falls back to the
@@ -159,23 +163,55 @@ async function systemRoutes(fastify) {
     // A peer that is rolling an update out asks us to update without passing it
     // on again (no cascading rollouts, and no legacy CITADEL_PEERS fan-out).
     const propagated = Boolean(request.body && request.body.propagated);
+    const channel = request.body?.channel || updateService.getChannel();
+    if (!['stable', 'main'].includes(channel)) {
+      return reply.code(400).send({ error: 'Unknown update channel.' });
+    }
+    const pending = updateRolloutService.getPendingUpdate();
+    const previous = updateService.getUpdateStatus().status;
+    const failed = pending && previous?.state === 'failed'
+      && (!pending.requestedAt || previous.finishedAt >= pending.requestedAt);
+    if ((pending && !failed) || updateRolloutService.isRolloutRunning()) {
+      return reply.code(409).send({ error: 'An update or paired-machine rollout is already pending on this machine.' });
+    }
+    if (failed) updateRolloutService.cancelFleetUpdate();
+    let marked = false;
     try {
+      const capability = updateService.getVersionInfo();
+      if (!capability.canUpdate) throw new Error(`In-panel updates are unavailable: ${capability.updateProblem || 'updater not configured'}`);
+      let target;
+      if (!propagated && channel === 'stable') {
+        const latest = await updateService.checkForUpdates({ force: true, channel });
+        if (latest.error || !latest.latest) throw new Error(latest.error || 'No stable release found.');
+        target = latest.latest;
+      }
+      // The release lookup yields; recheck before changing persistent state.
+      if (updateRolloutService.getPendingUpdate() || updateRolloutService.isRolloutRunning()) {
+        return reply.code(409).send({ error: 'An update or paired-machine rollout is already pending on this machine.' });
+      }
+      // Persist the explicit choice so both the root helper and built-in updater
+      // deploy the release checked by the panel, including older main installs.
+      updateService.setChannel(channel);
       if (propagated) updateRolloutService.markPropagatedUpdate();
-      // "Update now" covers every paired machine: this one updates first and,
-      // once back up, the pending flag rolls the update out to the others.
-      else updateRolloutService.requestFleetUpdate();
-      const res = await updateService.triggerUpdate({ fanout: !propagated });
+      // This machine is the canary. Paired machines are touched only after its
+      // healthy restart; legacy peer fan-out would bypass that safeguard.
+      else updateRolloutService.requestFleetUpdate({ channel, target });
+      marked = true;
+      const res = await updateService.triggerUpdate({ fanout: false });
       auditService.logAction({
         userId: request.user.id,
         action: 'system_update_triggered',
         targetType: 'system',
         targetId: 'citadel',
+        details: { channel, propagated, scope: propagated ? 'local' : 'paired-machines' },
         ip: request.ip,
       });
       return res;
     } catch (err) {
-      if (propagated) updateRolloutService.clearPropagatedUpdate();
-      else updateRolloutService.cancelFleetUpdate();
+      if (marked) {
+        if (propagated) updateRolloutService.clearPropagatedUpdate();
+        else updateRolloutService.cancelFleetUpdate();
+      }
       return reply.status(400).send({ error: err.message });
     }
   });
@@ -188,6 +224,14 @@ async function systemRoutes(fastify) {
   fastify.put('/api/system/update/channel', { preHandler: requireAdmin }, async (request, reply) => {
     try {
       const channel = updateService.setChannel(String((request.body && request.body.channel) || ''));
+      auditService.logAction({
+        userId: request.user.id,
+        action: 'system_update_channel_changed',
+        targetType: 'system',
+        targetId: 'citadel',
+        details: { channel },
+        ip: request.ip,
+      });
       return { channel };
     } catch (err) {
       return reply.code(400).send({ error: err.message });
@@ -198,11 +242,15 @@ async function systemRoutes(fastify) {
   // this only reports the last rollout.
   fastify.get('/api/system/update/propagate', { preHandler: requireAdmin }, async () => ({
     lastRollout: updateRolloutService.getLastRollout(),
+    pendingUpdate: updateRolloutService.getPendingUpdate(),
   }));
 
   // Update the paired machines that are behind this one, now. Runs in the
   // background; progress is read from the propagate endpoint.
-  fastify.post('/api/system/update/rollout', { preHandler: requireAdmin }, async (request) => {
+  fastify.post('/api/system/update/rollout', { preHandler: requireAdmin }, async (request, reply) => {
+    if (updateRolloutService.getPendingUpdate()) {
+      return reply.code(409).send({ error: 'Wait for the local update before updating paired machines.' });
+    }
     updateRolloutService.rollout().catch(() => {});
     auditService.logAction({
       userId: request.user.id,
