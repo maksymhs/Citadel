@@ -25,6 +25,21 @@ function round(value, decimals = 1) {
   return Math.round(value * factor) / factor;
 }
 
+// Linux start ticks plus the current boot ID distinguish a PID from an older
+// process that occupied the same number. Never use command text as an identity.
+function parseLinuxProcessIdentity(pid, stat, status, bootId) {
+  const closeParen = stat.lastIndexOf(')');
+  if (!stat.startsWith(`${pid} (`) || closeParen < 0) return null;
+  const rest = stat.slice(closeParen + 2).trim().split(/\s+/);
+  const ppid = Number(rest[1]);
+  const startTicks = rest[19]; // /proc/PID/stat field 22, after stripping comm.
+  const owner = status.match(/^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$/m);
+  if (!Number.isSafeInteger(ppid) || ppid < 0 || !/^\d+$/.test(startTicks || '') || !owner) return null;
+  const uids = owner.slice(1).map(Number);
+  if (uids.some(uid => !Number.isSafeInteger(uid) || uid < 0 || uid > 4294967295)) return null;
+  return { pid, ppid, uid: uids[0], uids, identity: `linux:${bootId}:${pid}:${startTicks}` };
+}
+
 class INodeService {
   async getNodeInfo() {
     throw new Error('getNodeInfo() must be implemented.');
@@ -184,6 +199,58 @@ class LocalNodeService extends INodeService {
     return this._formatProcessResult(fallback, limit, totalMem);
   }
 
+  _getLinuxBootId() {
+    if (!this._linuxBootId) {
+      const bootId = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+      if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(bootId)) {
+        throw Object.assign(new Error('Process identity is unavailable.'), { code: 'EPROCESS' });
+      }
+      this._linuxBootId = bootId;
+    }
+    return this._linuxBootId;
+  }
+
+  /** Fresh synchronous identity/ownership read used by the process-control guard. */
+  readProcessIdentity(pid) {
+    if (process.platform !== 'linux' || typeof process.geteuid !== 'function') {
+      throw Object.assign(new Error('Safe process control is unavailable on this platform.'), { code: 'ENOTSUP' });
+    }
+    if (!Number.isSafeInteger(pid) || pid < 1 || pid > 2147483647) {
+      throw Object.assign(new Error('Invalid process ID.'), { code: 'EINVAL' });
+    }
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const status = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
+    const bootId = this._getLinuxBootId();
+    const identity = parseLinuxProcessIdentity(pid, stat, status, bootId);
+    if (!identity) throw Object.assign(new Error('Process identity is unavailable.'), { code: 'EPROCESS' });
+    const verified = parseLinuxProcessIdentity(pid, fs.readFileSync(`/proc/${pid}/stat`, 'utf8'), status, bootId);
+    if (!verified || verified.identity !== identity.identity) {
+      throw Object.assign(new Error('Process identity changed during inspection.'), { code: 'ESTALE' });
+    }
+    return identity;
+  }
+
+  /** Fail closed if the complete current service ancestry cannot be established. */
+  getProcessControlContext() {
+    if (process.platform !== 'linux' || typeof process.geteuid !== 'function') {
+      throw Object.assign(new Error('Safe process control is unavailable on this platform.'), { code: 'ENOTSUP' });
+    }
+    const protectedPids = new Set([1, process.pid, process.ppid]);
+    const visited = new Set();
+    let pid = process.pid;
+    while (pid > 1) {
+      if (visited.has(pid) || visited.size >= 128) {
+        throw Object.assign(new Error('Process ancestry is unavailable.'), { code: 'EPROCESS' });
+      }
+      visited.add(pid);
+      const info = this.readProcessIdentity(pid);
+      protectedPids.add(pid);
+      protectedPids.add(info.ppid);
+      pid = info.ppid;
+    }
+    return { uid: process.geteuid(), protectedPids };
+  }
+
   /**
    * Read /proc once and compute per-process CPU from the previous sample.
    * Returns null when /proc is unavailable so the caller can fall back to ps.
@@ -213,6 +280,8 @@ class LocalNodeService extends INodeService {
 
     const sample = new Map();
     const processes = [];
+    let bootId = null;
+    try { bootId = this._getLinuxBootId(); } catch { /* Listing remains read-only when safe control is unavailable. */ }
 
     for (const pidStr of pids) {
       const pid = Number(pidStr);
@@ -250,7 +319,8 @@ class LocalNodeService extends INodeService {
       const rssMatch = status.match(/VmRSS:\s+(\d+)\s+kB/);
       if (rssMatch) rssBytes = Number(rssMatch[1]) * 1024;
 
-      processes.push({ pid, name, cpuPercent, rssBytes });
+      const identity = bootId ? parseLinuxProcessIdentity(pid, stat, status, bootId) : null;
+      processes.push({ pid, name, cpuPercent, rssBytes, ...identity });
     }
 
     this._lastProcSample = { time: now, totalJiffies, procs: sample };
@@ -288,6 +358,8 @@ class LocalNodeService extends INodeService {
 
   _formatProcessResult(processes, limit, totalMem) {
     processes.sort((a, b) => (b.cpuPercent - a.cpuPercent) || (b.rssBytes - a.rssBytes));
+    let control = null;
+    try { control = this.getProcessControlContext(); } catch { /* Read-only fallback, never guess ownership/ancestry. */ }
 
     const top = processes.slice(0, limit).map((proc) => ({
       pid: proc.pid,
@@ -295,6 +367,10 @@ class LocalNodeService extends INodeService {
       cpuPercent: round(Math.max(proc.cpuPercent, 0), 1),
       memPercent: totalMem ? round((proc.rssBytes / totalMem) * 100, 1) : 0,
       rssBytes: proc.rssBytes,
+      identity: proc.identity || null,
+      uid: proc.uid ?? null,
+      canTerminate: !!(control && proc.identity && proc.uids?.length === 4 &&
+        proc.uids.every(uid => uid === control.uid) && !control.protectedPids.has(proc.pid)),
     }));
 
     return {

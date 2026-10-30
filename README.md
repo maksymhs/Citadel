@@ -159,7 +159,9 @@ Every extra capability is opt-in:
 
 To just look at the panel without installing anything on the machine, there is a development-only Docker image: `docker compose up --build` (see [docs/installation.md](docs/installation.md#try-it-without-installing-docker)). It is not the supported deployment.
 
-Projects opens with **System (host)** terminals, followed by registered projects and a compact detected-folders list. Use **Import folder** or **×** to hide a suggestion without deleting files; **Refresh** shows dismissed folders again. Open a project with **Open** or use **More actions → VS Code**.
+Projects shows registered projects above compact **Detected folders**. Use **Import folder** to register one, **×** to hide a suggestion until Refresh, or the administrator-only **Delete** action to permanently remove an unregistered folder after typing its exact path. **System (host)** terminals live under **Workspace**, not Projects. Open a project with **Open** or use **More actions → VS Code**.
+
+**Dashboard** shows machine Overview only. **System** brings together processes, persistent terminals, shared browser VS Code and installed tools for the selected machine. Explicit confirmed controls stop terminals/editor or signal eligible Linux service-user processes; browsing these screens stops nothing. **Settings** is a compact list of sections, without system diagnostics or descriptive cards. **Machines → Show pairing QR** generates a code only when requested; **Activity & Audit** opens its log tabs directly.
 
 Project workspaces offer just two compact whole-card buttons, **Terminal** and **VS Code**, with no heading, helper descriptions, running statuses or stop controls. They remember the choice and independent workspace state per owner/machine/project. VS Code stays inside Citadel with the sidebar visible; the icon-only **Choose mode** arrow beside the sidebar toggle returns to the chooser, preserving terminals, editor processes and state. Existing terminal controls and the standalone editor's explicit stop action remain unchanged. Opening remembered VS Code does not create a terminal; an old saved Chat mode returns to the chooser without starting work. The sidebar Workspace group reflects observed terminals and browser-local editor hints, not saved mode choices. **Remove from Citadel** keeps files; disk deletion requires exact-path confirmation. Server safeguards still refuse live terminals, the shared editor or any owner's active legacy Chat engine. Browser VS Code requires the machine's own panel, not paired-machine transport. OpenCode and other terminal agents and AI Gateway remain available; the native Chat GUI is removed without deleting saved data or stopping existing engines. [Setup and limits](docs/installation.md#project-folders-and-vs-code).
 
@@ -193,7 +195,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 ## 📦 Releases
 
-Citadel follows `vX.Y.Z` tags. The panel checks GitHub for new releases and, with the updater installed, updates itself in one click and propagates the update to your paired machines. Pick the **stable** channel (latest release tag) or **main** (latest commit) in **Settings → Updates**.
+**Settings → Updates** uses the latest **stable** `vX.Y.Z` release, with just **Check** and **Update**. Check is read-only; Update explicitly updates the selected machine first, then its paired machines one at a time after a healthy restart. Progress survives restarts and reports halted or partial outcomes. See [updater details and limitations](docs/installation.md#in-panel-updater); CLI/API channel controls remain available.
 
 | Latest | |
 | --- | --- |

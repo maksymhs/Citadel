@@ -2,9 +2,9 @@
 
 ## Access from your phone (no domain needed)
 
-The installer and `citadel qr` print a scannable one-time pairing QR code, and **Settings → Connection** shows a fresh pairing code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise an active **Cloudflare Quick Tunnel**, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
+The installer and `citadel qr` print a scannable one-time pairing QR code, and **Settings → Machines → Show pairing QR** shows a fresh pairing code. The encoded address is chosen automatically: an explicit `CITADEL_PUBLIC_URL`, otherwise an active **Cloudflare Quick Tunnel**, otherwise a **Tailscale** `*.ts.net` address, otherwise the LAN IP (which only works on the same Wi-Fi).
 
-The same code does both jobs: scanning it with any camera app opens the panel, while scanning it from another Citadel's **Pair a machine** screen pairs the two hosts. **Settings → Connection** always shows a fresh single-use pairing code (it expires in 10 minutes); use **New code** to generate another one.
+The same code does both jobs: scanning it with any camera app opens the panel, while scanning it from another Citadel's **Pair a machine** screen pairs the two hosts. **Settings → Machines → Show pairing QR** explicitly generates a fresh single-use pairing code (it expires in 10 minutes); use **New code** to generate another one. Opening Settings or Machines alone does not generate a code. The QR, full copyable link, expiry and reachability warnings appear in a dialog, not on the Settings hub.
 
 > **Camera on a phone:** the live in-browser camera requires HTTPS (or `localhost`). When the panel is opened over plain HTTP, or in a browser without live QR support, pairing still works with **Take a photo of the QR** (native camera capture) or by pasting the link.
 
@@ -12,7 +12,7 @@ The same code does both jobs: scanning it with any camera app opens the panel, w
 
 The machine selector above the sidebar lists this host plus every paired machine with a live status dot. **Pair a machine…** accepts a scanned or pasted code:
 
-1. On machine A: open **Settings → Connection** to show the dual-purpose QR.
+1. On machine A: open **Settings → Machines → Show pairing QR** to show the dual-purpose QR.
 2. On machine B: sidebar → machine selector → **Pair a machine…**, then scan the code (live camera or photo) or paste its link.
 3. Both sides store each other. Use the selector to jump between them; the browser URL never changes.
 
@@ -22,7 +22,7 @@ Peer credentials are separate per direction: the inbound token is stored only as
 
 ## Credentials follow the pairing
 
-A pairing code created in **Settings → Connection** (the startup/installer QR does not, as it has no administrator attached) also merges the encrypted credential vault in both directions: environment variables, GitHub/GitLab tokens and the other vault entries (SSH keys, files). The merge runs server-to-server with the paired peer token, so values never reach the browser. The newest `updated_at` wins, equal values are skipped, and deletions stay local. For safety it only runs over HTTPS (or loopback); pairing over a plain-HTTP LAN address still succeeds but skips the merge. Use **Settings → Machines → Sync credentials** to merge again after adding or rotating a token.
+A pairing code created in **Settings → Machines → Show pairing QR** (the startup/installer QR does not, as it has no administrator attached) also merges the encrypted credential vault in both directions: environment variables, GitHub/GitLab tokens and the other vault entries (SSH keys, files). The merge runs server-to-server with the paired peer token, so values never reach the browser. The newest `updated_at` wins, equal values are skipped, and deletions stay local. For safety it only runs over HTTPS (or loopback); pairing over a plain-HTTP LAN address still succeeds but skips the merge. Use **Settings → Machines → Sync credentials** to merge again after adding or rotating a token.
 
 ## Stable URL on your own domain (named tunnel)
 
@@ -33,7 +33,7 @@ citadel tunnel --domain=citadel.example.com --token=<TOKEN>
 citadel tunnel --quick     # back to a random trycloudflare.com URL
 ```
 
-**From the panel:** run `sudo citadel tunnel setup` once (installs `cloudflared` and a scoped root helper; the installer already does it), then open **Settings → Tunnel (your own domain)**, enter the hostname and click *Connect domain*. You authorize once in Cloudflare and the panel creates the tunnel, the DNS record and starts the service; the login certificate is deleted afterwards and only the tunnel token is kept.
+**From the panel:** run `sudo citadel tunnel setup` once (installs `cloudflared` and a scoped root helper; the installer already does it), then open **Settings → Network & access → Tunnel (your own domain)**, enter the hostname and click *Connect domain*. You authorize once in Cloudflare and the panel creates the tunnel, the DNS record and starts the service; the login certificate is deleted afterwards and only the tunnel token is kept.
 
 The URL survives restarts and reboots, and the panel, QR and pairing use it automatically. The token is stored in `data/tunnel-token` (mode 600).
 

@@ -1,5 +1,5 @@
 /**
- * Pairing: the Pair a machine modal and pairing-link handling
+ * Pairing: on-demand invitation QR, Pair a machine modal and pairing-link handling
  * Loaded before app.js; app.js passes the shared helpers in through init(), so
  * this file does not reach into app.js internals.
  */
@@ -16,8 +16,61 @@
     ({ api, escapeHtml, loadHosts, openModal, refreshHostStatus, renderSidebarNav, showToast, state, switchHost } = ctx);
   }
 
+  // Invitations grant peer access, so opening Settings must not mint one.
+  function showInviteModal() {
+    if (state.user?.role !== 'admin') return;
+    const userId = state.user.id, hostId = state.activeHostId;
+    let open = true;
+    openModal({
+      title: `Pairing QR · ${state.hostIdentity?.name || 'This panel'}`,
+      bodyHtml: '<div id="pair-invite" role="status"></div>',
+      confirmText: 'Done',
+      onClose: () => { open = false; },
+    });
+    const body = document.getElementById('pair-invite');
+    const present = () => open && body.isConnected && state.user?.id === userId
+      && state.user?.role === 'admin' && state.activeHostId === hostId;
+    const load = async () => {
+      if (!present()) return;
+      body.innerHTML = '<p class="mon-muted">Creating pairing code…</p>';
+      try {
+        const result = await api('/api/pair/invite', { method: 'POST' });
+        if (!present()) return;
+        const invite = result.invite;
+        if (!invite?.qrSvg || !invite.link) throw new Error('Pairing code unavailable.');
+        body.innerHTML = `
+          <p>Scan to open this panel or pair from another Citadel.</p>
+          <div class="settings-hero-qr"><div class="connect-qr">${invite.qrSvg}</div></div>
+          <p class="settings-hero-status">Works once · expires ${escapeHtml(new Date(invite.expiresAt).toLocaleTimeString())}.</p>
+          ${invite.reachableWarning ? `<p class="settings-warn">${escapeHtml(invite.reachableWarning)}</p>` : ''}
+          <input class="form-input" id="pair-invite-link" aria-label="Pairing link" readonly value="${escapeHtml(invite.link)}" />
+          <div class="settings-hero-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="pair-invite-copy">Copy link</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="pair-invite-new">New code</button>
+          </div>
+          <p class="settings-hero-status">Pairing also merges both credential vaults over HTTPS. For private access, configure Tailscale in Settings → Network &amp; access.</p>`;
+        body.querySelector('#pair-invite-new').onclick = load;
+        body.querySelector('#pair-invite-copy').onclick = async () => {
+          if (!present()) return;
+          try {
+            await navigator.clipboard.writeText(invite.link);
+            if (present()) showToast('Pairing link copied.', 'success');
+          } catch {
+            if (present()) showToast('Could not copy. Select and copy the link above.', 'error');
+          }
+        };
+      } catch (err) {
+        // A plain-address QR opens the panel but cannot pair; never substitute it.
+        if (!present()) return;
+        body.innerHTML = `<p class="settings-warn">Could not create a pairing code: ${escapeHtml(err.message)}</p><button type="button" class="btn btn-secondary btn-sm" id="pair-invite-retry">Retry</button>`;
+        body.querySelector('#pair-invite-retry').onclick = load;
+      }
+    };
+    load();
+  }
+
   // --- Pairing UI -----------------------------------------------------------
-  // The other machine's QR lives in Settings → Connection. This modal only
+  // The other machine's QR lives in Settings → Machines → Show pairing QR. This modal only
   // reads it: the payload travels in the URL fragment so it is never sent in a
   // request line or logged by a reverse proxy.
   function showPairModal(initialCode = null) {
@@ -26,7 +79,7 @@
       title: 'Pair a machine',
       bodyHtml: `
         <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
-          Scan the QR shown in <strong>Settings → Connection</strong> on the other Citadel,
+          Scan the QR shown in <strong>Settings → Machines → Show pairing QR</strong> on the other Citadel,
           or paste its pairing link. Both machines end up paired, so either one can switch
           to the other. Codes created in Settings also merge the credential vault in both
           directions, so tokens and env vars do not need to be entered twice (HTTPS only).
@@ -269,5 +322,5 @@
     return true;
   }
 
-  window.CitadelPairing = { init, showPairModal, maybeOpenPairingLink };
+  window.CitadelPairing = { init, showInviteModal, showPairModal, maybeOpenPairingLink };
 })();

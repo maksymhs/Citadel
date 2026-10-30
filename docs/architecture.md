@@ -58,9 +58,22 @@ Some APIs always stay local (`LOCAL_ONLY_API` in `app.js`: auth, pairing, host l
 
 `monitorService.js` runs in each panel: every 60 s it probes this machine and every paired one (latency, load, memory, disk, uptime, version, temperature), stores samples in `host_checks` (30 days) and computes 24 h / 7 d availability. A machine is **offline after two failed checks in a row**. Alerts (offline, disk, memory, CPU) show in the panel and can be pushed once at start and once at recovery to a webhook, ntfy or Telegram. `securityAlertService.js` reuses the same channels for security events (new sign-in address, failed-login bursts, a machine pairing in, setup code replaced, password reset). Monitoring is per panel: a machine cannot alert about its own outage.
 
+Dashboard's machine pane exposes only Overview health/history. Runtime management
+lives in the standalone `public/js/system.js` screen, initialized by the SPA shell:
+selected-host API paths are captured for processes, terminals, shared VS Code and
+tools. Leaving the view invalidates requests and polling; destructive confirmations
+also recheck account/role/host. General signals use `processControlRoutes` and
+`processControlService`, with Linux boot/start identity and UID/ancestry checks in
+`nodeService`; accepted signal delivery is not proof of exit. Managed terminal/editor
+stops reuse their existing authorization and audit paths. See [boundaries](security.md#system-management-boundaries).
+
 ## 6. Updates
 
-`updateService.js` reports the running version and checks GitHub. The **stable** channel follows the newest `vX.Y.Z` tag, **main** follows the latest commit (`scripts/update.sh`). The actual update runs through a root-owned helper (Linux, installed by default) or `install-macos.sh --update`; it snapshots the SQLite database first and rolls back code and database if the new version fails. After a healthy update, `updateRolloutService.js` updates paired machines one at a time, waiting for each to come back on the new version and stopping at the first that does not.
+`updateService.js` reports the running version and checks GitHub. **Settings → Updates** has only **Check** and **Update**, targeting the selected machine and the machines paired with it. The panel always uses the latest **stable** `vX.Y.Z` release; **main** (branch head) remains supported by the CLI/API. Opening the view and Check are read-only: the stable check does not change a saved channel or launch any updater.
+
+An authenticated administrator's explicit Update preflights the stable release, persists its channel, expected version and request time, and starts the selected machine only. The root-owned helper (Linux, installed by default) is preferred; an enabled, usable built-in updater is the unprivileged fallback. Legacy shared-token peer fanout is suppressed on this route so it cannot bypass the local canary. After restart, `updateRolloutService.js` resumes the durable request, refuses a reported local failure or unexpected version/rollback, and updates every paired machine sequentially, including same-version peers. Each peer's channel is set through its authenticated admin endpoint before a propagated local-only update request; peers cannot cascade. The rollout waits for each peer's completion and expected stable version, stops on offline/failure/timeout, and reports unavailable updaters as skipped/partial. Startup after other version upgrades can also update paired machines that are behind using the existing sequential safeguards.
+
+The panel reads pending/local status and the persisted rollout summary across restarts, showing halted, partial and unconfirmed outcomes rather than treating a request as completion. The privileged helper snapshots SQLite and can roll back code and database, but does not write structured update status: failure before any restart can leave a pending request with unconfirmed progress. Monitoring eventually times out visibly; opening or checking the view never retries or starts an update.
 
 ## 7. Terminals and agents
 
@@ -69,6 +82,8 @@ Each terminal is a `tmux` session `citadel_<project_slug>_<id>`; `node-pty` runs
 Terminal clipboard image paste uploads the image to the active terminal's host via an authenticated API (forwarded by `remoteProxyRoutes.js` for paired hosts). The terminal image service validates type, size and file signature, then asks `fsAgent.js` to create a private temporary file as the terminal's OS identity. The UI inserts the resulting path with xterm's paste API, never image bytes or an implicit Enter. See [the image paste limits](security.md#deployment-details).
 
 ## 8. Reachability
+
+The Settings hub is navigation-only and performs no section-data or pairing-invite requests. Secondary screens fetch their own settings, address, version or vault data as needed, with detached-view and host/account guards. `pairing.js` creates an administrator invitation only after **Machines → Show pairing QR** (or **New code**), preserving single-use expiry, copyable links and reachability warnings in a dialog. Late responses cannot rewrite a closed/replacement dialog or a changed host/account scope. Pairing remains owned by the panel's local host even when another machine is selected.
 
 `connectService.js` works out the panel's address (configured URL, Cloudflare or Tailscale, LAN, public IP) and its QR codes, for the panel, `citadel url|qr` and the installers. Public access is opt-in: a Cloudflare Quick Tunnel (`tunnelService.js` plus `citadel-tunnel.service` or the launchd job), a named tunnel on your own domain (`cloudflareTunnelService.js`) or a private tailnet HTTPS address (`tailscaleService.js`, `tailscale serve`, never funnel). Details in [remote-access.md](remote-access.md).
 
@@ -129,10 +144,10 @@ demand through an administrator-only HTTP/WebSocket bridge to a protected loopba
 listener. Browser/peer credentials are not passed upstream; a return action remains
 outside its iframe. Its install, lifecycle and native terminal gateway paths are unchanged.
 
-Projects is the first-entry screen: the System (host) terminal card comes first,
-then imported/registered projects, then a compact detected-folders list without
-introductory copy. Each discovery row shows name/path, **Import folder** and a
-dismiss **×**. Dismissal only hides the current suggestion, without deleting files
+Projects is the first-entry screen: registered/imported projects precede compact
+detected folders. System (host) is instead the first Workspace entry for admins.
+Each discovery row shows name/path, **Import folder**, dismiss **×** and a distinct
+admin-only **Delete** action with exact-path confirmation. Dismissal only hides the current suggestion, without deleting files
 or registering a project; Refresh restores it, and dismissing all suggestions
 hides the section. Discovery remains read-only and non-recursive under
 `PROJECTS_DIR`, excluding hidden folders, directory symlinks, `node_modules`,
@@ -147,8 +162,10 @@ preserving independent terminal selection and editor state. The icon-only
 returns to the chooser, preserving mounted terminals and editor processes;
 navigation and mode switching do not stop work. An old saved Chat mode returns
 to the chooser without starting a runtime. Opening remembered VS Code does not
-create a terminal. Existing terminal controls and the standalone editor's
-explicit stop action remain separate and unchanged.
+create a terminal. Workspace's three-dot **Close all** confirms stopping every
+terminal in that context and, for projects, the shared editor (with an all-project
+warning). It refreshes runtime observations and reports partial failures instead
+of pretending everything closed; registration is retained.
 
 The sidebar Workspace group is derived from observed terminal activity and
 browser-local editor hints, not saved mode choices or legacy Chat activity. The

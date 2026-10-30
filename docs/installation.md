@@ -136,14 +136,32 @@ running `opencode` or `codex`. Native CLI installations are still required.
 Exit Claude and reopen an existing project terminal after activation. It binds only to loopback,
 requires no sudo and remains off by default. This experimental integration offers opt-in Auto fallback after both providers are connected. See [setup and limitations](ai-gateway.md).
 
+### System management
+
+**Dashboard** contains machine **Overview** only; Projects is managed separately.
+Open **System** for the selected machine's **Processes**, **Terminals**, **VS Code**
+and **Tools**. Browsing/refreshing these screens never stops work. Administrator
+controls confirm destructive effects and name the target machine before sending
+anything. Process **Stop** sends TERM; **Force kill** sends KILL separately, with no
+automatic escalation. Only eligible service-user processes on Linux are actionable;
+other platforms and protected processes remain read-only. A sent signal does not
+prove exit—refresh to check. Terminal stops end their running commands; VS Code
+stop affects its shared instance across projects. Tools retains agent install,
+reinstall/update and managed-launcher removal actions, not automatic installs.
+
+**Settings → Activity & Audit** opens the Activity/Audit/Service log view directly;
+Back returns to the Settings hub.
+
 ### Project folders and VS Code
 
-**Projects** shows the **System (host)** terminal first, then imported/registered
-projects, then a compact detected-folders list without introductory copy. Each
-row shows the folder name and path, an **Import folder** action to register it,
-and a dismiss **×**. Dismissing only hides the current discovery suggestion; it
-does not delete files or register the folder. **Refresh** shows it again.
-Dismissing all suggestions hides the section.
+**Projects** shows imported/registered projects above compact **Detected folders**.
+**System (host)** terminals are available as the first **Workspace** entry for
+administrators, not in Projects. Each discovery row has **Import folder**, a dismiss
+**×**, and an administrator-only **Delete** action. Dismissal only hides a suggestion
+until **Refresh**; it never deletes or registers files. Delete is permanent and
+requires typing the exact canonical directory path. The server only permits real
+immediate unregistered directories under `PROJECTS_DIR`, excluding aliases,
+symlinks and folders containing any registered project or associated repository.
 
 Opening **Projects**, or clicking **Refresh**, scans immediate non-hidden folders
 under `PROJECTS_DIR`. The scan remains read-only. Registered projects and
@@ -163,9 +181,10 @@ and retains its optional first-use code-server install. The icon-only **Choose
 mode** arrow beside the sidebar toggle returns to the cards and clears only the
 mode selection, preserving mounted terminals, editor state and running work;
 navigating away remembers the mode. Opening remembered VS Code never creates a
-terminal. Returning to the chooser starts or stops nothing. Existing terminal
-controls and the standalone editor's explicit **Stop editor** action remain
-unchanged and separate from the chooser.
+terminal. Returning to the chooser starts or stops nothing. Use the Workspace
+three-dot **Close all** action to explicitly stop all project terminals and shared
+VS Code after confirmation. The shared-editor warning applies to other projects
+too. Only successfully closed work disappears from Workspace; registrations remain.
 
 Browser VS Code requires administrator access and runs only on the machine
 serving the panel; paired-machine editor transport is unsupported, so open that
@@ -246,13 +265,23 @@ Use **Ctrl/Cmd+V** in a terminal, or the toolbar's **Paste** button, to upload a
 
 ## In-panel Updater
 
-Citadel checks GitHub for new releases (System view) and — when the updater is installed — can update itself with one click. It is **enabled by default**; skip it with `--no-updater`. To add it to an existing install, re-run the installer:
+Open **Settings → Updates** for the currently selected machine. The panel always targets the **latest stable `vX.Y.Z` release**: there are no channel or version selectors.
+
+- **Check** only checks for the latest stable release. Opening this screen or checking never changes the saved channel, starts an updater, or updates a paired machine.
+- **Update** requires an administrator's explicit confirmation. It selects stable and updates the selected machine first, then all machines paired with that machine, **one at a time after its healthy restart**. Even same-version peers are checked through an update attempt. Services restart briefly; persistent tmux terminals survive.
+- The request and rollout progress are saved across service restarts. The screen follows progress without automatically reloading the panel. Offline peers, failures and timeouts halt the rollout, leaving later machines untouched. A peer without a usable updater is skipped and reported; skipped/failed peers make the outcome partial, not success. Reopen Updates to read the persisted result if monitoring times out or you leave the screen. Reload the page after completion to load the updated panel assets.
+
+The Linux helper is **enabled by default**; skip it with `--no-updater`. To add it to an existing install, re-run the installer:
 
 ```bash
 sudo bash install.sh --update
 ```
 
-It installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The helper fetches the configured branch, resets the working tree, reinstalls dependencies and restarts the service. Before running it the panel verifies the helper is a regular, root-owned file that is not group/world-writable, and refuses otherwise. Without the helper the System view still reports the running version and available updates, but applying them requires running `scripts/update.sh` manually.
+It installs a root-owned helper at `/usr/local/sbin/citadel-update` plus a scoped `sudoers` rule granting the service user permission to run **only that helper** as root. The panel verifies that the helper is a regular, root-owned file that is not group/world-writable and refuses an unsafe helper. The helper fetches the chosen release, snapshots SQLite, resets the working tree, reinstalls dependencies and restarts the service; failed health checks can roll back code and database. If no helper is installed, Citadel can use its enabled built-in updater when the checkout is writable and git/npm are available. Otherwise Update is disabled with the reason; use the host's supported manual update path.
+
+**Status limitation:** the privileged helper does not write structured update status. If it fails before restarting the service, the request can remain pending and the panel cannot confirm completion; it reports unavailable/timed-out progress rather than success. Inspect the host's updater/service logs before retrying or using a manual recovery path. A reported built-in failure or restart on the wrong expected version stops propagation to paired machines.
+
+The **stable** and **main** channels remain supported by CLI/API controls. The updater scripts accept `CITADEL_UPDATE_CHANNEL=stable` or `main` (or read the saved `DATA_DIR/update-channel`); main follows `CITADEL_REPO_BRANCH`. The panel's explicit Update always selects stable, regardless of a previous main setting.
 
 ## Local network access (opt-in)
 
@@ -270,14 +299,16 @@ Reverse-proxy trust: by default only loopback peers may set `X-Forwarded-*` head
 
 ## Synchronized updates across hosts
 
-To make one "Update" action roll out to several hosts, give each host the same secret and the list of its peers in `.env`:
+The panel's **Update** action uses the selected machine's authenticated pairing relationships; no shared `.env` secret or peer URL list is needed. Pair machines first, then use **Settings → Updates** for the local-first sequential rollout described above.
+
+The older shared-token peer-update mechanism remains available for compatibility:
 
 ```
 CITADEL_PEERS=https://vps2.example.com
 CITADEL_PEER_TOKEN=<long-random-shared-secret>
 ```
 
-When set, triggering an update also asks every peer to update itself. The peer endpoint is token-authenticated (constant-time) and never fans out again, so there are no update loops. Keep the token out of version control.
+Its peer endpoint is token-authenticated (constant-time) and never fans out again. **Settings → Updates does not invoke this legacy fanout**, because concurrent updates would bypass the selected machine's canary/restart safeguard. These variables do not add machines to the paired rollout. Keep any real token out of version control.
 
 ## Distributed task mesh
 
@@ -307,11 +338,13 @@ The **Files** view browses the host filesystem: navigate directories, read and e
 
 ## Remote access, pairing and tunnels
 
-Scan a QR from your phone, pair several Citadel machines and expose the panel globally (Cloudflare Quick Tunnel, or a stable URL on your own domain from **Settings → Tunnel**). Quick start: `citadel qr` (or `citadel qr --url` on small terminals), `citadel tunnel`, `citadel tunnel --domain=HOST --token=TOKEN`. Full details: [docs/remote-access.md](remote-access.md).
+Settings is a compact list of seven destinations, with no QR, diagnostics or descriptive subtitles on its hub. Section data loads only when needed. Administrators can generate the QR and copy its one-use pairing link from **Settings → Machines → Show pairing QR**; opening Settings or Machines alone creates no invitation. **Pair a machine** still scans or accepts another machine's code. Version/update status lives in Updates, and the public address and remote-access setup live in Network & access.
+
+Scan a QR from your phone, pair several Citadel machines and expose the panel globally (Cloudflare Quick Tunnel, or a stable URL on your own domain from **Settings → Network & access → Tunnel**). Quick start: `citadel qr` (or `citadel qr --url` on small terminals), `citadel tunnel`, `citadel tunnel --domain=HOST --token=TOKEN`. Full details: [docs/remote-access.md](remote-access.md).
 
 **Mesh pairing (always on).** Machines that are already paired introduce each other, so every machine ends up paired with every other one (single-use invitations, one token per direction, no credential vault merge), with no setting to turn on. Once paired, the machine selector under the logo opens any machine's terminals, logs and processes. *Unpair* removes a machine from both sides.
 
-**Update propagation (always on).** Once this machine is updated and healthy, it updates each paired machine that is behind, waiting for it to come back on the new version before starting the next, and stops at the first one that does not. *Update paired machines now* runs it on demand. Machines updated this way do not propagate further.
+**Update propagation.** **Settings → Updates → Update** explicitly updates the selected machine first, then all of its paired machines sequentially after restart, using the latest stable release. The request survives restart; partial/offline failures remain visible and halt later machines. Opening the screen or pressing Check never updates anything. Startup after other version upgrades also checks for paired machines that are behind using the existing sequential safeguards. Machines updated by a peer do not propagate further. See [In-panel Updater](#in-panel-updater) for availability and status limitations.
 
 ## Git credentials for terminals
 
@@ -319,7 +352,7 @@ The installer also registers a git credential helper (`/usr/local/bin/citadel-gi
 
 ## Managing AI CLI agents from the panel
 
-In **Machines → Tools**, administrators can install, reinstall/update, or remove a
+In **System → Tools**, administrators can install, reinstall/update, or remove a
 Citadel-managed agent. These actions open a terminal as the service account;
 installation success is reported only after the downloaded executable passes its
 version check. Codex must also include a working `codex-code-mode-host`.

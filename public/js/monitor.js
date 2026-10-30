@@ -236,48 +236,42 @@
   }
 
   // --- Machine screen -------------------------------------------------------
-  // Everything about one machine behind a single card: health, projects,
-  // terminals, processes and tools. Data comes through the host proxy, so any
-  // paired machine can be inspected without switching to it first.
+  // Dashboard shows health and history only. Runtime management lives in System.
 
   const TABS = [
     { id: 'overview', label: 'Overview' },
-    { id: 'projects', label: 'Projects' },
-    { id: 'terminals', label: 'Terminals' },
-    { id: 'processes', label: 'Processes' },
-    { id: 'tools', label: 'Tools' },
   ];
-  let machineTab = 'overview';
-  let machineTimer = null;
+  let machineGeneration = 0;
 
   // Renders the detail of one machine into the dashboard pane under the cards.
   async function renderMachine(ctx, hostId, tab, retry = true) {
     const { localApi, escapeHtml: esc } = ctx;
     const content = document.getElementById('dash-machine-pane');
     if (!content) return;
-    clearInterval(machineTimer);
-    if (tab) machineTab = tab;
+    const attempt = ++machineGeneration;
+    const present = () => content.isConnected && attempt === machineGeneration;
     content.innerHTML = '<div id="mon-machine"><div class="mon-muted">Loading…</div></div>';
 
     let host;
     try {
       const data = await localApi('/api/monitor/overview');
+      if (!present()) return;
       host = data.hosts.find((h) => h.id === hostId);
     } catch (err) {
-      content.innerHTML = `<div style="color:var(--danger-color);">${esc(err.message)}</div>`;
+      if (present()) content.innerHTML = `<div style="color:var(--danger-color);">${esc(err.message)}</div>`;
       return;
     }
     if (!host) {
       // The first health check runs a few seconds after boot.
       content.innerHTML = '<div class="mon-muted">Waiting for the first health check…</div>';
-      if (retry) setTimeout(() => { if (document.getElementById('dash-machine-pane')) renderMachine(ctx, hostId, undefined, false); }, 5000);
+      if (retry) setTimeout(() => { if (present()) renderMachine(ctx, hostId, undefined, false); }, 5000);
       return;
     }
 
     const status = statusOf(host);
     const dot = status === 'ok' ? 'host-dot-on' : status === 'down' ? 'host-dot-off' : status === 'warn' ? 'mon-dot-warn' : '';
     const offline = host.online === false;
-    const root = document.getElementById('mon-machine');
+    const root = content.querySelector('#mon-machine');
     root.innerHTML = `
       <div class="card mon-machine-head">
         <span class="host-dot ${dot}"></span>
@@ -294,7 +288,7 @@
         </div>
       </div>
       <div class="mon-tabs" role="tablist">
-        ${TABS.map((t) => `<button type="button" role="tab" class="mon-tab${t.id === machineTab ? ' active' : ''}" data-mon-tab="${t.id}" ${offline && t.id !== 'overview' ? 'disabled' : ''}>${t.label}</button>`).join('')}
+        ${TABS.map((t) => `<button type="button" role="tab" class="mon-tab${t.id === 'overview' ? ' active' : ''}" data-mon-tab="${t.id}" ${offline && t.id !== 'overview' ? 'disabled' : ''}>${t.label}</button>`).join('')}
       </div>
       <div id="mon-tab-body"></div>`;
 
@@ -306,15 +300,16 @@
       b.onclick = () => renderMachine(ctx, hostId, b.getAttribute('data-mon-tab'), false);
     });
 
-    const body = document.getElementById('mon-tab-body');
+    const body = root.querySelector('#mon-tab-body');
     const loading = () => { body.innerHTML = '<div class="mon-muted">Loading…</div>'; };
-    const fail = (err) => { body.innerHTML = `<div style="color:var(--danger-color);">${esc(err.message)}</div>`; };
-    const tabId = offline ? 'overview' : machineTab;
+    const fail = (err) => { if (present()) body.innerHTML = `<div style="color:var(--danger-color);">${esc(err.message)}</div>`; };
+    const tabId = 'overview';
 
     if (tabId === 'overview') {
       loading();
       try {
         const hist = await localApi(`/api/monitor/hosts/${encodeURIComponent(host.id)}/history?hours=24`);
+        if (!present()) return;
         const hl = host.health;
         const load = hl ? Math.min(100, Math.round((hl.loadPerCore || 0) * 100)) : null;
         const events = (hist.events || []).slice(0, 8);
@@ -364,171 +359,6 @@
       return;
     }
 
-    if (tabId === 'projects') {
-      loading();
-      try {
-        const res = await localApi(remotePath(host, '/projects'));
-        const list = res.projects || [];
-        body.innerHTML = `<div class="card">
-          <div class="mon-tab-toolbar"><span class="mon-muted">${list.length} project${list.length === 1 ? '' : 's'}</span>
-            <button class="btn btn-secondary btn-sm" id="mon-manage-projects">Manage projects</button></div>
-          ${list.length === 0 ? '<div class="mon-muted">No projects on this machine yet.</div>' : `<div class="mon-rows">
-            ${list.map((p) => `<div class="mon-row">
-              <div class="mon-row-main"><strong>${esc(p.name)}</strong>
-                <span class="mon-muted mon-ellipsis">${esc(p.path)}</span></div>
-              ${p.active_sessions_count > 0 ? `<span class="badge badge-success">${p.active_sessions_count} terminal${p.active_sessions_count === 1 ? '' : 's'}</span>` : ''}
-              <button class="btn btn-primary btn-sm" data-mon-open-project="${esc(p.id)}">Open</button>
-            </div>`).join('')}</div>`}
-        </div>`;
-        document.getElementById('mon-manage-projects').onclick = () => ctx.useMachine(host.id, 'projects');
-        body.querySelectorAll('[data-mon-open-project]').forEach((b) => {
-          b.onclick = () => ctx.openProject(host.id, b.getAttribute('data-mon-open-project'));
-        });
-      } catch (err) { fail(err); }
-      return;
-    }
-
-    if (tabId === 'terminals') {
-      const load = async () => {
-        try {
-          const [t, pr] = await Promise.all([
-            localApi(remotePath(host, '/terminals')),
-            localApi(remotePath(host, '/projects')).catch(() => ({ projects: [] })),
-          ]);
-          const names = new Map((pr.projects || []).map((p) => [p.id, p.name]));
-          const list = (t.sessions || []).filter((x) => x.isAlive || x.status === 'active');
-          body.innerHTML = `<div class="card">
-            <div class="mon-tab-toolbar">
-              <span class="mon-muted">${list.length} persistent terminal${list.length === 1 ? '' : 's'} — they keep running when you close the browser</span>
-              <button class="btn btn-danger btn-sm" id="mon-kill-selected" disabled>Kill selected</button>
-            </div>
-            ${list.length === 0 ? '<div class="mon-muted">No persistent terminals are running.</div>' : `
-            <label class="mon-selectall"><input type="checkbox" id="mon-term-all"> Select all</label>
-            <div class="mon-rows">${list.map((x) => `<label class="mon-row">
-              <input type="checkbox" class="mon-term-check" value="${esc(x.id)}">
-              <div class="mon-row-main"><strong>${esc(x.name)}</strong>
-                <span class="mon-muted">${esc(x.project_id ? (names.get(x.project_id) || 'Unknown project') : 'System')} · started ${esc(new Date(x.created_at).toLocaleString())}</span></div>
-              <span class="badge ${x.isAlive ? 'badge-success' : 'badge-danger'}">${x.isAlive ? 'running' : 'dead'}</span>
-            </label>`).join('')}</div>`}
-          </div>`;
-          const checks = () => Array.from(body.querySelectorAll('.mon-term-check'));
-          const kill = document.getElementById('mon-kill-selected');
-          const sync = () => {
-            const n = checks().filter((c) => c.checked).length;
-            kill.disabled = n === 0;
-            kill.textContent = n ? `Kill selected (${n})` : 'Kill selected';
-          };
-          checks().forEach((c) => { c.onchange = sync; });
-          document.getElementById('mon-term-all')?.addEventListener('change', (e) => {
-            checks().forEach((c) => { c.checked = e.target.checked; });
-            sync();
-          });
-          kill.onclick = () => {
-            const ids = checks().filter((c) => c.checked).map((c) => c.value);
-            if (!ids.length) return;
-            ctx.openModal({
-              title: `Kill ${ids.length} terminal${ids.length === 1 ? '' : 's'}?`,
-              confirmText: 'Kill',
-              bodyHtml: '<p>This ends the selected terminals and everything running inside them. It cannot be undone.</p>',
-              onConfirm: async () => {
-                for (const id of ids) {
-                  ctx.forgetTerminal(host.id, id);
-                  await localApi(remotePath(host, `/terminals/${encodeURIComponent(id)}`), { method: 'DELETE' }).catch(() => {});
-                }
-                ctx.showToast(`${ids.length} terminal${ids.length === 1 ? '' : 's'} killed.`, 'success');
-                load();
-              },
-            });
-          };
-        } catch (err) { fail(err); }
-      };
-      loading();
-      await load();
-      return;
-    }
-
-    if (tabId === 'processes') {
-      const load = async () => {
-        if (!document.getElementById('mon-proc-body') && body.dataset.ready) { clearInterval(machineTimer); return; }
-        try {
-          const res = await localApi(remotePath(host, '/system/processes?limit=15'));
-          const d = res.processes || {};
-          const rows = d.processes || [];
-          if (!body.dataset.ready) {
-            body.dataset.ready = '1';
-            body.innerHTML = `<div class="card">
-              <div class="mon-tab-toolbar"><span class="mon-muted" id="mon-proc-meta"></span><span class="mon-muted">Updates every 5 s</span></div>
-              <div class="table-container"><table class="data-table"><thead><tr>
-                <th style="width:80px;">PID</th><th>Process</th><th style="width:90px;">CPU</th><th style="width:110px;">Memory</th><th style="width:80px;">MEM %</th>
-              </tr></thead><tbody id="mon-proc-body"></tbody></table></div></div>`;
-          }
-          document.getElementById('mon-proc-body').innerHTML = rows.length ? rows.map((x) => `<tr>
-              <td data-label="PID" style="font-family:var(--font-mono);color:var(--text-secondary);">${x.pid}</td>
-              <td data-label="Process">${esc(x.name)}</td>
-              <td data-label="CPU"><span class="badge ${x.cpuPercent >= 50 ? 'badge-danger' : x.cpuPercent >= 10 ? 'badge-warning' : 'badge-muted'}">${x.cpuPercent.toFixed(1)}%</span></td>
-              <td data-label="Memory" style="font-family:var(--font-mono);">${esc(fmtBytes(x.rssBytes))}</td>
-              <td data-label="MEM %" style="font-family:var(--font-mono);color:var(--text-secondary);">${x.memPercent.toFixed(1)}%</td>
-            </tr>`).join('') : '<tr><td colspan="5" class="mon-muted">No process data on this platform.</td></tr>';
-          const meta = document.getElementById('mon-proc-meta');
-          if (meta) meta.textContent = `${rows.length} of ${d.total} processes · ${new Date(d.timestamp).toLocaleTimeString()}`;
-        } catch (err) { fail(err); clearInterval(machineTimer); }
-      };
-      loading();
-      await load();
-      machineTimer = setInterval(() => { if (!document.hidden) load(); }, 5000);
-      return;
-    }
-
-    if (tabId === 'tools') {
-      loading();
-      try {
-        const [res, toolsRes] = await Promise.all([
-          localApi(remotePath(host, '/system/integrations')),
-          // Older machines do not have the tools endpoint yet.
-          localApi(remotePath(host, '/system/tools')).catch(() => null),
-        ]);
-        const integ = res.integrations || {};
-        // Services that are running, not just installed.
-        const running = { docker: integ.docker && integ.docker.available, caddy: integ.caddy && integ.caddy.available };
-        const tools = (toolsRes && toolsRes.tools) || [
-          { id: 'tmux', name: 'tmux', group: 'System', installed: Boolean(integ.tmux && integ.tmux.available) },
-          { id: 'git', name: 'Git', group: 'Development', installed: Boolean(integ.git && integ.git.available) },
-          { id: 'caddy', name: 'Caddy', group: 'Network', installed: Boolean(integ.caddy && integ.caddy.available) },
-          { id: 'docker', name: 'Docker', group: 'Containers', installed: Boolean(integ.docker && integ.docker.available) },
-        ];
-        const tile = (t) => `<div class="mon-tile" title="${esc(t.path || t.name)}">
-          <span class="mon-tile-badge g-${esc(t.group.toLowerCase())}">${esc(t.name.slice(0, 2))}</span>
-          <span class="mon-tile-text"><b>${esc(t.name)}</b><i>${esc(t.version || 'installed')}</i></span>
-          ${running[t.id] ? '<span class="mon-tile-live" title="Running"></span>' : ''}
-        </div>`;
-        const groups = ['Runtimes', 'Development', 'Containers', 'Network', 'System'];
-        const groupHtml = groups.map((g) => {
-          const items = tools.filter((t) => t.group === g && t.installed);
-          if (!items.length) return '';
-          return `<div class="mon-tool-group"><div class="mon-tool-title">${esc(g)}</div><div class="mon-tiles">${items.map(tile).join('')}</div></div>`;
-        }).join('');
-        body.innerHTML = `
-          <div class="card">
-            <div class="mon-muted" style="margin-bottom:8px;">AI coding agents</div>
-            <div class="mon-rows">
-              ${(integ.agents || []).map((a) => `<div class="mon-row">
-                <span class="status-dot ${a.available ? 'ok' : 'off'}"></span>
-                <div class="mon-row-main"><strong>${esc(a.name)}</strong>${a.version ? `<span class="mon-muted">${esc(a.version)}</span>` : a.detected ? '<span class="mon-muted">Executable found; version check failed</span>' : ''}${a.warning ? `<span class="mon-muted">${esc(a.warning)}</span>` : ''}</div>
-                ${a.available ? '<span class="badge badge-success">Installed</span>'
-    : `<button class="btn btn-secondary btn-sm" data-mon-install="${esc(a.id)}" data-name="${esc(a.name)}" ${ctx.isAdmin ? '' : 'disabled'}>Install</button>`}
-                ${a.available || a.detected ? `<button class="btn btn-secondary btn-sm" data-mon-install="${esc(a.id)}" data-name="${esc(a.name)}" data-action="reinstall" ${ctx.isAdmin ? '' : 'disabled'}>Reinstall / update</button>` : ''}
-                ${a.managed ? `<button class="btn btn-secondary btn-sm" data-mon-install="${esc(a.id)}" data-name="${esc(a.name)}" data-action="remove" ${ctx.isAdmin ? '' : 'disabled'}>Remove</button>` : ''}
-              </div>`).join('')}
-            </div>
-          </div>
-          <div class="card">
-            ${groupHtml || '<div class="mon-muted">No common tools detected.</div>'}
-          </div>`;
-        body.querySelectorAll('[data-mon-install]').forEach((b) => {
-          b.onclick = () => ctx.installAgent(host.id, b.getAttribute('data-mon-install'), b.getAttribute('data-name'), b.getAttribute('data-action') || 'install');
-        });
-      } catch (err) { fail(err); }
-    }
   }
 
   // --- Alert settings -------------------------------------------------------

@@ -1,4 +1,4 @@
-const { test, describe, before, after } = require('node:test');
+const { test, describe, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -12,8 +12,9 @@ const path = require('node:path');
 let JSDOM;
 let CookieJar;
 let VirtualConsole;
+let requestInterceptor;
 try {
-  ({ JSDOM, CookieJar, VirtualConsole } = require('jsdom'));
+  ({ JSDOM, CookieJar, VirtualConsole, requestInterceptor } = require('jsdom'));
 } catch {
   // jsdom is a devDependency; skip when it is not installed.
 }
@@ -21,7 +22,7 @@ try {
 const ROOT = path.join(__dirname, '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout: 120000 }, () => {
+describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout: 240000 }, () => {
   const port = 3300 + Math.floor(Math.random() * 600);
   const base = `http://127.0.0.1:${port}`;
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-ui-'));
@@ -30,6 +31,18 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   let dom;
   let w;
   let loadPage;
+  let windowStarted = Date.now(), requests = 0;
+  const countRequest = () => {
+    if (Date.now() - windowStarted > 61000) { windowStarted = Date.now(); requests = 0; }
+    requests++;
+  };
+  // Exercise the real limiter, rather than disabling security as this suite grows.
+  beforeEach(async () => {
+    if (requests > 200) {
+      await sleep(Math.max(0, 61000 - (Date.now() - windowStarted)));
+      windowStarted = Date.now(); requests = 0;
+    }
+  });
 
   before(async () => {
     fs.mkdirSync(path.join(data, 'projects', 'ui-discovered'), { recursive: true });
@@ -61,7 +74,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     const virtualConsole = new VirtualConsole();
     virtualConsole.on('jsdomError', (e) => errors.push(e.message.split('\n')[0]));
     loadPage = (saved = {}, width = 1024, storageBlocked = false) => JSDOM.fromURL(`${base}/`, {
-      runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true, cookieJar: jar, virtualConsole,
+      runScripts: 'dangerously', resources: { interceptors: [requestInterceptor(() => { countRequest(); })] },
+      pretendToBeVisual: true, cookieJar: jar, virtualConsole,
       beforeParse(win) {
         win.innerWidth = width;
         for (const [key, value] of Object.entries(saved)) win.localStorage.setItem(key, value);
@@ -71,7 +85,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         }
         win.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
         win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
-        win.fetch = (url, opts = {}) => fetch(new URL(url, base), { ...opts, signal: undefined, headers: { ...(opts.headers || {}), cookie } });
+        win.fetch = (url, opts = {}) => { countRequest(); return fetch(new URL(url, base), { ...opts, signal: undefined, headers: { ...(opts.headers || {}), cookie } }); };
         win.HTMLCanvasElement.prototype.getContext = () => null;
         win.addEventListener('error', (e) => errors.push(e.message));
         win.addEventListener('unhandledrejection', (e) => errors.push(`unhandled rejection: ${e.reason && e.reason.message}`));
@@ -95,13 +109,13 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('every feature script registers and the app shell renders', () => {
-    for (const name of ['CitadelMonitor', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelProjectTools', 'CitadelGatewaySettings', 'CitadelBrowserEditor', 'CitadelTerminalImages']) {
+    for (const name of ['CitadelMonitor', 'CitadelSystem', 'CitadelDisk', 'CitadelDeployments', 'CitadelFleet', 'CitadelActivity', 'CitadelRepos', 'CitadelFiles', 'CitadelPairing', 'CitadelProjectTools', 'CitadelGatewaySettings', 'CitadelBrowserEditor', 'CitadelTerminalImages']) {
       assert.equal(typeof w[name], 'object', `window.${name} is missing`);
     }
     assert.ok(w.document.querySelector('.nav-item'), 'the sidebar should render after sign-in');
     assert.equal(w.document.querySelector('.nav-item[data-view="projects"]').classList.contains('active'), true);
-    assert.ok(w.document.getElementById('projects-system-open'));
-    assert.equal(w.document.querySelector('.workspace-heading'), null);
+    assert.equal(w.document.getElementById('projects-system-open'), null);
+    assert.ok(w.document.querySelector('[data-workspace-context="system"]'));
     assert.deepEqual(errors, []);
   });
 
@@ -197,13 +211,31 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
-  test('Projects is the entry point with System first and no empty Workspace navigation', async () => {
+  test('Projects is the entry point and System opens directly from Workspace without spawning a shell', async () => {
     w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(350);
     assert.equal(w.document.querySelector('[data-view="workspace"]'), null);
-    assert.equal(w.document.querySelector('.workspace-heading'), null);
-    assert.equal(w.document.querySelector('[data-workspace-context="system"]'), null);
-    assert.equal(w.document.getElementById('main-content').firstElementChild.className, 'card project-system');
-    assert.ok(w.document.getElementById('projects-system-open'));
+    assert.ok(w.document.querySelector('.workspace-heading'));
+    const system = w.document.querySelector('[data-workspace-context="system"]');
+    assert.ok(system);
+    assert.equal(w.document.querySelector('.project-system, #projects-system-open'), null);
+    assert.equal(system.parentElement.firstElementChild, system);
+    const originalFetch = w.fetch, calls = [];
+    w.fetch = (url, opts = {}) => {
+      calls.push({ url: String(url), method: opts.method || 'GET' });
+      if (String(url) === '/api/terminals?scope=global') return Promise.resolve({ ok: true, json: async () => ({ sessions: [], tmuxAvailable: false }) });
+      return originalFetch(url, opts);
+    };
+    try {
+      system.click(); await sleep(300);
+      assert.equal(w.document.getElementById('top-bar-title').textContent, 'Workspace — System (host)');
+      assert.ok(w.document.getElementById('sys-terminal-viewport'));
+      assert.equal(w.document.querySelector('.workspace-chooser'), null);
+      assert.ok(w.document.querySelector('[data-workspace-context="system"].active'));
+      assert.equal(calls.some(call => call.method !== 'GET'), false);
+    } finally {
+      w.fetch = originalFetch;
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+    }
   });
 
   test('runtime uses read-only editor status, not saved mode or history, and isolates scope', async () => {
@@ -215,7 +247,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       const state = { user: { id: 'alice', role: 'admin' }, activeHostId: 'local', hostIdentity: { instanceId: 'one' }, projects: [{ id: 'a' }, { id: 'b' }] };
       let editor = false, finish;
       const calls = [];
-      tools.init({ state, escapeHtml: String, renderProjectsView() {}, showToast() {}, openWorkspace() {}, api: async url => {
+      tools.init({ state, escapeHtml: String, renderProjectsView() {}, showToast() {}, openWorkspace() {}, openModal() {}, api: async url => {
         calls.push(url);
         if (finish === true) return new Promise(resolve => { finish = resolve; });
         return { editor: { running: editor } };
@@ -278,10 +310,10 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
   });
 
   test('Tools dispatches lifecycle actions and restricts removal to managed agents', async () => {
-    const toolsDom = new JSDOM('<div id="dash-machine-pane"></div>', { runScripts: 'dangerously' });
+    const toolsDom = new JSDOM('<div id="main-content"></div>', { runScripts: 'dangerously' });
     try {
       const win = toolsDom.window;
-      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/monitor.js'), 'utf8'));
+      win.eval(fs.readFileSync(path.join(ROOT, 'public/js/system.js'), 'utf8'));
       const calls = [];
       const agents = [
         { id: 'codex', name: 'Codex', available: true, managed: true, version: '1.0', warning: 'Daemon package missing' },
@@ -289,8 +321,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         { id: 'qwen', name: 'Qwen', available: false },
       ];
       const ctx = {
-        isAdmin: true,
-        activeHostId: () => 'local',
+        state: { activeHostId: 'local', user: { id: 'admin', role: 'admin' }, hosts: [] },
+        openModal() {}, showToast() {}, forgetTerminal() {},
         escapeHtml: (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
         installAgent: (...args) => calls.push(args),
         localApi: async (url) => {
@@ -299,39 +331,82 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
           return { tools: [] };
         },
       };
-      await win.CitadelMonitor.renderMachine(ctx, 'local', 'tools');
-      const buttons = [...win.document.querySelectorAll('[data-mon-install]')];
+      win.CitadelSystem.init(ctx);
+      await win.CitadelSystem.render('tools');
+      const buttons = [...win.document.querySelectorAll('[data-agent]')];
       assert.equal(buttons.length, 4);
       for (const button of buttons) button.click();
       assert.deepEqual(calls.map((args) => args[3]), ['reinstall', 'remove', 'reinstall', 'install']);
       assert.match(win.document.body.textContent, /Daemon package missing/);
-      await win.CitadelMonitor.renderMachine({ ...ctx, isAdmin: false }, 'local', 'tools');
-      assert.ok([...win.document.querySelectorAll('[data-mon-install]')].every((button) => button.disabled));
+      ctx.state.user.role = 'user';
+      await win.CitadelSystem.render('tools');
+      assert.ok([...win.document.querySelectorAll('[data-agent]')].every((button) => button.disabled));
     } finally { toolsDom.window.close(); }
   });
 
   test('main screens open without script errors', async () => {
-    for (const view of ['files', 'settings', 'projects', 'dashboard']) {
+    for (const view of ['files', 'settings', 'projects', 'system', 'dashboard']) {
       const link = w.document.querySelector(`.nav-item[data-view="${view}"]`);
       assert.ok(link, `nav item ${view} should exist`);
       link.click();
       await sleep(800);
       assert.ok(w.document.getElementById('main-content').innerHTML.length > 100, `${view} rendered nothing`);
+      if (view === 'system') assert.deepEqual([...w.document.querySelectorAll('[data-system-tab]')].map(button => button.textContent), ['Processes', 'Terminals', 'VS Code', 'Tools']);
+      if (view === 'dashboard') assert.deepEqual([...w.document.querySelectorAll('[data-mon-tab]')].map(button => button.textContent), ['Overview']);
     }
     assert.deepEqual(errors, []);
   });
 
-  test('Settings hub and Updates selector use responsive section markup', async () => {
-    w.document.querySelector('.nav-item[data-view="settings"]').click();
-    await sleep(700);
-    assert.equal(w.document.querySelectorAll('.settings-tile[data-settings-section]').length, 7);
-    const updateIcon = w.document.querySelector('[data-settings-section="updates"] .settings-tile-icon svg path');
-    assert.ok(updateIcon && updateIcon.getAttribute('d').includes('M20 11'), 'Updates uses a connected refresh icon path');
-    w.document.querySelector('[data-settings-section="updates"]').click();
-    await sleep(500);
-    assert.equal(w.document.getElementById('update-channel')?.className, 'form-input');
-    w.document.querySelector('.top-bar-back')?.click();
-    await sleep(300);
+  test('Settings is a compact navigation-only hub and keeps Updates and pairing accessible', async () => {
+    const originalFetch = w.fetch, calls = [];
+    w.fetch = (url, options) => { calls.push(String(url)); return originalFetch(url, options); };
+    try {
+      w.document.querySelector('.nav-item[data-view="settings"]').click();
+      await sleep(700);
+      const hub = w.document.querySelector('.settings-hub');
+      assert.ok(hub.querySelector('nav[aria-label="Settings sections"]'));
+      assert.deepEqual([...hub.querySelectorAll('.settings-tile')].map(button => button.textContent.replace('›', '').trim()), ['AI Gateway', 'Updates', 'Machines', 'Network & access', 'Alerts', 'Credentials', 'Activity & Audit']);
+      assert.equal(hub.querySelector('.settings-hero, .settings-screen-head, .connect-qr, .settings-tile-text span'), null, 'no duplicate heading, QR, diagnostics or descriptive subtitles');
+      assert.equal(calls.filter(url => /\/api\/(?:settings\/connect|system\/(?:connect|node|version)|secrets|pair\/invite)(?:\?|$)/.test(url)).length, 0, 'the hub does not fetch unused section data or create pairing codes');
+      const updateIcon = hub.querySelector('[data-settings-section="updates"] .settings-tile-icon svg path');
+      assert.ok(updateIcon && updateIcon.getAttribute('d').includes('M20 11'), 'Updates uses a connected refresh icon path');
+      hub.querySelector('[data-settings-section="machines"]').click();
+      await sleep(500);
+      assert.ok(w.document.getElementById('settings-show-qr'));
+      assert.ok(w.document.getElementById('settings-pair-btn'));
+      assert.equal(calls.filter(url => url.endsWith('/pair/invite')).length, 0, 'opening Machines does not create an invitation either');
+      w.document.getElementById('settings-show-qr').click();
+      await sleep(500);
+      assert.ok(w.document.querySelector('#pair-invite .connect-qr svg'));
+      assert.ok(w.document.getElementById('pair-invite-link').value.includes('#pair='));
+      assert.equal(calls.filter(url => url.endsWith('/pair/invite')).length, 1);
+      w.document.getElementById('modal-close-btn').click();
+      w.document.getElementById('settings-pair-btn').click();
+      assert.match(w.document.querySelector('.modal-body').textContent, /Settings → Machines → Show pairing QR/);
+      w.document.getElementById('modal-close-btn').click();
+      w.document.getElementById('top-bar-back').click();
+      w.document.querySelector('[data-settings-section="updates"]').click();
+      await sleep(500);
+      assert.equal(w.document.getElementById('update-channel'), null);
+      assert.equal(w.document.getElementById('check-updates-btn')?.textContent.trim(), 'Check');
+      assert.equal(w.document.getElementById('apply-update-btn')?.textContent.trim(), 'Update');
+      assert.equal(w.document.getElementById('update-rollout-now'), null);
+      w.document.getElementById('top-bar-back').click();
+      assert.ok(w.document.querySelector('.settings-hub'));
+      assert.deepEqual(errors, []);
+    } finally { w.fetch = originalFetch; }
+  });
+
+  test('Settings Activity & Audit opens the view directly and Back returns to the hub', async () => {
+    w.document.querySelector('.nav-item[data-view="settings"]').click(); await sleep(400);
+    w.document.querySelector('[data-settings-section="activity"]').click(); await sleep(400);
+    assert.equal(w.document.getElementById('top-bar-title').textContent, 'Activity & Audit');
+    assert.deepEqual([...w.document.querySelectorAll('#top-bar-actions [data-activity-tab]')].map(button => button.textContent), ['Activity', 'Audit', 'Service log']);
+    assert.equal(w.document.querySelector('.open-activity-btn'), null, 'there is no intermediate selector');
+    assert.ok(w.document.getElementById('logs-refresh'));
+    w.document.getElementById('top-bar-back').click(); await sleep(400);
+    assert.equal(w.document.getElementById('top-bar-title').textContent, 'Settings');
+    assert.ok(w.document.querySelector('[data-settings-section="activity"]'));
     assert.deepEqual(errors, []);
   });
 
@@ -476,7 +551,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     await sleep(800);
     const content = w.document.getElementById('main-content');
     assert.ok(w.document.querySelector('[data-discover-index]'), 'the projects directory is scanned when opening Projects');
-    assert.equal(content.firstElementChild.className, 'card project-system');
+    assert.equal(content.querySelector('.project-system, #projects-system-open'), null);
     assert.equal(content.lastElementChild.className, 'card project-discovery');
     w.document.querySelector('[data-dismiss-discovery]').click();
     assert.equal(w.document.querySelector('.project-discovery').hidden, true);
@@ -490,7 +565,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     fs.mkdirSync(path.join(data, 'projects', 'ui-later'));
     w.document.getElementById('proj-refresh-btn').click(); await sleep(400);
     const list = w.document.getElementById('proj-list');
-    assert.equal(content.firstElementChild.className, 'card project-system');
+    assert.equal(content.querySelector('.project-system, #projects-system-open'), null);
     assert.equal(list.nextElementSibling, w.document.querySelector('.project-discovery'), 'detected folders follow registered projects');
     assert.equal(content.lastElementChild, list.nextElementSibling);
     assert.equal(list.querySelector('.proj-desc'), null);
@@ -508,15 +583,91 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
+  test('detected folder deletion is separate from dismissal and requires exact confirmation', async () => {
+    const originalFetch = w.fetch, calls = [];
+    const target = path.join(data, 'projects', 'ui-later');
+    let failDeletion = true;
+    w.fetch = (url, opts = {}) => {
+      if (String(url) === '/api/projects/discover' && opts.method === 'DELETE') {
+        calls.push(JSON.parse(opts.body));
+        if (failDeletion) return Promise.resolve({ ok: false, status: 409, json: async () => ({ error: 'Folder is now registered.' }) });
+      }
+      return originalFetch(url, opts);
+    };
+    try {
+      w.document.getElementById('proj-refresh-btn').click(); await sleep(400);
+      let button = w.document.querySelector('[data-delete-discovery]');
+      assert.ok(button);
+      button.click();
+      assert.match(w.document.querySelector('.modal-body').textContent, /Permanently delete.*all its contents/);
+      assert.ok([...button.closest('.proj-row').querySelectorAll('button')].every(item => item.disabled));
+      w.document.getElementById('modal-cancel-btn').click();
+      assert.equal(button.disabled, false);
+      assert.equal(calls.length, 0);
+      assert.ok(fs.existsSync(target));
+      button.click();
+      const confirmation = w.document.getElementById('delete-discovery-path');
+      confirmation.value = 'ui-later';
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(20);
+      assert.equal(calls.length, 0);
+      assert.match(w.document.getElementById('toast-root').textContent, /exact directory path/);
+      confirmation.value = target;
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(50);
+      assert.equal(calls.length, 1);
+      assert.ok(fs.existsSync(target), 'a refusal cannot remove files or claim success');
+      assert.match(w.document.getElementById('toast-root').textContent, /now registered/);
+      assert.ok(w.document.getElementById('modal-confirm-btn'));
+      failDeletion = false;
+      w.document.getElementById('modal-confirm-btn').click();
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(500);
+      assert.equal(calls.length, 2, 'pending confirmation prevents duplicate deletion');
+      assert.deepEqual(calls[1], { targetPath: target, confirmPath: target });
+      assert.equal(fs.existsSync(target), false);
+      assert.equal(w.document.querySelector('[data-delete-discovery]'), null);
+      assert.ok(w.document.querySelector('.open-workspace-btn'), 'registered project remains available');
+    } finally {
+      w.fetch = originalFetch;
+      w.document.getElementById('modal-cancel-btn')?.click();
+    }
+  });
+
+  test('late folder deletion cannot close a replacement dialog', async () => {
+    const originalFetch = w.fetch;
+    const target = path.join(data, 'projects', 'ui-pending-delete');
+    fs.mkdirSync(target);
+    let finishDelete;
+    w.fetch = (url, opts = {}) => {
+      if (String(url) === '/api/projects/discover' && opts.method === 'DELETE') return new Promise(resolve => { finishDelete = () => resolve({ ok: true, json: async () => ({ filesDeleted: true }) }); });
+      return originalFetch(url, opts);
+    };
+    try {
+      w.document.getElementById('proj-refresh-btn').click(); await sleep(400);
+      w.document.querySelector('[data-delete-discovery]').click();
+      w.document.getElementById('delete-discovery-path').value = target;
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(0);
+      assert.equal(typeof finishDelete, 'function');
+      w.document.getElementById('modal-cancel-btn').click();
+      w.document.getElementById('proj-create-btn').click();
+      const replacement = w.document.getElementById('active-modal-overlay');
+      finishDelete(); await sleep(400);
+      assert.equal(w.document.getElementById('active-modal-overlay'), replacement);
+      assert.ok(replacement.isConnected);
+      assert.ok(fs.existsSync(target), 'this test stubs deletion rather than deleting fixture files');
+    } finally {
+      w.fetch = originalFetch;
+      w.document.getElementById('modal-cancel-btn')?.click();
+    }
+  });
+
   test('discovery dismissal is read-only and stale import actions cannot affect another workspace scope', async () => {
-    const isolated = new JSDOM('<button id="proj-refresh-btn">Refresh</button><main><section class="project-system"></section><div id="registered"></div></main>', { runScripts: 'dangerously', url: base });
+    const isolated = new JSDOM('<button id="proj-refresh-btn">Refresh</button><main><div id="registered"></div></main>', { runScripts: 'dangerously', url: base });
     const win = isolated.window, calls = [];
     const state = { user: { id: 1 }, hostIdentity: { instanceId: 'panel-a' }, activeHostId: 'local' };
     let finishImport, renders = 0;
     const directories = [{ name: 'first', path: '/projects/first' }, { name: 'second', path: '/projects/second' }];
     try {
       win.eval(fs.readFileSync(path.join(ROOT, 'public/js/project-tools.js'), 'utf8'));
-      win.CitadelProjectTools.init({ state, escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), openWorkspace() {}, showToast() {}, renderProjectsView: () => { renders++; },
+      win.CitadelProjectTools.init({ state, escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'), openWorkspace() {}, showToast() {}, openModal() {}, renderProjectsView: () => { renders++; },
         api: (url, opts = {}) => {
           calls.push({ url, ...opts });
           if (url.endsWith('/import')) return new Promise(resolve => { finishImport = resolve; });
@@ -642,7 +793,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       const viewport = w.document.getElementById('terminal-viewport');
       button.click();
       await sleep(300);
-      assert.ok(w.document.getElementById('editor-install'));
+      assert.ok(w.document.getElementById('editor-install'), w.document.querySelector('.browser-editor')?.textContent);
       assert.ok(w.document.querySelector('.browser-editor').getAttribute('aria-label').includes('ui-discovered'));
       assert.equal(w.document.querySelector(`[data-workspace-context="${projectId}"]`), null, 'failed terminal launch and editor setup are not open workspaces');
       assert.ok(w.document.querySelector('.workspace-surface > .browser-editor-embedded'));
@@ -1023,7 +1174,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       const state = { activeHostId: 'local', user: { id: 'alice' }, hostIdentity: { instanceId: 'one' } };
       const tools = win.CitadelProjectTools;
       const launches = [];
-      tools.init({ state, api() {}, escapeHtml() {}, renderProjectsView() {}, showToast() {}, openWorkspace: (...args) => launches.push(args) });
+      tools.init({ state, api() {}, escapeHtml() {}, openModal() {}, renderProjectsView() {}, showToast() {}, openWorkspace: (...args) => launches.push(args) });
       tools.showEditor({ id: 'editor' });
       assert.deepEqual(launches, [['editor', 'vscode']]);
       assert.equal(tools.showChat, undefined);
@@ -1048,9 +1199,64 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     } finally { isolated.window.close(); }
   });
 
+  test('Workspace Close all confirms shared editor shutdown, preserves failures and removes only closed work', async () => {
+    w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+    const projectId = w.document.querySelector('.open-workspace-btn').dataset.projectId;
+    const originalFetch = w.fetch, calls = [];
+    let running = true, refuse = true;
+    let sessions = [{ id: 'close-one', name: 'One', project_id: projectId, isAlive: true }, { id: 'close-two', name: 'Two', project_id: projectId, isAlive: true }, { id: 'another-project', project_id: 'elsewhere', isAlive: true }];
+    w.fetch = (url, options = {}) => {
+      url = String(url);
+      const response = data => Promise.resolve({ ok: true, json: async () => data });
+      if (url === '/api/terminals' && !options.method) return response({ sessions, tmuxAvailable: false });
+      if (url.startsWith('/api/terminals/') && options.method === 'DELETE') {
+        calls.push(url);
+        if (refuse && url.endsWith('/close-one')) return Promise.resolve({ ok: false, status: 409, json: async () => ({ error: 'Fixture refusal' }) });
+        sessions = sessions.filter(session => !url.endsWith(`/${session.id}`));
+        return response({ success: true });
+      }
+      if (url === '/api/editor') {
+        if (options.method === 'DELETE') { calls.push(url); running = false; }
+        return response({ editor: { running, installed: true } });
+      }
+      return originalFetch(url, options);
+    };
+    const menu = () => {
+      w.document.querySelector(`[data-ws-menu-context="${projectId}"]`).click();
+      const items = [...w.document.querySelectorAll('.ctx-item')];
+      assert.equal(items.some(item => item.textContent === 'Stop terminal'), false);
+      items.find(item => item.textContent === 'Close all').click();
+    };
+    try {
+      w.CitadelProjectTools.workspacePreference(projectId, { editorOpened: true });
+      await w.CitadelProjectTools.refreshRuntime();
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+      menu();
+      assert.match(w.document.getElementById('modal-root').textContent, /shared by all projects/);
+      w.document.getElementById('modal-cancel-btn').click();
+      assert.deepEqual(calls, []);
+      menu(); w.document.getElementById('modal-confirm-btn').click(); await sleep(350);
+      assert.match(w.document.getElementById('toast-root').textContent, /Some terminals could not be stopped/);
+      assert.ok(w.document.querySelector(`[data-workspace-context="${projectId}"]`), 'failed terminal remains in Workspace');
+      assert.deepEqual(sessions.map(session => session.id), ['close-one', 'another-project']);
+      refuse = false;
+      w.document.getElementById('modal-confirm-btn').click(); await sleep(350);
+      assert.equal(w.document.querySelector(`[data-workspace-context="${projectId}"]`), null);
+      assert.deepEqual(sessions.map(session => session.id), ['another-project']);
+      assert.equal(calls.some(url => url.endsWith('/another-project')), false);
+      assert.ok(w.document.querySelector(`[data-project-id="${projectId}"]`), 'project registration is retained');
+      assert.ok(w.document.querySelector('[data-workspace-context="system"]'));
+    } finally {
+      w.fetch = originalFetch;
+      w.document.getElementById('modal-cancel-btn')?.click();
+      await w.CitadelProjectTools.refreshRuntime();
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(200);
+    }
+  });
+
   test('session teardown invalidates workspace actions and resets retained frontend state', () => {
     const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
-    assert.match(appSource, /function teardownSession\(\) \{\s*workspaceGeneration\+\+;\s*document.getElementById\('ws-close-mode'\)\?\.remove\(\);\s*window.CitadelBrowserEditor.close\(\);\s*window.CitadelProjectTools.reset\(\);\s*chooseWorkspaceMode = null;\s*workspaceMode = null;/);
+    assert.match(appSource, /function teardownSession\(\) \{\s*workspaceGeneration\+\+;\s*document.getElementById\('ws-close-mode'\)\?\.remove\(\);\s*window.CitadelBrowserEditor.close\(\);\s*window.CitadelProjectTools.reset\(\);\s*window.CitadelSystem.dispose\(\);\s*chooseWorkspaceMode = null;\s*workspaceMode = null;/);
     assert.doesNotMatch(appSource, /CitadelChat/);
   });
 

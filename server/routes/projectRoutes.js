@@ -41,6 +41,28 @@ async function projectRoutes(fastify) {
   // Read-only suggestions; importing still uses the explicit audited endpoint.
   fastify.get('/api/projects/discover', async () => projectService.discoverProjects());
 
+  // Unlike suggestion dismissal, this permanently removes an unregistered folder.
+  fastify.delete('/api/projects/discover', async (request, reply) => {
+    if (request.user.role !== 'admin') {
+      return reply.status(403).send({ error: 'Administrator privileges are required.' });
+    }
+    const { targetPath, confirmPath } = request.body || {};
+    try {
+      const result = projectService.deleteDiscoveredFolder({ targetPath, confirmPath });
+      auditService.logAction({
+        userId: request.user.id,
+        action: 'detected_folder_deleted',
+        targetType: 'directory',
+        targetId: result.path,
+        details: { path: result.path, filesDeleted: true },
+        ip: request.ip,
+      });
+      return result;
+    } catch (err) {
+      return reply.status(err.statusCode || 400).send({ error: err.message });
+    }
+  });
+
   // Get project by ID or slug
   fastify.get('/api/projects/:id', async (request, reply) => {
     const project = projectService.getProject(request.params.id);

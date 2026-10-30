@@ -6,8 +6,22 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { getDatabase } = require('../database/db');
 const { PROJECTS_DIR } = require('../config');
-const { sanitizeSlug, validateSafePath } = require('../security/guard');
+const { sanitizeSlug, validateSafePath, isInsideBase } = require('../security/guard');
 const terminalManager = require('./terminalManager');
+
+// Preserve canonical ownership checks even when a registered path's final
+// components are missing: its existing ancestors may still be symlink aliases.
+function resolveRegisteredPath(registeredPath) {
+  let ancestor = path.resolve(registeredPath);
+  const missing = [];
+  for (;;) {
+    try { return path.join(fs.realpathSync(ancestor), ...missing); } catch (err) {
+      if (!['ENOENT', 'ENOTDIR'].includes(err.code) || path.dirname(ancestor) === ancestor) throw err;
+      missing.unshift(path.basename(ancestor));
+      ancestor = path.dirname(ancestor);
+    }
+  }
+}
 
 class ProjectService {
   /**
@@ -64,6 +78,65 @@ class ProjectService {
     }
     directories.sort((a, b) => a.name.localeCompare(b.name));
     return { directories, truncated };
+  }
+
+  /** Delete only an explicitly confirmed, currently unregistered detected folder. */
+  deleteDiscoveredFolder({ targetPath, confirmPath } = {}) {
+    const refuse = (message, statusCode = 400) => {
+      throw Object.assign(new Error(message), { statusCode });
+    };
+    if (typeof targetPath !== 'string' || !targetPath || targetPath.includes('\0')) {
+      refuse('A valid detected folder path is required.');
+    }
+    if (typeof confirmPath !== 'string' || confirmPath !== targetPath) {
+      refuse('Type the exact folder path to confirm deletion.');
+    }
+
+    // Deliberately synchronous through rmSync: import/addRepo cannot interleave
+    // with the ownership check in this process. Do not add an await here.
+    try {
+      const root = fs.realpathSync(PROJECTS_DIR);
+      const name = path.basename(targetPath);
+      if (targetPath === root || targetPath !== path.resolve(targetPath) || path.dirname(targetPath) !== root ||
+          name.startsWith('.') || name === 'node_modules') {
+        refuse('Only visible immediate folders in the projects directory can be deleted.');
+      }
+      const stat = fs.lstatSync(targetPath);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(targetPath) !== targetPath) {
+        refuse('The detected folder must be a real directory, not a symbolic link or alias.');
+      }
+
+      const db = getDatabase();
+      const registered = db.prepare('SELECT path FROM projects UNION SELECT path FROM project_repos').all();
+      for (const row of registered) {
+        if (isInsideBase(targetPath, path.resolve(row.path)) ||
+            isInsideBase(targetPath, resolveRegisteredPath(row.path))) {
+          refuse('This folder is registered or contains a registered project or repository.', 409);
+        }
+      }
+
+      // Recheck identity after ownership lookups; reject a disappearing or
+      // replaced entry rather than deleting whatever now occupies its path.
+      const current = fs.lstatSync(targetPath);
+      if (!current.isDirectory() || current.isSymbolicLink() ||
+          current.dev !== stat.dev || current.ino !== stat.ino ||
+          fs.realpathSync(PROJECTS_DIR) !== root || fs.realpathSync(targetPath) !== targetPath) {
+        refuse('The detected folder changed. Refresh the folder list and try again.', 409);
+      }
+      fs.rmSync(targetPath, { recursive: true, force: false });
+      try {
+        fs.lstatSync(targetPath);
+      } catch (err) {
+        if (err.code === 'ENOENT') return { success: true, path: targetPath, filesDeleted: true };
+        throw err;
+      }
+      refuse('The detected folder could not be verified as deleted.', 409);
+    } catch (err) {
+      if (err.statusCode) throw err;
+      if (err.code === 'ENOENT') refuse('The detected folder no longer exists. Refresh the folder list.', 404);
+      // Never expose filesystem errors containing arbitrary descendant names.
+      refuse('The detected folder could not be safely deleted.');
+    }
   }
 
   /**

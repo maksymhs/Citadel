@@ -65,11 +65,11 @@
   // project and active terminal instead of always resetting to the dashboard.
   const UI_STATE_KEY = 'citadel.uiState';
 
-  // The three primary views plus always-on core tool views. Optional module
-  // views only appear in the sidebar when their module is enabled. System is
-  // gone: host diagnostics/updates and Activity & Audit live in Settings.
+  // Primary work views plus core tools. System manages running resources;
+  // host diagnostics/updates and Activity & Audit live in Settings.
   const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace'];
   const CORE_NAV = [
+    { view: 'system', label: 'System', icon: 'system' },
     { view: 'files', label: 'Files', icon: 'files' },
     { view: 'settings', label: 'Settings', icon: 'settings' },
   ];
@@ -89,7 +89,7 @@
   const LEGACY_VIEW_MAP = {
     repos: 'projects', terminal: 'workspace', logs: 'activity',
     plugins: 'settings', modules: 'settings', deployments: 'proxy',
-    system: 'settings', machines: 'dashboard', machine: 'dashboard', processes: 'dashboard', terminals: 'dashboard',
+    machines: 'dashboard', machine: 'dashboard', processes: 'system', terminals: 'system',
     'project-hub': 'projects', missions: 'projects', work: 'projects', docs: 'projects', learning: 'projects',
   };
 
@@ -446,8 +446,11 @@
       </div>
     `;
 
+    const overlay = root.firstElementChild;
     const close = () => {
       document.removeEventListener('keydown', onKeydown);
+      // A pending confirmation must not close a newer dialog.
+      if (!overlay.isConnected) return;
       root.innerHTML = '';
       if (typeof onClose === 'function') {
         try { onClose(); } catch { /* ignore */ }
@@ -457,6 +460,7 @@
 
     // Escape closes; Tab is trapped inside the dialog.
     const onKeydown = (e) => {
+      if (!overlay.isConnected) { document.removeEventListener('keydown', onKeydown); return; }
       if (e.key === 'Escape') {
         e.preventDefault();
         close();
@@ -482,14 +486,17 @@
     document.getElementById('modal-close-btn').onclick = close;
     document.getElementById('modal-cancel-btn').onclick = close;
     document.getElementById('modal-confirm-btn').onclick = async () => {
+      if (!overlay.isConnected) return;
       if (onConfirm) {
-        const btn = document.getElementById('modal-confirm-btn');
+        const btn = overlay.querySelector('#modal-confirm-btn');
+        if (btn.disabled) return;
         btn.disabled = true;
         btn.textContent = 'Processing...';
         try {
           await onConfirm();
           close();
         } catch (err) {
+          if (!overlay.isConnected) return;
           btn.disabled = false;
           btn.textContent = confirmText;
           showToast(err.message, 'error');
@@ -785,9 +792,9 @@
   // Build the sidebar from the primary views plus any enabled optional module
   // views. Core modules always show; disabled modules are hidden entirely
   // (never rendered-but-hidden) so the navigation never advertises dead links.
-  // "Workspace" is a two-level tree: the parent opens the overview selector and
-  // each entry opens (or creates) that context's single terminal. The per-entry
-  // menu closes it.
+  // Workspace lists the admin host-terminal entry and projects with observed
+  // running work. Entries reopen their workspace; the menu explicitly closes
+  // all terminals in that context and the project's shared editor.
   function renderSidebarNav() {
     const nav = document.getElementById('sidebar-nav');
     if (!nav) return;
@@ -1016,12 +1023,14 @@
       const activity = window.CitadelProjectTools.projectRuntime(p.id);
       return sessionsForContext(p.id).some(s => s.isAlive) || activity.vscode;
     });
-    if (!projects.length) return '';
+    const showSystem = state.user?.role === 'admin';
+    if (!showSystem && !projects.length) return '';
     const open = state.workspaceNavOpen !== false;
     let html = `<div class="nav-section-title workspace-heading"><span>Workspace</span>${navChevron('workspace', open)}</div>`;
     if (!open) return html;
 
     html += '<div class="nav-sub">';
+    if (showSystem) html += workspaceNodeHtml('system', 'System (host)', 'Host terminals');
     for (const p of projects) {
       html += workspaceNodeHtml(p.id, p.name, p.path);
     }
@@ -1089,7 +1098,7 @@
           ...(context === 'system' ? [] : [
             { label: 'VS Code', disabled: state.activeHostId !== 'local', onSelect: () => openWorkspace(context, 'vscode') },
           ]),
-          { label: 'Stop terminal', danger: true, disabled: !sessionForContext(context), onSelect: () => closeWorkspaceTerminal(context) },
+          { label: 'Close all', danger: true, disabled: context === 'system' && !sessionsForContext(context).some(session => session.isAlive), onSelect: () => closeWorkspaceAll(context) },
         ]);
         return;
       }
@@ -1217,6 +1226,7 @@
 
   function navigateTo(view) {
     window.CitadelBrowserEditor.close();
+    window.CitadelSystem.dispose();
     workspaceGeneration++;
     document.getElementById('ws-close-mode')?.remove();
     chooseWorkspaceMode = null;
@@ -1250,6 +1260,9 @@
     if (view === 'dashboard') {
       titleEl.textContent = 'Dashboard';
       renderDashboardView();
+    } else if (view === 'system') {
+      titleEl.textContent = 'System';
+      window.CitadelSystem.render();
     } else if (view === 'projects') {
       titleEl.textContent = 'Projects & Repositories';
       renderProjectsView();
@@ -1524,11 +1537,6 @@
     const scope = window.CitadelProjectTools.scopeKey(null);
     await Promise.all([loadProjects(), loadSessions()]);
     if (state.currentView !== 'projects' || scope !== window.CitadelProjectTools.scopeKey(null)) return;
-    const systemCard = '<section class="card project-system"><strong>System (host)</strong><button type="button" class="btn btn-secondary btn-sm" id="projects-system-open">Open terminal</button></section>';
-    const mountSystem = () => {
-      content.insertAdjacentHTML('afterbegin', systemCard);
-      document.getElementById('projects-system-open').onclick = () => openWorkspace('system');
-    };
 
     if (state.projects.length === 0) {
       content.innerHTML = `
@@ -1545,7 +1553,6 @@
       `;
       document.getElementById('empty-create-btn').onclick = showCreateProjectModal;
       document.getElementById('empty-clone-btn').onclick = showCloneProjectModal;
-      mountSystem();
       window.CitadelProjectTools.mountDiscovery(content);
       return;
     }
@@ -1592,7 +1599,6 @@
       </div>
     `;
 
-    mountSystem();
     document.getElementById('proj-search')?.addEventListener('input', (e) => {
       const q = e.target.value.trim().toLowerCase();
       document.querySelectorAll('#proj-list .proj-item').forEach((el) => {
@@ -2226,6 +2232,7 @@
     document.getElementById('ws-close-mode')?.remove();
     window.CitadelBrowserEditor.close();
     window.CitadelProjectTools.reset();
+    window.CitadelSystem.dispose();
     chooseWorkspaceMode = null;
     workspaceMode = null;
     stopHostStatusPolling();
@@ -2463,27 +2470,57 @@
     navigateTo('workspace');
   }
 
-  // Close the single terminal owned by a workspace context (from the nav menu).
-  async function closeWorkspaceTerminal(context) {
-    const session = sessionForContext(context);
-    if (!session) return;
-    const map = context === 'system' ? state.sysTerminals : state.terminals;
-    const item = map.get(session.id);
-    if (item) {
-      disposeTerminalItem(item);
-      map.delete(session.id);
-    }
-    await api(`/api/terminals/${session.id}`, { method: 'DELETE' }).catch(() => {});
-    await loadSessions();
-    // If that context is on screen, fall back to the overview so the view does
-    // not immediately re-create a shell.
-    if (state.currentView === 'workspace' && state.workspaceContext === context) {
-      state.workspaceContext = null;
-      saveUiState({ workspaceContext: null });
-      navigateTo('workspace');
-    } else {
-      renderSidebarNav();
-    }
+  // Explicitly close running work; Back/navigation never calls this action.
+  function closeWorkspaceAll(context) {
+    const hostId = state.activeHostId;
+    const scope = window.CitadelProjectTools.scopeKey(null);
+    const current = () => scope === window.CitadelProjectTools.scopeKey(null);
+    const name = context === 'system' ? 'System (host)' : state.projects.find(project => project.id === context)?.name;
+    if (!name) return;
+    let open = true;
+    openModal({
+      title: `Close all — ${name}`,
+      bodyHtml: `<p>Stop all terminals for ${escapeHtml(name)} and their running commands? Unsaved work may be lost.</p>${context !== 'system' ? '<p>VS Code is shared by all projects on this machine. Closing it disconnects every project using that editor.</p>' : ''}`,
+      confirmText: 'Close all',
+      onClose: () => { open = false; },
+      onConfirm: async () => {
+        if (!open || !current()) throw new Error('Machine or user changed. Reopen this action.');
+        const failures = [];
+        // Re-read at confirmation so sessions opened since the menu are included.
+        const result = await apiForHost(hostId, '/api/terminals');
+        if (!open || !current()) throw new Error('Machine or user changed. Reopen this action.');
+        const sessions = (result.sessions || []).filter(session => (context === 'system' ? !session.project_id : session.project_id === context) && (session.isAlive || session.status === 'active'));
+        for (const session of sessions) {
+          if (!current()) return;
+          try {
+            await apiForHost(hostId, `/api/terminals/${encodeURIComponent(session.id)}`, { method: 'DELETE' });
+            monitorCtx().forgetTerminal(hostId, session.id);
+          } catch { failures.push('Some terminals could not be stopped.'); }
+        }
+        if (!current()) return;
+        if (context !== 'system') {
+          try {
+            const result = await apiForHost(hostId, '/api/editor', { method: 'DELETE' });
+            if (result.editor?.running !== false) throw new Error('Editor stop not verified.');
+          } catch { failures.push('Shared VS Code could not be stopped or verified.'); }
+        }
+        if (!current()) return;
+        const listed = await loadSessions();
+        await window.CitadelProjectTools.refreshRuntime();
+        if (!current()) return;
+        renderSidebarNav();
+        if (!listed) failures.push('Terminal shutdown could not be verified.');
+        else if (sessionsForContext(context).some(session => session.isAlive)) failures.push('Some terminals are still running. Try Close all again.');
+        if (failures.length) throw new Error([...new Set(failures)].join(' '));
+        if (context !== 'system') window.CitadelProjectTools.workspacePreference(context, { mode: null, terminalId: null, editorOpened: false });
+        if (state.currentView === 'workspace' && state.workspaceContext === context) {
+          state.workspaceContext = null;
+          saveUiState({ workspaceContext: null });
+          navigateTo('projects');
+        }
+        showToast('Workspace closed.', 'success');
+      },
+    });
   }
 
   let workspaceGeneration = 0;
@@ -3253,7 +3290,6 @@
 
   // --- Activity (activity.js) ---
   function renderActivityView(...args) { return window.CitadelActivity.renderActivityView(...args); }
-  function bindActivityButtons(...args) { return window.CitadelActivity.bindActivityButtons(...args); }
 
   // --- Deployments and Docker (deployments.js) ---
   function renderDeploymentsView(...args) { return window.CitadelDeployments.renderDeploymentsView(...args); }
@@ -3300,42 +3336,54 @@
     const content = document.getElementById('main-content');
     const section = SETTINGS_SECTIONS[state.settingsSection] ? state.settingsSection : null;
     state.settingsSection = section;
+    if (section === 'activity') return navigateTo('activity');
     const titleEl = document.getElementById('top-bar-title');
     if (titleEl) titleEl.textContent = section ? `Settings · ${SETTINGS_SECTIONS[section].title}` : 'Settings';
     updateBackButton('settings');
     window.CitadelGatewaySettings.dispose();
+    if (!section) {
+      content.innerHTML = `<div class="settings-screen settings-hub"><nav class="settings-tiles" aria-label="Settings sections">
+        ${Object.entries(SETTINGS_SECTIONS).map(([id, def]) => `
+          <button type="button" class="settings-tile" data-settings-section="${id}">
+            <span class="settings-tile-icon" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${SETTINGS_ICONS[id]}</svg></span>
+            <span class="settings-tile-text"><strong>${escapeHtml(def.title)}</strong></span>
+            <span class="settings-tile-chev" aria-hidden="true">&rsaquo;</span>
+          </button>`).join('')}
+      </nav></div>`;
+      content.querySelectorAll('[data-settings-section]').forEach((btn) => {
+        btn.onclick = () => openSettingsSection(btn.dataset.settingsSection);
+      });
+      return;
+    }
     if (section === 'gateway') {
       content.innerHTML = `<div class="settings-screen"><div class="settings-screen-head"><h2>${escapeHtml(SETTINGS_SECTIONS.gateway.title)}</h2><p>${escapeHtml(SETTINGS_SECTIONS.gateway.desc)}</p></div><div class="card settings-panel" id="gateway-body">Loading…</div></div>`;
       await window.CitadelGatewaySettings.init({ api, escapeHtml, showToast });
       return;
     }
-    content.innerHTML = '<div style="color:var(--text-secondary);">Loading settings...</div>';
+    let pane = document.createElement('div');
+    pane.className = 'mon-muted';
+    pane.textContent = 'Loading settings...';
+    content.replaceChildren(pane);
+    const hostId = state.activeHostId, userId = state.user?.id, role = state.user?.role;
+    const present = () => pane.isConnected && state.currentView === 'settings'
+      && state.settingsSection === section && state.activeHostId === hostId
+      && state.user?.id === userId && state.user?.role === role;
 
     try {
-      const canPair = Boolean(state.user && state.user.role === 'admin');
-      // A pairing code is only minted for the hub, where its QR is shown.
-      const [settingsRes, connectRes, nodeRes, versionRes, secretsRes, inviteRes] = await Promise.all([
-        api('/api/settings/connect'),
-        api('/api/system/connect'),
-        api('/api/system/node'),
-        api('/api/system/version'),
-        api('/api/secrets'),
-        (canPair && !section) ? api('/api/pair/invite', { method: 'POST' }).catch((err) => ({ inviteError: err.message || 'failed' })) : Promise.resolve(null),
+      const canPair = role === 'admin';
+      // The hub needs no data; each section loads only what it displays.
+      const [settingsRes, connectRes, versionRes, secretsRes] = await Promise.all([
+        section === 'network' ? api('/api/settings/connect') : {},
+        section === 'network' ? api('/api/system/connect') : {},
+        section === 'updates' ? api('/api/system/version') : {},
+        section === 'credentials' ? api('/api/secrets') : {},
       ]);
+      if (!present()) return;
       await loadModules();
       const monCfg = section === 'alerts' ? ((await localApi('/api/monitor/config').catch(() => null)) || {}).config : null;
+      if (!present()) return;
       const s = settingsRes.connect || {};
       const connect = connectRes.connect || {};
-      const node = nodeRes.node || {};
-      const invite = inviteRes && inviteRes.invite ? inviteRes.invite : null;
-      const inviteError = inviteRes && inviteRes.inviteError ? inviteRes.inviteError : null;
-      // One code, two jobs: any camera opens the panel, and another Citadel's
-      // Pair screen reads the same invitation from the fragment.
-      // Never show the plain-address QR when an administrator's invitation
-      // failed: it opens the panel but cannot pair, which looked like a bug.
-      const qrSvg = (invite && invite.qrSvg) || (inviteError ? '' : connect.qrSvg) || '';
-      const qrLink = (invite && invite.link) || connect.url || '';
-      const qrAddress = (invite && invite.payload && invite.payload.url) || connect.url || '';
       const ver = versionRes.version || {};
       const secretsList = secretsRes.secrets || [];
       const activeHost = state.activeHostId === 'local'
@@ -3343,83 +3391,25 @@
         : ((state.hosts.find((h) => h.id === state.activeHostId) || {}).name);
       const panelHost = (state.hostIdentity && state.hostIdentity.name) || 'this machine';
 
-      const summaries = {
-        updates: `v${ver.version || '?'} · ${ver.channel === 'stable' ? 'stable' : 'main'} channel`,
-        machines: state.hosts.length ? `${state.hosts.length} paired machine${state.hosts.length === 1 ? '' : 's'}` : 'No machines paired yet',
-        network: s.publicUrl ? 'Custom public URL' : 'Address detected automatically',
-        alerts: 'Offline, disk, memory and CPU alerts',
-        credentials: `${secretsList.length} secret${secretsList.length === 1 ? '' : 's'} in the vault`,
-        activity: 'Events and security audit trail',
-      };
-
-      const hubHtml = `
-        <div class="card settings-hero">
-          ${qrSvg ? `<div class="settings-hero-qr" title="Scan to open this panel, or pair from another Citadel">
-            <div class="connect-qr">${qrSvg}</div>
-            <span>Scan to open or pair</span>
-          </div>` : ''}
-          <div class="settings-hero-body">
-            <div class="settings-hero-title">
-              <strong>${escapeHtml(node.hostname || panelHost)}</strong>
-              <span>${escapeHtml(node.platform || '')} ${escapeHtml(node.release || '')} · Node ${escapeHtml(node.nodeVersion || '')}${node.uptimeSeconds ? ` · up ${Math.round(node.uptimeSeconds / 3600)} h` : ''}</span>
-            </div>
-            <div class="settings-hero-line">
-              Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
-              ${ver.commit ? `<span class="mon-muted">(${escapeHtml(ver.commit)})</span>` : ''}
-            </div>
-            <div class="settings-hero-address">
-              <a href="${escapeHtml(qrAddress || '#')}" target="_blank" rel="noopener">${escapeHtml(qrAddress)}</a>
-            </div>
-            <div class="settings-hero-actions">
-              <button class="btn btn-secondary btn-sm" id="settings-copy-url">Copy link</button>
-              ${invite ? '<button class="btn btn-secondary btn-sm" id="settings-new-code">New code</button>' : ''}
-              <button class="btn btn-secondary btn-sm" id="connect-help-btn">Remote access help</button>
-            </div>
-            ${invite
-              ? `<div class="settings-hero-status">Pairing code works once · expires ${escapeHtml(new Date(invite.expiresAt).toLocaleTimeString())}.${invite.reachableWarning ? ` <span style="color:var(--warning-color);">${escapeHtml(invite.reachableWarning)}</span>` : ''}</div>`
-              : inviteError
-                ? `<div class="settings-hero-status" style="color:var(--danger-color);">Could not create a pairing code: ${escapeHtml(inviteError)}. Reload Settings to retry.</div>`
-                : '<div class="settings-hero-status">Sign in as an administrator to generate a pairing code.</div>'}
-          </div>
-        </div>
-        <div class="settings-tiles">
-          ${Object.entries(SETTINGS_SECTIONS).map(([id, def]) => `
-            <button type="button" class="settings-tile" data-settings-section="${id}">
-              <span class="settings-tile-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${SETTINGS_ICONS[id]}</svg></span>
-              <span class="settings-tile-text">
-                <strong>${escapeHtml(def.title)}</strong>
-                <span>${escapeHtml(summaries[id])}</span>
-              </span>
-              <span class="settings-tile-chev" aria-hidden="true">&rsaquo;</span>
-            </button>`).join('')}
-        </div>`;
-
       const updatesHtml = `
         <div class="card settings-panel">
           <div class="settings-hero-line">
             Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
-            ${ver.commit ? `<span class="mon-muted">(${escapeHtml(ver.commit)})</span>` : ''}
-            ${ver.repo ? `<span class="mon-muted">· ${escapeHtml(ver.repo)}${ver.branch ? ` · ${escapeHtml(ver.branch)}` : ''}</span>` : ''}
+            <span class="mon-muted">· latest stable release</span>
           </div>
-          ${canPair ? `<label class="settings-field">Update channel
-            <select id="update-channel" class="form-input">
-              <option value="stable"${ver.channel === 'stable' ? ' selected' : ''}>Stable (latest release)</option>
-              <option value="main"${ver.channel !== 'stable' ? ' selected' : ''}>Main (latest commit, may be unstable)</option>
-            </select>
-          </label>` : ''}
-          <div id="update-status" class="settings-hero-status" style="font-size:13px;">
-            ${ver.updateMode === 'helper'
-              ? 'The in-panel updater is enabled.'
-              : ver.updateMode === 'self'
-                ? 'Built-in updater enabled.'
-                : `Automatic updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
+          <div class="settings-hero-status">Update ${escapeHtml(activeHost || 'this machine')} first, then all machines paired with it, one at a time. Services restart briefly.</div>
+          <div id="update-status" class="settings-hero-status" role="status" style="font-size:13px;">
+            ${!canPair
+              ? 'Sign in as an administrator to update.'
+              : ver.canUpdate
+                ? 'Ready to check or update.'
+                : `In-panel updates are unavailable (${escapeHtml(ver.updateProblem || 'not configured')}).`}
           </div>
           <div class="settings-hero-actions">
-            <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check for updates</button>
-            ${canPair && state.hosts.length > 0 ? '<button class="btn btn-secondary btn-sm" id="update-rollout-now">Update paired machines</button>' : ''}
-            ${ver.canUpdate ? '<button class="btn btn-primary btn-sm" id="apply-update-btn">Update now</button>' : ''}
+            <button class="btn btn-secondary btn-sm" id="check-updates-btn">Check</button>
+            ${canPair ? `<button class="btn btn-primary btn-sm" id="apply-update-btn"${ver.canUpdate ? '' : ' disabled'}>Update</button>` : ''}
           </div>
-          ${canPair && state.hosts.length > 0 ? '<div id="update-rollout-status" class="settings-hero-status"></div>' : ''}
+          ${canPair ? '<div id="update-rollout-status" class="settings-hero-status" role="status"></div>' : ''}
         </div>`;
 
       const channelNames = monCfg ? [
@@ -3464,6 +3454,7 @@
             </div>
             <div class="settings-machine-actions">
               <button class="btn btn-secondary btn-sm" id="settings-rename-local" title="Change the name of this machine">Rename this machine</button>
+              ${canPair ? '<button class="btn btn-secondary btn-sm" id="settings-show-qr">Show pairing QR</button>' : ''}
               <button class="btn btn-secondary btn-sm" id="settings-pair-btn">Pair a machine</button>
             </div>
           </div>
@@ -3529,73 +3520,18 @@
           ${secretsCardHtml(secretsList)}
         </div>
 `,
-        activity: `
-        <div class="card" style="margin-bottom:24px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="activity">Open Activity</button>
-            <button class="btn btn-secondary btn-sm open-activity-btn" data-activity-tab="audit">Open Audit</button>
-          </div>
-        </div>
-`,
       };
 
-      content.innerHTML = section
-        ? `<div class="settings-screen">
-            <div class="settings-screen-head">
-              <h2>${escapeHtml(SETTINGS_SECTIONS[section].title)}</h2>
-              <p>${escapeHtml(SETTINGS_SECTIONS[section].desc)}</p>
-            </div>
-            ${sectionHtml[section]}
-          </div>`
-        : `<div class="settings-screen">
-            <div class="settings-screen-head">
-              <h2>Settings${activeHost ? ` · ${escapeHtml(activeHost)}` : ''}</h2>
-            </div>
-            ${hubHtml}
-          </div>`;
+      content.innerHTML = `<div class="settings-screen">
+        <div class="settings-screen-head">
+          <h2>${escapeHtml(SETTINGS_SECTIONS[section].title)}</h2>
+          <p>${escapeHtml(SETTINGS_SECTIONS[section].desc)}</p>
+        </div>
+        ${sectionHtml[section]}
+      </div>`;
+      pane = content.firstElementChild;
 
-      document.querySelectorAll('[data-settings-section]').forEach((btn) => {
-        btn.onclick = () => openSettingsSection(btn.getAttribute('data-settings-section'));
-      });
-
-      if (section === 'updates') {
-        bindUpdatesCard();
-      // Staged update propagation.
-      const nowBtn = document.getElementById('update-rollout-now');
-      if (canPair && nowBtn) {
-        const statusEl = document.getElementById('update-rollout-status');
-        const showRollout = (r) => {
-          if (!statusEl) return;
-          if (!r || !r.hosts) { statusEl.textContent = ''; return; }
-          const parts = r.hosts.map((h) => `${h.name}: ${h.status}${h.error ? ` (${h.error})` : ''}`);
-          statusEl.textContent = `Last rollout to v${r.target}${r.finishedAt ? '' : ' (running…)'}: ${parts.join(' · ') || 'nothing to do'}${r.halted ? ` — stopped: ${r.halted}` : ''}`;
-        };
-        let rolloutPoll = null;
-        const load = async () => {
-          try {
-            const res = await api('/api/system/update/propagate');
-            showRollout(res.lastRollout);
-            clearTimeout(rolloutPoll);
-            if (res.lastRollout && !res.lastRollout.finishedAt && document.getElementById('update-rollout-status')) {
-              rolloutPoll = setTimeout(load, 5000);
-            }
-          } catch { /* optional */ }
-        };
-        load();
-        nowBtn.onclick = async () => {
-          nowBtn.disabled = true;
-          try {
-            await api('/api/system/update/rollout', { method: 'POST' });
-            showToast('Rollout started.', 'success');
-            setTimeout(load, 1500);
-          } catch (err) {
-            showToast(err.message, 'error');
-          } finally {
-            nowBtn.disabled = false;
-          }
-        };
-      }
-      }
+      if (section === 'updates') bindUpdatesCard(ver, activeHost);
 
       if (section === 'alerts') {
         document.getElementById('alerts-configure')?.addEventListener('click', async () => {
@@ -3615,7 +3551,6 @@
         });
       }
       if (section === 'credentials') bindSecretsCard();
-      if (section === 'activity') bindActivityButtons();
 
       if (section === 'machines') {
       document.getElementById('settings-pair-btn').onclick = () => showPairModal();
@@ -3704,7 +3639,7 @@
                 </div>
                 <button class="btn btn-secondary btn-sm" data-suggest-pair="${escapeHtml(m.urls[0])}">Pair</button>
               </div>`).join('')}
-            <div style="font-size:11px;color:var(--text-muted);">Pairing needs that machine's own QR: open its Settings and scan or paste the code.</div>`;
+            <div style="font-size:11px;color:var(--text-muted);">Pairing needs that machine's own QR: open its Settings → Machines → Show pairing QR and scan or paste the code.</div>`;
           suggestionsEl.querySelectorAll('[data-suggest-pair]').forEach((btn) => {
             btn.onclick = () => showPairModal();
           });
@@ -3747,113 +3682,125 @@
       };
       }
 
-      if (!section) {
-      document.getElementById('settings-copy-url').onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(qrLink);
-          showToast('Link copied. Any camera opens the panel; another Citadel can pair with it.', 'success');
-        } catch {
-          showToast('Could not copy the link.', 'error');
-        }
-      };
-
-      const newCodeBtn = document.getElementById('settings-new-code');
-      if (newCodeBtn) newCodeBtn.onclick = () => renderSettingsView();
-
-      const connectHelpBtn = document.getElementById('connect-help-btn');
-      if (connectHelpBtn) {
-        connectHelpBtn.onclick = () => {
-          openModal({
-            title: 'Access from anywhere',
-            confirmText: 'Got it',
-            bodyHtml: `
-              <p style="font-size:13px;line-height:1.6;color:var(--text-secondary);">
-                This address only works on your local network. To reach the panel from any
-                network without a domain, use <strong>Tailscale</strong>:
-              </p>
-              <ol style="font-size:13px;line-height:1.7;color:var(--text-secondary);padding-left:18px;margin-top:10px;">
-                <li>Install Tailscale on this host and on your phone, signing in to the same account.</li>
-                <li>On the host run: <code>tailscale serve https / http://127.0.0.1:3000</code></li>
-                <li>Reload this page — the QR will point to your <code>*.ts.net</code> address and work anywhere.</li>
-              </ol>
-            `,
-          });
-        };
-      }
+      if (section === 'machines' && canPair) {
+        document.getElementById('settings-show-qr').onclick = () => window.CitadelPairing.showInviteModal();
       }
     } catch (err) {
-      content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
+      if (present()) content.innerHTML = `<div style="color:var(--danger-color);">Error: ${escapeHtml(err.message)}</div>`;
     }
   }
 
-  // Update controls moved out of the former System view into Settings.
-  function bindUpdatesCard() {
+  // Both actions target the machine shown when this card was opened. Progress
+  // survives its restart without reloading the panel or switching the target.
+  function bindUpdatesCard(version, targetName) {
+    const hostId = state.activeHostId;
+    const userId = state.user?.id;
+    const userRole = state.user?.role;
+    const updateApi = (path, options) => apiForHost(hostId, path, options);
     const statusEl = document.getElementById('update-status');
+    const rolloutEl = document.getElementById('update-rollout-status');
     const checkBtn = document.getElementById('check-updates-btn');
-    const channelSel = document.getElementById('update-channel');
-    if (channelSel) {
-      channelSel.onchange = async () => {
-        const previous = channelSel.value === 'stable' ? 'main' : 'stable';
-        try {
-          const res = await api('/api/system/update/channel', { method: 'PUT', body: { channel: channelSel.value } });
-          showToast(`Update channel: ${res.channel}. Check for updates to see what it would install.`, 'success');
-        } catch (err) {
-          channelSel.value = previous;
-          showToast(err.message, 'error');
+    const applyBtn = document.getElementById('apply-update-btn');
+    const attached = () => statusEl.isConnected && state.activeHostId === hostId
+      && state.user?.id === userId && state.user?.role === userRole;
+    let pollTimer;
+    let generation = 0;
+    let watchingSince = Date.now();
+
+    const loadProgress = async (watch = false) => {
+      if (!rolloutEl || !attached()) return;
+      const current = generation;
+      try {
+        const [res, localRes] = await Promise.all([
+          updateApi('/api/system/update/propagate'),
+          updateApi('/api/system/update/status'),
+        ]);
+        if (!attached() || current !== generation) return;
+        const pending = res.pendingUpdate;
+        const local = localRes.update?.status;
+        const failed = pending && local?.state === 'failed'
+          && (!pending.requestedAt || local.finishedAt >= pending.requestedAt);
+        const r = res.lastRollout;
+        const running = Boolean((pending && !failed) || (r && !r.finishedAt));
+        if (applyBtn) applyBtn.disabled = !version.canUpdate || running;
+        if (failed) {
+          rolloutEl.style.color = 'var(--danger-color)';
+          rolloutEl.textContent = `Local update failed: ${local.error || 'unknown error'}. Paired machines were left untouched.`;
+        } else if (pending) {
+          rolloutEl.style.color = 'var(--warning-color)';
+          rolloutEl.textContent = `${local?.state === 'running' ? (local.message || 'Local update in progress.') : 'Waiting for the local update and healthy restart.'} Paired machines will follow automatically after this explicit Update action.`;
+        } else if (r) {
+          const partial = r.halted || r.hosts.some((h) => h.status === 'failed' || h.status === 'skipped');
+          const label = !r.finishedAt ? 'Updating paired machines' : partial ? 'Last result — Partial update' : 'Last result — Paired-machine update complete';
+          rolloutEl.style.color = `var(--${!r.finishedAt || partial ? 'warning' : 'success'}-color)`;
+          const parts = r.hosts.map((h) => `${h.name}: ${h.status}${h.error ? ` (${h.error})` : ''}`);
+          rolloutEl.textContent = `${label}${r.target ? ` to v${r.target}` : ''}: ${parts.join(' · ') || 'no paired machines to update'}${r.halted ? ` — stopped: ${r.halted}` : ''}`;
         }
-      };
-    }
+        watch = running;
+      } catch (err) {
+        if (!attached() || current !== generation) return;
+        rolloutEl.style.color = 'var(--warning-color)';
+        rolloutEl.textContent = `Update progress unavailable: ${err.message}. The machine may be restarting or offline; completion is not confirmed.`;
+      }
+      if (watch && attached()) {
+        if (Date.now() - watchingSince < 15 * 60 * 1000) {
+          clearTimeout(pollTimer);
+          pollTimer = setTimeout(() => loadProgress(true), 5000);
+        } else {
+          rolloutEl.textContent += ' Progress monitoring timed out. Reopen Updates to check the persisted outcome.';
+        }
+      }
+    };
+    if (rolloutEl) loadProgress(); // Read-only; opening Settings never starts an update.
+
     if (checkBtn) {
       checkBtn.onclick = async () => {
         checkBtn.disabled = true;
         statusEl.style.color = 'var(--text-muted)';
-        statusEl.textContent = 'Checking GitHub for the latest release...';
+        statusEl.textContent = 'Checking the latest stable release…';
         try {
-          const res = await api('/api/system/updates?force=true');
+          const res = await updateApi('/api/system/updates?force=true&channel=stable');
+          if (!attached()) return;
           const u = res.updates || {};
-          if (u.error) {
-            statusEl.style.color = 'var(--warning-color)';
-            statusEl.textContent = `Could not check for updates: ${u.error}`;
-          } else if (!u.latest) {
-            statusEl.style.color = 'var(--text-muted)';
-            statusEl.textContent = 'No published releases or tags found yet.';
-          } else if (u.updateAvailable) {
-            statusEl.style.color = 'var(--warning-color)';
-            const label = (u.latest && u.latest !== u.version)
-              ? `v${escapeHtml(u.latest)}`
-              : `commit ${escapeHtml(u.latestCommit || u.latest || '')}`;
-            statusEl.innerHTML = `Update available: <strong>${label}</strong>${u.releaseUrl ? ` — <a href="${escapeHtml(u.releaseUrl)}" target="_blank" rel="noopener" style="color:var(--accent-color);">view changes</a>` : ''}`;
-          } else {
-            statusEl.style.color = 'var(--success-color)';
-            statusEl.textContent = `You are running the latest version (v${u.version}).`;
-          }
+          statusEl.style.color = `var(--${u.error || !u.latest ? 'warning' : u.updateAvailable ? 'warning' : 'success'}-color)`;
+          statusEl.textContent = u.error
+            ? `Could not check for updates: ${u.error}`
+            : !u.latest
+              ? 'No stable releases found.'
+              : u.updateAvailable
+                ? `Latest stable release: v${u.latest}. Ready to update this machine and all its paired machines.`
+                : `Latest stable release: v${u.latest}. This machine is up to date; Update also checks all its paired machines.`;
         } catch (err) {
+          if (!attached()) return;
           statusEl.style.color = 'var(--danger-color)';
-          statusEl.textContent = `Error: ${err.message}`;
+          statusEl.textContent = `Could not check for updates: ${err.message}`;
         } finally {
           checkBtn.disabled = false;
         }
       };
     }
-
-    const applyBtn = document.getElementById('apply-update-btn');
     if (applyBtn) {
       applyBtn.onclick = async () => {
-        if (!confirm('Update this machine and all paired machines now? Each service restarts, so brief downtime is expected.')) return;
+        if (!attached() || userRole !== 'admin' || applyBtn.disabled) return;
+        if (!confirm(`Update ${targetName || 'this machine'} and all machines paired with it to the latest stable release? This machine restarts first; peers follow one at a time. The rollout stops at the first failure.`)) return;
+        if (!attached()) return;
+        generation += 1;
+        clearTimeout(pollTimer);
+        watchingSince = Date.now();
         applyBtn.disabled = true;
-        statusEl.style.color = 'var(--text-muted)';
-        statusEl.textContent = 'Starting update...';
+        statusEl.style.color = 'var(--warning-color)';
+        statusEl.textContent = 'Starting the local update; paired machines will follow after a healthy restart…';
         try {
-          await api('/api/system/update', { method: 'POST' });
-          showToast('Update started. This machine goes first, then each paired machine one at a time.', 'success');
-          statusEl.style.color = 'var(--warning-color)';
-          statusEl.textContent = 'Update in progress. This page will reload automatically...';
-          pollUpdateStatus(statusEl, applyBtn);
+          await updateApi('/api/system/update', { method: 'POST', body: { channel: 'stable' } });
+          if (!attached()) return;
+          statusEl.textContent = 'Update requested. Progress below follows this machine and its paired machines across restarts.';
         } catch (err) {
-          applyBtn.disabled = false;
+          if (!attached()) return;
           statusEl.style.color = 'var(--danger-color)';
-          statusEl.textContent = `Error: ${err.message}`;
+          statusEl.textContent = `Update request failed or could not be confirmed: ${err.message}`;
+          applyBtn.disabled = !version.canUpdate;
         }
+        if (attached()) loadProgress(true);
       };
     }
   }
@@ -3887,35 +3834,6 @@
     // Small grace so the proxy has the new origin ready before the page loads.
     await new Promise((r) => setTimeout(r, 1500));
     location.reload();
-  }
-
-  // Follow a running update across the service restart, then reload the panel.
-  async function pollUpdateStatus(statusEl, applyBtn) {
-    for (let i = 0; i < 60; i += 1) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        const res = await api('/api/system/update/status');
-        const s = (res.update && res.update.status) || {};
-        if (s.state === 'success') {
-          statusEl.style.color = 'var(--success-color)';
-          statusEl.textContent = `Update complete${s.toCommit ? ` (${String(s.toCommit).slice(0, 7)})` : ''}. Reloading...`;
-          reloadWhenServerReady((msg) => { statusEl.textContent = msg; });
-          return;
-        }
-        if (s.state === 'failed') {
-          statusEl.style.color = 'var(--danger-color)';
-          statusEl.textContent = `Update failed: ${s.error || 'unknown error'}.`;
-          if (applyBtn) applyBtn.disabled = false;
-          return;
-        }
-        statusEl.textContent = s.message || 'Update in progress...';
-      } catch {
-        statusEl.textContent = 'Service restarting...';
-      }
-    }
-    statusEl.style.color = 'var(--warning-color)';
-    statusEl.textContent = 'Update is taking longer than expected. Reload this page shortly.';
-    if (applyBtn) applyBtn.disabled = false;
   }
 
   // Credentials vault card (Settings): add/rotate/delete. Values are write-only.
@@ -4149,6 +4067,7 @@
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
+  window.CitadelSystem.init({ state, localApi, escapeHtml, openModal, showToast, installAgent: installAgentOn, forgetTerminal: monitorCtx().forgetTerminal });
   window.CitadelBrowserEditor.init({ api, escapeHtml, showToast, state });
   window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state, openWorkspace });
   window.CitadelRepos.init({ api, escapeHtml, loadProjects, openModal, renderProjectsView, showToast });

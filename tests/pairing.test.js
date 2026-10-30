@@ -497,6 +497,6 @@ describe('parsePairingCode forms', () => {
   });
 
   test('a plain panel address explains how to get a pairing code', () => {
-    assert.throws(() => hostService.parsePairingCode('https://abc.trycloudflare.com/'), /Settings → Connection/);
+    assert.throws(() => hostService.parsePairingCode('https://abc.trycloudflare.com/'), /Settings → Machines → Show pairing QR/);
   });
 });

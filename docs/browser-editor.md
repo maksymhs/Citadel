@@ -13,9 +13,10 @@ from keyboard focus; closing it while focused inside returns focus to the toggle
 ## Projects and removal
 
 New browser sessions start in Projects; an existing saved screen is restored.
-System (host) is always the first Projects card, followed by imported/registered
-projects, then a compact detected-folders list without introductory copy. Each
-suggestion shows its name and path, **Import folder**, and a dismiss **×**. Dismiss
+Projects shows imported/registered projects above a compact detected-folders
+list. System (host) is the first Workspace entry for administrators, not a Projects
+card. Each suggestion shows its name/path, **Import folder**, a dismiss **×** and
+an administrator-only **Delete** action. Dismiss
 only hides the current discovery suggestion: it neither deletes files nor
 registers the folder. **Refresh** shows it again; dismissing all suggestions hides
 the section. Discovery remains a read-only scan of immediate folders under
@@ -23,8 +24,12 @@ the section. Discovery remains a read-only scan of immediate folders under
 symlinks, hidden folders and `node_modules`, with limits of 500 entries or 100
 suggestions; it never recurses or executes repository code.
 
-System (host) is not listed under Workspace.
-Workspace appears only for projects with observed live terminals or a running
+**Delete** permanently removes the folder and its contents after typing the exact
+canonical path. Only immediate unregistered real directories under `PROJECTS_DIR`
+are eligible; registered projects/repos and directories containing them are refused.
+This is separate from harmless suggestion dismissal.
+
+Workspace lists projects with observed live terminals or a running
 shared editor plus this browser's opened-project hint. Saved mode choices alone
 do not mark a project open. VS Code hints are not authoritative: another tab can
 open a folder, and closing an iframe does not prove that its folder is closed in
@@ -60,10 +65,18 @@ It clears only the mode preference and returns to the two cards; terminal
 selection, editor state and running work are retained. Navigating away closes the
 view but remembers the mode. No process is stopped by merely returning here.
 
-The chooser only selects a mode. Existing terminal controls and the standalone
-editor's explicit **Stop editor** action remain separate and unchanged; returning
-to the chooser does not invoke them. Editor management requires a local
-administrator session.
+The chooser only selects a mode. The sidebar's three-dot **Close all** action is
+separate: after confirmation it stops every terminal for that project and the
+shared VS Code instance. Because VS Code is shared, this disconnects other projects
+using it too; the confirmation warns about this. Successfully closed projects leave
+the Workspace dropdown, but stay registered in Projects. A failed stop is reported
+and remaining work stays visible. System (host)'s Close all stops host terminals
+only. Back never invokes Close all.
+
+The separate **System** screen lists processes, open terminals, shared browser
+VS Code and installed tools. Administrator stop actions are explicitly confirmed;
+editor management also works through authenticated paired-machine API transport,
+but opening the editor UI still requires that machine's own panel.
 
 The native Chat GUI, its slash-command composer and its panel entry points have
 been removed. An old saved `mode='chat'` opens the chooser without starting work.

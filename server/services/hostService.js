@@ -474,7 +474,7 @@ function parsePairingCode(code) {
       url.hash = '';
       linkUrl = url.toString().replace(/\/+$/, '');
     } catch {
-      throw new Error('That is the plain panel address, not a pairing code. On the other Citadel open Settings → Connection (signed in as admin) and scan the QR shown there, or copy its full link including the #pair=… part.');
+      throw new Error('That is the plain panel address, not a pairing code. On the other Citadel open Settings → Machines → Show pairing QR (signed in as admin) and scan the QR shown there, or copy its full link including the #pair=… part.');
     }
   }
 

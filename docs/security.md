@@ -73,6 +73,45 @@ conservatively require that process stopped. These checks do
 not detect arbitrary host processes or provide filesystem/OS isolation. Existing
 explicit `deleteFiles=true` API behavior and managed-tree validation remain.
 
+## Detected-folder deletion
+
+The separate admin-only `DELETE /api/projects/discover` action requires an exact
+canonical path and matching typed confirmation. It accepts only visible real
+immediate directories under canonical `PROJECTS_DIR`; root, nested/outside paths,
+aliases, symlinks, files and `node_modules` are refused. Registered projects/repos,
+including registered descendants and canonical aliases, are rechecked before
+synchronous removal. Successful removal is verified and audited; raw filesystem
+errors/descendant names are not returned. Dismiss **×** is still purely local.
+
+This protects registration boundaries, not arbitrary filesystem activity. The
+validation/removal critical section prevents imports from interleaving in this
+Node process, but does not atomically exclude hostile external filesystem changes.
+A path-only request cannot identify a folder replaced before submission. Recursive
+removal can fail partway; failure is never reported or audited as success. Back up
+work first; this is not a trash/recovery feature.
+
+## System management boundaries
+
+System reads processes, persistent terminals, shared browser VS Code and tools
+from the selected machine through existing authenticated local/paired APIs. Stop
+controls require explicit confirmation; general process signaling and shared
+editor management require an administrator. Terminal permissions remain enforced
+by the existing routes. Closing the editor disconnects all projects using the
+single shared instance; Workspace **Close all** warns about that effect too.
+
+General process signals accept only a positive numeric PID, current Linux
+boot/start-ticks identity and explicit TERM or KILL. Fresh synchronous checks
+require real/effective/saved/filesystem UIDs to equal the service UID and protect
+PID 1, Citadel and its ancestor chain; incomplete ancestry fails closed. No shell,
+sudo, process-group signaling or automatic escalation is used. Non-Linux platforms
+remain read-only for general processes (managed terminal/editor stops still work).
+Only signal delivery is reported and audited, not confirmed process exit.
+
+Node has no native pidfd signaling API: identity checks reject stale listings and
+narrow, but cannot eliminate, external PID reuse after the last inspection. These
+controls are not an OS sandbox and do not grant new OS privileges. Running Citadel
+as root still exposes root-owned processes and is not recommended.
+
 ## Legacy Chat API boundaries
 
 The native Chat GUI and all panel entry points have been removed. The panel no
