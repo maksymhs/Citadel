@@ -69,8 +69,8 @@
   // host diagnostics/updates and Activity & Audit live in Settings.
   const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace'];
   const CORE_NAV = [
-    { view: 'system', label: 'System', icon: 'system' },
     { view: 'files', label: 'Files', icon: 'files' },
+    { view: 'system', label: 'System', icon: 'system' },
     { view: 'settings', label: 'Settings', icon: 'settings' },
   ];
 

@@ -238,9 +238,6 @@
   // --- Machine screen -------------------------------------------------------
   // Dashboard shows health and history only. Runtime management lives in System.
 
-  const TABS = [
-    { id: 'overview', label: 'Overview' },
-  ];
   let machineGeneration = 0;
 
   // Renders the detail of one machine into the dashboard pane under the cards.
@@ -287,78 +284,66 @@
           <button class="btn btn-secondary btn-sm" id="mon-restart-btn" ${offline ? 'disabled' : ''}>Restart</button>` : ''}
         </div>
       </div>
-      <div class="mon-tabs" role="tablist">
-        ${TABS.map((t) => `<button type="button" role="tab" class="mon-tab${t.id === 'overview' ? ' active' : ''}" data-mon-tab="${t.id}" ${offline && t.id !== 'overview' ? 'disabled' : ''}>${t.label}</button>`).join('')}
-      </div>
-      <div id="mon-tab-body"></div>`;
+      <div id="mon-machine-body"></div>`;
 
     document.getElementById('mon-use-btn')?.addEventListener('click', () => ctx.useMachine(host.id));
     document.getElementById('mon-rename-btn')?.addEventListener('click', () => ctx.renameMachine(host.id));
     document.getElementById('mon-logs-btn')?.addEventListener('click', () => ctx.openLogs());
     document.getElementById('mon-restart-btn')?.addEventListener('click', () => confirmRestart(host, ctx, () => renderMachine(ctx, hostId, undefined, false)));
-    root.querySelectorAll('[data-mon-tab]').forEach((b) => {
-      b.onclick = () => renderMachine(ctx, hostId, b.getAttribute('data-mon-tab'), false);
-    });
 
-    const body = root.querySelector('#mon-tab-body');
+    const body = root.querySelector('#mon-machine-body');
     const loading = () => { body.innerHTML = '<div class="mon-muted">Loading…</div>'; };
     const fail = (err) => { if (present()) body.innerHTML = `<div style="color:var(--danger-color);">${esc(err.message)}</div>`; };
-    const tabId = 'overview';
-
-    if (tabId === 'overview') {
-      loading();
-      try {
-        const hist = await localApi(`/api/monitor/hosts/${encodeURIComponent(host.id)}/history?hours=24`);
-        if (!present()) return;
-        const hl = host.health;
-        const load = hl ? Math.min(100, Math.round((hl.loadPerCore || 0) * 100)) : null;
-        const events = (hist.events || []).slice(0, 8);
-        const mem = hl && hl.memory;
-        const dsk = hl && hl.disk;
-        const memDetail = mem && Number.isFinite(mem.totalBytes)
-          ? `${fmtBytes(Number.isFinite(mem.usedBytes) ? mem.usedBytes : (mem.totalBytes * (mem.usedPercent || 0)) / 100)} of ${fmtBytes(mem.totalBytes)} in use`
-          : '';
-        const dskDetail = dsk && Number.isFinite(dsk.totalBytes)
-          ? `${fmtBytes(Number.isFinite(dsk.freeBytes) ? dsk.freeBytes : dsk.totalBytes * (1 - (dsk.usedPercent || 0) / 100))} free of ${fmtBytes(dsk.totalBytes)}`
-          : '';
-        const cpuDetail = hl ? `Load ${hl.load1} · ${hl.cores} core${hl.cores === 1 ? '' : 's'}` : '';
-        const av24 = hist.uptime;
-        const av7 = host.uptime7d;
-        body.innerHTML = `
-          ${hl ? `<div class="mon-gauges">
-            ${gaugeCard(esc, { label: 'CPU', value: load, warn: 70, crit: 100, detail: cpuDetail, points: hist.points, key: 'loadPerCore', max: 1 })}
-            ${gaugeCard(esc, { label: 'Memory', value: mem && mem.usedPercent, warn: 80, crit: 95, detail: memDetail, points: hist.points, key: 'memPercent' })}
-            ${gaugeCard(esc, { label: 'Disk', value: dsk && dsk.usedPercent, warn: 80, crit: 90, detail: dskDetail, points: hist.points, key: 'diskPercent' })}
+    loading();
+    try {
+      const hist = await localApi(`/api/monitor/hosts/${encodeURIComponent(host.id)}/history?hours=24`);
+      if (!present()) return;
+      const hl = host.health;
+      const load = hl ? Math.min(100, Math.round((hl.loadPerCore || 0) * 100)) : null;
+      const events = (hist.events || []).slice(0, 8);
+      const mem = hl && hl.memory;
+      const dsk = hl && hl.disk;
+      const memDetail = mem && Number.isFinite(mem.totalBytes)
+        ? `${fmtBytes(Number.isFinite(mem.usedBytes) ? mem.usedBytes : (mem.totalBytes * (mem.usedPercent || 0)) / 100)} of ${fmtBytes(mem.totalBytes)} in use`
+        : '';
+      const dskDetail = dsk && Number.isFinite(dsk.totalBytes)
+        ? `${fmtBytes(Number.isFinite(dsk.freeBytes) ? dsk.freeBytes : dsk.totalBytes * (1 - (dsk.usedPercent || 0) / 100))} free of ${fmtBytes(dsk.totalBytes)}`
+        : '';
+      const cpuDetail = hl ? `Load ${hl.load1} · ${hl.cores} core${hl.cores === 1 ? '' : 's'}` : '';
+      const av24 = hist.uptime;
+      const av7 = host.uptime7d;
+      body.innerHTML = `
+        ${hl ? `<div class="mon-gauges">
+          ${gaugeCard(esc, { label: 'CPU', value: load, warn: 70, crit: 100, detail: cpuDetail, points: hist.points, key: 'loadPerCore', max: 1 })}
+          ${gaugeCard(esc, { label: 'Memory', value: mem && mem.usedPercent, warn: 80, crit: 95, detail: memDetail, points: hist.points, key: 'memPercent' })}
+          ${gaugeCard(esc, { label: 'Disk', value: dsk && dsk.usedPercent, warn: 80, crit: 90, detail: dskDetail, points: hist.points, key: 'diskPercent' })}
+        </div>
+        <div class="mon-kpis">
+          ${kpiTile(esc, 'Uptime', fmtDuration(hl.uptimeSeconds), 'since last boot')}
+          ${kpiTile(esc, 'Terminals', hl.activeTerminals ?? 0, 'persistent sessions')}
+          ${hl.temperature ? kpiTile(esc, hl.temperature.source === 'battery' ? 'Battery temp' : 'CPU temp', `${Math.round(hl.temperature.celsius)} °C`, 'current', hl.temperature.celsius >= 85 ? 'crit' : hl.temperature.celsius >= 70 ? 'warn' : 'ok') : ''}
+          ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24))}
+          ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7))}
+          ${host.latencyMs !== null && host.latencyMs !== undefined && !host.isLocal ? kpiTile(esc, 'Latency', `${host.latencyMs} ms`, 'round trip') : kpiTile(esc, 'Version', host.version ? `v${host.version}` : '—', 'Citadel')}
+        </div>` : `<div class="card mon-muted">${offline ? esc(host.error || 'Not responding.') : 'No detailed metrics: update this machine to see load, memory and disk.'}</div>
+        <div class="mon-kpis">
+          ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24))}
+          ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7))}
+        </div>`}
+        <div class="mon-panels">
+          <div class="card mon-panel">
+            <div class="mon-panel-head"><h3>Availability</h3><span class="mon-muted">last 24 h</span></div>
+            ${downBand(hist.points) || '<div class="mon-muted">No history yet.</div>'}
+            <div class="mon-band-legend"><span><i class="up"></i>Online</span><span><i class="part"></i>Degraded</span><span><i class="down"></i>Offline</span></div>
+            ${host.isLocal ? '' : `<div class="mon-panel-sub"><div class="mon-muted">Latency (ms)</div>${areaSpark(hist.points, 'latencyMs', { max: 100 })}</div>`}
           </div>
-          <div class="mon-kpis">
-            ${kpiTile(esc, 'Uptime', fmtDuration(hl.uptimeSeconds), 'since last boot')}
-            ${kpiTile(esc, 'Terminals', hl.activeTerminals ?? 0, 'persistent sessions')}
-            ${hl.temperature ? kpiTile(esc, hl.temperature.source === 'battery' ? 'Battery temp' : 'CPU temp', `${Math.round(hl.temperature.celsius)} °C`, 'current', hl.temperature.celsius >= 85 ? 'crit' : hl.temperature.celsius >= 70 ? 'warn' : 'ok') : ''}
-            ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24))}
-            ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7))}
-            ${host.latencyMs !== null && host.latencyMs !== undefined && !host.isLocal ? kpiTile(esc, 'Latency', `${host.latencyMs} ms`, 'round trip') : kpiTile(esc, 'Version', host.version ? `v${host.version}` : '—', 'Citadel')}
-          </div>` : `<div class="card mon-muted">${offline ? esc(host.error || 'Not responding.') : 'No detailed metrics: update this machine to see load, memory and disk.'}</div>
-          <div class="mon-kpis">
-            ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24))}
-            ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7))}
-          </div>`}
-          <div class="mon-panels">
-            <div class="card mon-panel">
-              <div class="mon-panel-head"><h3>Availability</h3><span class="mon-muted">last 24 h</span></div>
-              ${downBand(hist.points) || '<div class="mon-muted">No history yet.</div>'}
-              <div class="mon-band-legend"><span><i class="up"></i>Online</span><span><i class="part"></i>Degraded</span><span><i class="down"></i>Offline</span></div>
-              ${host.isLocal ? '' : `<div class="mon-panel-sub"><div class="mon-muted">Latency (ms)</div>${areaSpark(hist.points, 'latencyMs', { max: 100 })}</div>`}
-            </div>
-            <div class="card mon-panel">
-              <div class="mon-panel-head"><h3>Recent incidents</h3><span class="mon-muted">${events.length ? `${events.length} latest` : 'last 30 days'}</span></div>
-              ${events.length ? `<ul class="mon-timeline">${events.map((e) => `<li><i></i><div><span>${esc(e.message || e.action)}</span><small class="mon-muted">${esc(new Date(e.ts).toLocaleString())}</small></div></li>`).join('')}</ul>`
-    : '<div class="mon-allclear"><span>✓</span>All clear — no incidents in the last 30 days.</div>'}
-            </div>
-          </div>`;
-      } catch (err) { fail(err); }
-      return;
-    }
-
+          <div class="card mon-panel">
+            <div class="mon-panel-head"><h3>Recent incidents</h3><span class="mon-muted">${events.length ? `${events.length} latest` : 'last 30 days'}</span></div>
+            ${events.length ? `<ul class="mon-timeline">${events.map((e) => `<li><i></i><div><span>${esc(e.message || e.action)}</span><small class="mon-muted">${esc(new Date(e.ts).toLocaleString())}</small></div></li>`).join('')}</ul>`
+  : '<div class="mon-allclear"><span>✓</span>All clear — no incidents in the last 30 days.</div>'}
+          </div>
+        </div>`;
+    } catch (err) { fail(err); }
   }
 
   // --- Alert settings -------------------------------------------------------

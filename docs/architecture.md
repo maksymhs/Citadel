@@ -58,8 +58,9 @@ Some APIs always stay local (`LOCAL_ONLY_API` in `app.js`: auth, pairing, host l
 
 `monitorService.js` runs in each panel: every 60 s it probes this machine and every paired one (latency, load, memory, disk, uptime, version, temperature), stores samples in `host_checks` (30 days) and computes 24 h / 7 d availability. A machine is **offline after two failed checks in a row**. Alerts (offline, disk, memory, CPU) show in the panel and can be pushed once at start and once at recovery to a webhook, ntfy or Telegram. `securityAlertService.js` reuses the same channels for security events (new sign-in address, failed-login bursts, a machine pairing in, setup code replaced, password reset). Monitoring is per panel: a machine cannot alert about its own outage.
 
-Dashboard's machine pane exposes only Overview health/history. Runtime management
-lives in the standalone `public/js/system.js` screen, initialized by the SPA shell:
+Dashboard's machine pane shows health/history directly, with no tab bar. Runtime management
+lives in the standalone `public/js/system.js` screen (four visible sections, each loaded
+independently; only processes poll), initialized by the SPA shell:
 selected-host API paths are captured for processes, terminals, shared VS Code and
 tools. Leaving the view invalidates requests and polling; destructive confirmations
 also recheck account/role/host. General signals use `processControlRoutes` and

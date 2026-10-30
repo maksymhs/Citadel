@@ -138,9 +138,10 @@ requires no sudo and remains off by default. This experimental integration offer
 
 ### System management
 
-**Dashboard** contains machine **Overview** only; Projects is managed separately.
-Open **System** for the selected machine's **Processes**, **Terminals**, **VS Code**
-and **Tools**. Browsing/refreshing these screens never stops work. Administrator
+**Dashboard** shows machine health directly, without an Overview tab or name; Projects is
+managed separately. **System** sits right under Files in the sidebar and shows the
+selected machine's **Processes**, **Terminals**, **VS Code** and **Tools** as sections
+on one page (two columns on desktop, one on narrow screens), not tabs. Browsing/refreshing these screens never stops work. Administrator
 controls confirm destructive effects and name the target machine before sending
 anything. Process **Stop** sends TERM; **Force kill** sends KILL separately, with no
 automatic escalation. Only eligible service-user processes on Linux are actionable;

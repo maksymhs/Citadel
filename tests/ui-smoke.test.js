@@ -332,16 +332,22 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         },
       };
       win.CitadelSystem.init(ctx);
-      await win.CitadelSystem.render('tools');
+      await win.CitadelSystem.render();
       const buttons = [...win.document.querySelectorAll('[data-agent]')];
       assert.equal(buttons.length, 4);
       for (const button of buttons) button.click();
       assert.deepEqual(calls.map((args) => args[3]), ['reinstall', 'remove', 'reinstall', 'install']);
       assert.match(win.document.body.textContent, /Daemon package missing/);
       ctx.state.user.role = 'user';
-      await win.CitadelSystem.render('tools');
+      await win.CitadelSystem.render();
       assert.ok([...win.document.querySelectorAll('[data-agent]')].every((button) => button.disabled));
     } finally { toolsDom.window.close(); }
+  });
+
+  test('System sits directly under Files in the sidebar', () => {
+    const order = [...w.document.querySelectorAll('.nav-item[data-view]')].map(item => item.dataset.view);
+    assert.equal(order[order.indexOf('files') + 1], 'system');
+    assert.equal(order[order.indexOf('system') + 1], 'settings');
   });
 
   test('main screens open without script errors', async () => {
@@ -351,8 +357,11 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       link.click();
       await sleep(800);
       assert.ok(w.document.getElementById('main-content').innerHTML.length > 100, `${view} rendered nothing`);
-      if (view === 'system') assert.deepEqual([...w.document.querySelectorAll('[data-system-tab]')].map(button => button.textContent), ['Processes', 'Terminals', 'VS Code', 'Tools']);
-      if (view === 'dashboard') assert.deepEqual([...w.document.querySelectorAll('[data-mon-tab]')].map(button => button.textContent), ['Overview']);
+      if (view === 'system') {
+        assert.deepEqual([...w.document.querySelectorAll('[data-system-section]')].map(section => section.dataset.systemSection), ['processes', 'terminals', 'editor', 'tools']);
+        assert.equal(w.document.querySelector('[data-system-tab], [role="tab"]'), null, 'System shows sections, not tabs');
+      }
+      if (view === 'dashboard') assert.equal(w.document.querySelector('[data-mon-tab], #mon-tabs, .mon-tabs'), null, 'Dashboard has no Overview tab');
     }
     assert.deepEqual(errors, []);
   });
