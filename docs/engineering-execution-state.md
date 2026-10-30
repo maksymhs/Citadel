@@ -853,3 +853,10 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Verification: focused System and browser-editor test files passed; additional independent agent/tool-loading and Files breadcrumb/navigation regression checks passed; ESLint and git diff --check passed. Full suite rerun outside the sandbox because subprocess-based suites failed inside it; result follows below.
 - Gaps: no real browser/mobile visual check, no README screenshot regeneration (Chrome unavailable), no real remote peer or host installation/restart, no commit or release.
 - Full verification outside sandbox: npm test completed 682 tests, 681 passed, 0 failed, 1 skipped (/tmp/citadel-final-full.log). The independent-agent-loader and Files UI tests added during that run also passed separately. Final lint and diff whitespace checks are clean.
+
+## 182. Release v0.65.0
+- Packages entry 181 and the existing workspace/editor refinements: aligned System/Settings surfaces and toolbar, four System destinations with independent agent/tool views, Files starting in configured projects and black VS Code startup masking.
+- Bumps package/lock versions to 0.65.0, all 17 frontend asset tokens to v0650 and README Latest. CHANGELOG.md is generated from the local version tag and included in the amended release commit before moving the tag.
+- Validation: full suite, lint, release-note tests and package/cache-token checks run for this release; results follow below.
+- Local release only: no push, GitHub publication, live-host update or restart. Real-browser/mobile screenshots remain unverified (Chrome unavailable).
+- Release verification: npm test completed 683 tests: 682 passed, 0 failed, 1 skipped (/tmp/citadel-v0650-full.log). Focused release-notes, Files UI, System UI and browser-editor test files all passed (/tmp/citadel-v0650-focused.log); npm run lint and git diff --check passed. Assertions confirmed package/lock versions agree and all 17 asset tokens are v0650. Generated release notes include the implementation commit.

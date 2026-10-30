@@ -199,6 +199,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 | Latest | |
 | --- | --- |
+| [v0.65.0](https://github.com/maksymhs/Citadel/releases/tag/v0.65.0) | Aligned System/Settings tiles, separate AI agents and installed tools, Files starts in projects and black VS Code loading |
 | [v0.64.0](https://github.com/maksymhs/Citadel/releases/tag/v0.64.0) | Unified Back arrow in System and Settings, three equal Settings tiles per desktop row |
 | [v0.63.0](https://github.com/maksymhs/Citadel/releases/tag/v0.63.0) | System opens as three summary cards with detail views and processes sortable by CPU or memory |
 | [v0.62.0](https://github.com/maksymhs/Citadel/releases/tag/v0.62.0) | System as organized sections under Files, tab-free Dashboard and roomier two-column Settings |
