@@ -45,9 +45,8 @@
     const path = suffix => hostId === 'local' ? `/api${suffix}` : `/api/remote/${encodeURIComponent(hostId)}${suffix}`;
     const request = (suffix, options) => ctx.localApi(path(suffix), options);
     const hostName = hostId === 'local' ? (ctx.state.hostIdentity?.name || 'This machine') : (ctx.state.hosts.find(host => host.id === hostId)?.name || hostId);
-    pane.innerHTML = `<div class="mon-tab-toolbar"><div class="system-toolbar-main"><button type="button" class="btn btn-secondary btn-sm" id="system-back" hidden>&lsaquo; Back</button><span class="mon-muted">${esc(hostName)}</span></div><button type="button" class="btn btn-secondary btn-sm" id="system-refresh">Refresh</button></div><div id="system-content"></div>`;
+    pane.innerHTML = `<div class="mon-tab-toolbar"><span class="mon-muted">${esc(hostName)}</span><button type="button" class="btn btn-secondary btn-sm" id="system-refresh">Refresh</button></div><div id="system-content"></div>`;
     const content = pane.querySelector('#system-content');
-    const backButton = pane.querySelector('#system-back');
     let current = null, bodies = {}, sort = 'cpu', pending = {}, refreshTimer;
     function stopPolling() {
       clearInterval(refreshTimer);
@@ -117,7 +116,7 @@
     function showHub() {
       stopPolling();
       current = null; bodies = {}; pending = {};
-      backButton.hidden = true;
+      ctx.setDetailNavigation?.(null, null);
       content.innerHTML = `<nav class="system-cards" aria-label="System sections">${SECTIONS.map(([id, label]) => `<button type="button" class="system-card" data-system-section="${id}"><span class="settings-tile-icon" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${ICONS[id]}</svg></span><span class="system-card-text"><strong>${label}</strong><span class="mon-muted" data-system-summary="${id}">Loading…</span></span><span class="settings-tile-chev" aria-hidden="true">&rsaquo;</span></button>`).join('')}</nav>`;
       content.querySelectorAll('[data-system-section]').forEach(button => { button.onclick = () => showSection(button.dataset.systemSection); });
       return loadSummaries();
@@ -125,8 +124,8 @@
     function showSection(id) {
       stopPolling();
       current = id; bodies = {}; pending = {};
-      backButton.hidden = false;
       const label = SECTIONS.find(([key]) => key === id)[1];
+      ctx.setDetailNavigation?.(label, () => { if (present()) return showHub(); });
       const mounts = MOUNTS[id];
       const mountHtml = key => `<div id="system-${key}-body"><div class="mon-muted">Loading…</div></div>`;
       const inner = id === 'workspace'
@@ -155,7 +154,6 @@
       return loadDetail();
     }
     pane.querySelector('#system-refresh').onclick = () => (current ? loadDetail() : loadSummaries());
-    backButton.onclick = showHub;
     // Reload whatever the stop changed: its detail mount when open, otherwise the hub summaries.
     function afterChange(section) {
       if (current === null) return loadSummaries();

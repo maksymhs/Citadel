@@ -6,7 +6,7 @@ const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
 function fixture(role = 'admin') {
-  const dom = new JSDOM('<div id="main-content"></div>', { runScripts: 'dangerously' });
+  const dom = new JSDOM('<button id="top-bar-back" hidden></button><div id="main-content"></div>', { runScripts: 'dangerously' });
   const win = dom.window;
   win.eval(fs.readFileSync(path.join(__dirname, '../public/js/system.js'), 'utf8'));
   const calls = [], notices = [], forgotten = [];
@@ -15,6 +15,11 @@ function fixture(role = 'admin') {
   const state = { activeHostId: 'peer-one', user: { id: 'owner', role }, hosts: [{ id: 'peer-one', name: 'First machine' }] };
   win.CitadelSystem.init({ state, escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
     openModal: value => { dialog = value; }, showToast: value => notices.push(value), forgetTerminal: (...args) => forgotten.push(args), installAgent() {},
+    setDetailNavigation: (label, onBack) => {
+      const button = win.document.getElementById('top-bar-back');
+      button.hidden = !onBack;
+      button.onclick = onBack;
+    },
     localApi: async (url, options = {}) => {
       calls.push({ url, ...options });
       for (const part of failing) if (!options.method && url.includes(part)) throw new Error(`${part} unavailable`);
@@ -136,7 +141,7 @@ test('System opens on three summary cards, with no tabs and no mutations', async
     assert.deepEqual(cards.map(card => card.dataset.systemSection), SECTION_IDS);
     assert.deepEqual(cards.map(card => card.querySelector('strong').textContent), ['Processes', 'Terminals & VS Code', 'Tools']);
     assert.deepEqual(cards.map(card => card.querySelector('[data-system-summary]').textContent), ['3 running', '1 terminal · VS Code running', '0 AI agents · 1 tool']);
-    assert.equal(doc.querySelector('#system-back').hidden, true);
+    assert.equal(doc.querySelector('#top-bar-back').hidden, true);
     assert.equal(doc.querySelector('[data-process], [data-stop-terminal], #system-stop-editor'), null, 'details load only when opened');
     assert.equal(f.calls.filter(call => call.method).length, 0);
     assert.equal(f.calls.some(call => call.url.includes('limit=50')), false, 'the hub asks only for counts');
@@ -154,8 +159,8 @@ test('opening a card shows its detail and Back returns to the cards', async () =
     assert.equal(doc.getElementById(detail.getAttribute('aria-labelledby')).textContent, 'Terminals & VS Code');
     assert.ok(detail.querySelector('[data-stop-terminal]'));
     assert.ok(detail.querySelector('#system-stop-editor'));
-    assert.equal(doc.querySelector('#system-back').hidden, false);
-    doc.querySelector('#system-back').click();
+    assert.equal(doc.querySelector('#top-bar-back').hidden, false);
+    doc.querySelector('#top-bar-back').click();
     await tick();
     assert.equal(doc.querySelectorAll('.system-card').length, 3);
     assert.equal(doc.querySelector('[data-system-detail]'), null);
@@ -239,7 +244,7 @@ test('a stop confirmed after returning to the hub refreshes the summaries instea
     await f.win.CitadelSystem.render('workspace');
     const doc = f.win.document;
     doc.querySelector('[data-stop-terminal]').click();
-    doc.querySelector('#system-back').click();
+    doc.querySelector('#top-bar-back').click();
     await tick();
     const before = f.calls.length;
     await f.dialog().onConfirm();
@@ -270,7 +275,7 @@ test('only the Processes detail polls, skips hidden pages and stops on Back and 
     win.document.querySelector('[data-system-section="workspace"]').click();
     await tick();
     assert.deepEqual(intervals, [], 'neither does the Terminals & VS Code detail');
-    win.document.querySelector('#system-back').click();
+    win.document.querySelector('#top-bar-back').click();
     win.document.querySelector('[data-system-section="processes"]').click();
     await tick();
     assert.deepEqual(intervals.map(i => i.ms), [5000]);
@@ -286,7 +291,7 @@ test('only the Processes detail polls, skips hidden pages and stops on Back and 
     await tick(5);
     assert.equal(count(), start + 1);
     assert.equal(others(), otherStart, 'other sections are not polled');
-    win.document.querySelector('#system-back').click();
+    win.document.querySelector('#top-bar-back').click();
     assert.ok(cleared.includes(1), 'Back stops the timer');
     await tick();
     const afterBack = count();
@@ -339,7 +344,7 @@ test('a slow Processes request left behind by Back does not stall the next visit
     await f.win.CitadelSystem.render();
     doc.querySelector('[data-system-section="processes"]').click();
     await tick(5);
-    doc.querySelector('#system-back').click();
+    doc.querySelector('#top-bar-back').click();
     f.holds.clear();
     doc.querySelector('[data-system-section="processes"]').click();
     await tick();

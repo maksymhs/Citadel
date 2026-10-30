@@ -366,6 +366,50 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
+  test('System details reuse the Settings top-bar Back arrow', async () => {
+    const originalFetch = w.fetch;
+    // This checks shell navigation, not host CLI versions; avoid repeated synchronous probes.
+    w.fetch = (url, options) => String(url) === '/api/system/integrations'
+      ? Promise.resolve({ ok: true, json: async () => ({ integrations: { agents: [] } }) })
+      : originalFetch(url, options);
+    try {
+      w.document.querySelector('.nav-item[data-view="settings"]').click();
+      await sleep(400);
+      w.document.querySelector('[data-settings-section="machines"]').click();
+      await sleep(400);
+      const back = w.document.getElementById('top-bar-back');
+      const arrow = back.innerHTML;
+      assert.equal(back.hidden, false);
+      w.document.querySelector('.nav-item[data-view="system"]').click();
+      await sleep(400);
+      assert.equal(back.hidden, true);
+      for (const [id, title] of [['processes', 'Processes'], ['workspace', 'Terminals & VS Code'], ['tools', 'Tools']]) {
+        w.document.querySelector(`[data-system-section="${id}"]`).click();
+        await sleep(400);
+        assert.equal(w.document.getElementById('top-bar-back'), back, 'the shell owns a single Back button');
+        assert.equal(back.hidden, false);
+        assert.equal(back.className, 'top-bar-back');
+        assert.equal(back.innerHTML, arrow, 'same icon as Settings, without a separate text button');
+        assert.equal(w.document.getElementById('system-back'), null);
+        assert.equal(w.document.getElementById('top-bar-title').textContent, `System · ${title}`);
+        back.click();
+        await sleep(400);
+        assert.equal(back.hidden, true);
+        assert.equal(w.document.querySelectorAll('.system-card').length, 3);
+        assert.equal(w.document.getElementById('top-bar-title').textContent, 'System');
+      }
+      w.document.querySelector('[data-system-section="processes"]').click();
+      await sleep(400);
+      const staleBack = back.onclick;
+      w.document.querySelector('.nav-item[data-view="files"]').click();
+      await sleep(400);
+      staleBack();
+      assert.equal(back.hidden, true);
+      assert.equal(w.document.querySelector('#system-management'), null, 'a stale back action cannot reopen System');
+      assert.deepEqual(errors, []);
+    } finally { w.fetch = originalFetch; }
+  });
+
   test('Settings is a compact navigation-only hub and keeps Updates and pairing accessible', async () => {
     const originalFetch = w.fetch, calls = [];
     w.fetch = (url, options) => { calls.push(String(url)); return originalFetch(url, options); };
@@ -374,6 +418,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await sleep(700);
       const hub = w.document.querySelector('.settings-hub');
       assert.ok(hub.querySelector('nav[aria-label="Settings sections"]'));
+      assert.equal(w.getComputedStyle(hub.querySelector('.settings-tiles')).gridTemplateColumns, 'repeat(3, minmax(0, 1fr))', 'desktop Settings uses three equal columns');
+      assert.notEqual(w.getComputedStyle(hub.querySelector('.settings-tile:last-child')).gridColumn, '1 / -1', 'the last tile does not stretch across the row');
       assert.deepEqual([...hub.querySelectorAll('.settings-tile')].map(button => button.textContent.replace('›', '').trim()), ['AI Gateway', 'Updates', 'Machines', 'Network & access', 'Alerts', 'Credentials', 'Activity & Audit']);
       assert.equal(hub.querySelector('.settings-hero, .settings-screen-head, .connect-qr, .settings-tile-text span'), null, 'no duplicate heading, QR, diagnostics or descriptive subtitles');
       assert.equal(calls.filter(url => /\/api\/(?:settings\/connect|system\/(?:connect|node|version)|secrets|pair\/invite)(?:\?|$)/.test(url)).length, 0, 'the hub does not fetch unused section data or create pairing codes');
@@ -381,7 +427,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.ok(updateIcon && updateIcon.getAttribute('d').includes('M20 11'), 'Updates uses a connected refresh icon path');
       hub.querySelector('[data-settings-section="machines"]').click();
       await sleep(500);
-      assert.ok(w.document.getElementById('settings-show-qr'));
+      assert.ok(w.document.getElementById('settings-show-qr'), w.document.getElementById('main-content').textContent);
       assert.ok(w.document.getElementById('settings-pair-btn'));
       assert.equal(calls.filter(url => url.endsWith('/pair/invite')).length, 0, 'opening Machines does not create an invitation either');
       w.document.getElementById('settings-show-qr').click();

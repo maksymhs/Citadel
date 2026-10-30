@@ -141,8 +141,9 @@ requires no sudo and remains off by default. This experimental integration offer
 **Dashboard** shows machine health directly, without an Overview tab or name; Projects is
 managed separately. **System** sits right under Files in the sidebar and shows the
 selected machine as three cards, each with a one-line summary: **Processes**,
-**Terminals & VS Code** and **Tools**. Opening a card shows its detail with a Back
-button. Processes can be ordered by **CPU** or **Memory** (the host ranks before
+**Terminals & VS Code** and **Tools**. Opening a card shows its detail with the same icon-only Back
+arrow in the top bar as Settings. Settings shows three equal tiles per row on
+desktop and one per row on narrow screens. Processes can be ordered by **CPU** or **Memory** (the host ranks before
 limiting, so a memory-hungry idle process is not hidden) and refreshes every 5 s only
 while it is open. Browsing/refreshing these screens never stops work. Administrator
 controls confirm destructive effects and name the target machine before sending

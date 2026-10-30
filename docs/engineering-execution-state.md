@@ -831,3 +831,10 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Bumps package/lock versions to 0.63.0, all 17 frontend asset tokens to v0630 and README Latest. CHANGELOG.md is generated from the local version tag before publishing main then the tag.
 - Implementation verification: TMPDIR=/var/tmp npm test ran 674 tests: 673 passed, 0 failed, 1 skipped; lint and git diff --check clean (log /var/tmp/citadel-system-hub-full.log).
 - Gaps: jsdom/fixture validation only; no real-browser/mobile layout check or real remote peer, and README screenshots were not regenerated (no browser tooling).
+
+## 179. Shared Back arrow for System and three-column Settings
+- System details now reuse the existing shell top-bar Back arrow used by Settings, with the same icon, styling and position. Removed the separate text Back button from System's content; the top-bar title reflects the open detail and returns to System on Back. Captured Back callbacks are inert after leaving the view.
+- Settings now displays three equal tiles per desktop row, aligned with System; its final tile no longer spans the row. The narrow-screen single-column fallback remains. Frontend cache tokens moved to v0630-nav; README, installation and feature docs updated.
+- Verification: focused System/jsdom UI suites passed 51/51. Regression coverage checks the exact same top-bar button/icon for Settings and all three System details, Back to cards, stale navigation, and computed desktop grid rules. Initial expanded smoke runs failed because repeated real CLI-version probes delayed later requests; the added navigation test now fakes only that unrelated read-only integrations endpoint and the rerun passed.
+- Gaps: no real-browser/mobile visual check; README screenshots not regenerated because browser tooling is unavailable. Not committed or released.
+- Final verification: TMPDIR=/var/tmp npm test ran 675 tests: 674 passed, 0 failed, 1 skipped (log /var/tmp/citadel-back-grid-full.log). npm run lint and git diff --check passed.

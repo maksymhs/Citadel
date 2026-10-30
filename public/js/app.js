@@ -4067,7 +4067,15 @@
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
-  window.CitadelSystem.init({ state, localApi, escapeHtml, openModal, showToast, installAgent: installAgentOn, forgetTerminal: monitorCtx().forgetTerminal });
+  window.CitadelSystem.init({ state, localApi, escapeHtml, openModal, showToast, installAgent: installAgentOn, forgetTerminal: monitorCtx().forgetTerminal,
+    setDetailNavigation: (label, onBack) => {
+      if (state.currentView !== 'system') return;
+      document.getElementById('top-bar-title').textContent = label ? `System · ${label}` : 'System';
+      const button = document.getElementById('top-bar-back');
+      button.hidden = !onBack;
+      button.onclick = onBack;
+    },
+  });
   window.CitadelBrowserEditor.init({ api, escapeHtml, showToast, state });
   window.CitadelProjectTools.init({ api, escapeHtml, openModal, renderProjectsView, showToast, state, openWorkspace });
   window.CitadelRepos.init({ api, escapeHtml, loadProjects, openModal, renderProjectsView, showToast });
