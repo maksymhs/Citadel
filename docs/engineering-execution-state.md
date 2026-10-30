@@ -812,3 +812,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Settings hub is a larger two-column tile grid on desktop (one column on narrow screens); secondary Settings screens share System's 1120 px container, larger headings and card padding. Frontend cache tokens moved to v0610-layout.
 - Verification: tests/system-ui.test.js (15) and tests/ui-smoke.test.js (31) passed 46/46; ui-smoke now asserts nav order, four System sections without tabs and no Dashboard tab bar.
 - Gaps: jsdom/fixture validation only; CSS layout (grid, breakpoints, sizes) was not checked in a real browser or on a phone, and README screenshots were not regenerated (no browser tooling). Not committed or released.
+
+## 176. Release v0.62.0
+- Packages entry 175: System as four visible sections directly under Files, Dashboard without Overview tab, roomier two-column Settings aligned with System.
+- Bumps package/lock versions to 0.62.0, all 17 frontend asset tokens to v0620 and README Latest. CHANGELOG.md is generated from the local version tag before publishing main then the tag.
+- Implementation verification: TMPDIR=/var/tmp npm test ran 669 tests: 668 passed, 0 failed, 1 skipped; lint and git diff --check clean (log /var/tmp/citadel-layout-full.log).
+- Gaps: jsdom/fixture validation only; no real-browser/mobile layout check, and README screenshots were not regenerated (no browser tooling).
