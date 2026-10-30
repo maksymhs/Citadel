@@ -871,3 +871,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Sequential UI validation caught a real stale-response issue: a slow Activity response could overwrite the Processes detail after Back and a dashboard shortcut. Activity, Audit and Service log now guard success/error responses by request generation, view, tab, host and account. A dedicated activity-ui test exercises 24 stale-success/failure combinations. Focused navigation sequence passed 6/6 and final unit group passed 26/26; full suite rerun after this fix.
 - Added same-tab request-order coverage (newer service-log refresh wins over an older response). A subsequent full run isolated a test-state dependency: the new dashboard test left Settings on Updates; it now returns to the hub before the next Settings test. The seven-test navigation/Gateway sequence passes after the cleanup; final full-suite verification follows.
 - Final verification: npm test completed 689 tests: 688 passed, 0 failed, 1 skipped (/tmp/citadel-dashboard-final-verified.log). npm run lint and git diff --check passed. Changes remain local and unreleased.
+
+## 184. Release v0.66.0
+- Packages dashboard metric shortcuts, Activity & Audit under System, responsive single-row processes and stale Activity response protection.
+- Bumped package/lock versions to 0.66.0, all frontend asset tokens to v0660 and the README Latest table; generated CHANGELOG.md from the local release tag.
+- Implementation verification: npm test completed 689 tests (688 passed, 0 failed, 1 skipped); lint and diff checks passed. No real-browser/mobile visual validation (Chrome unavailable).
+- Local release only: no push, GitHub publication, live-host update or restart.
