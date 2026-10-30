@@ -820,7 +820,7 @@ html.is-mobile-ui #app-container {
 }
 
 /* Tables */
-.table-container {
+.table-container, .system-process-scroll {
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
@@ -829,14 +829,14 @@ html.is-mobile-ui #app-container {
   -webkit-overflow-scrolling: touch;
 }
 
-.data-table {
+.data-table, .system-process-table {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
   font-size: 13px;
 }
 
-.data-table th {
+.data-table th, .system-process-table th {
   background-color: var(--bg-tertiary);
   color: var(--text-secondary);
   padding: 12px 16px;
@@ -844,17 +844,17 @@ html.is-mobile-ui #app-container {
   border-bottom: 1px solid var(--border-color);
 }
 
-.data-table td {
+.data-table td, .system-process-table td {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-primary);
 }
 
-.data-table tr:last-child td {
+.data-table tr:last-child td, .system-process-table tr:last-child td {
   border-bottom: none;
 }
 
-.data-table tr:hover td {
+.data-table tr:hover td, .system-process-table tr:hover td {
   background-color: var(--hover-bg);
 }
 
@@ -2498,6 +2498,14 @@ label.mon-row:hover { border-color: var(--border-hover); }
 .system-card-text .mon-muted { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .system-section.card { min-width: 0; margin: 0; padding: 22px; }
 .system-sort { display: flex; gap: 6px; }
+.system-process-scroll { max-width: 100%; }
+.system-process-table { min-width: 540px; }
+.system-process-table th, .system-process-table td { white-space: nowrap; padding: 10px 8px; }
+.system-process-table .proj-actions { flex-wrap: nowrap; }
+.system-process-scroll:focus-visible, .mon-metric-link:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+.mon-metric-link { font: inherit; text-align: left; cursor: pointer; width: 100%; }
+.mon-kpi.mon-metric-link { color: inherit; }
+.mon-kpi.mon-metric-link:hover { border-color: var(--accent-color); }
 .system-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
 .system-detail-head h2 { margin-bottom: 0; }
 .system-header-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }

@@ -1,16 +1,17 @@
 /**
  * System management for the selected machine: processes, terminals and shared VS Code,
- * AI coding agents and installed tools each open a detail view. Destructive actions capture the machine
+ * AI coding agents, installed tools and activity/audit each open a detail view. Destructive actions capture the machine
  * and account and require explicit confirmation.
  */
 (function () {
   'use strict';
-  const REQUIRED = ['state', 'localApi', 'escapeHtml', 'openModal', 'showToast', 'forgetTerminal', 'installAgent'];
+  const REQUIRED = ['state', 'localApi', 'escapeHtml', 'openModal', 'showToast', 'forgetTerminal', 'installAgent', 'navigateTo'];
   let ctx, timer, generation = 0;
-  const SECTIONS = [['processes', 'Processes'], ['workspace', 'Terminals & VS Code'], ['agents', 'AI coding agents'], ['tools', 'Installed tools']];
+  const SECTIONS = [['processes', 'Processes'], ['workspace', 'Terminals & VS Code'], ['agents', 'AI coding agents'], ['tools', 'Installed tools'], ['activity', 'Activity & Audit']];
   // Detail bodies each section mounts; every one loads, fails and reloads on its own.
   const MOUNTS = { processes: ['processes'], workspace: ['terminals', 'editor'], agents: ['agents'], tools: ['tools'] };
   const ICONS = {
+    activity: '<path d="M8 4h12v16H4V4h4m0 5h8M8 13h8M8 17h5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
     agents: '<rect x="5" y="5" width="14" height="14" rx="3" stroke-width="1.8"/><path d="M9 10h.01M15 10h.01M9 14h6M12 2v3M12 19v3" stroke-width="1.8" stroke-linecap="round"/>',
     processes: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 19V9m6 10V5m6 14v-7m4 7H2"/>',
     workspace: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 6h16v12H4zM8 10l3 2-3 2m5 0h3"/>',
@@ -31,7 +32,7 @@
     if (!Number.isFinite(value)) return '—';
     return value >= 1048576 ? `${(value / 1048576).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
   }
-  async function render(initialSection) {
+  async function render(initialSection, initialSort) {
     dispose();
     const attempt = generation, hostId = ctx.state.activeHostId, user = ctx.state.user;
     const owner = user?.id ?? user?.username;
@@ -51,7 +52,7 @@
     const refreshButton = pane.querySelector('#system-refresh');
     // Keep host controls in the shell so both hubs start at the same content edge.
     ctx.setToolbar?.(pane.querySelector('.system-header-actions'));
-    let current = null, bodies = {}, sort = 'cpu', pending = {}, refreshTimer;
+    let current = null, bodies = {}, sort = initialSort === 'memory' ? 'memory' : 'cpu', pending = {}, refreshTimer;
     function stopPolling() {
       clearInterval(refreshTimer);
       if (timer === refreshTimer) timer = undefined;
@@ -89,6 +90,7 @@
     // The hub only needs one cheap number per section; failures show as unavailable.
     async function loadSummaries() {
       const summaries = {
+        activity: async () => 'Events · Audit · Service log',
         processes: async () => {
           const result = await request('/system/processes?limit=1');
           const total = result.processes?.total;
@@ -130,6 +132,7 @@
       return loadSummaries();
     }
     function showSection(id) {
+      if (id === 'activity') return ctx.navigateTo('activity');
       stopPolling();
       current = id; bodies = {}; pending = {};
       const label = SECTIONS.find(([key]) => key === id)[1];
@@ -217,7 +220,7 @@
         const data = result.processes || {};
         // Older peers ignore ?sort=, so order here as well.
         const rows = (data.processes || []).slice().sort(COMPARATORS[used]);
-        body.innerHTML = `<p class="mon-muted">${rows.length} of ${esc(data.total ?? rows.length)} processes, by ${used === 'memory' ? 'memory' : 'CPU'} · refreshes every 5 s. Process controls are available only for eligible service-user processes on Linux.</p><div class="table-container"><table class="data-table"><thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>Memory</th><th>Actions</th></tr></thead><tbody>${rows.map((process, index) => `<tr><td data-label="PID">${esc(process.pid)}</td><td data-label="Process">${esc(process.name)}</td><td data-label="CPU">${Number.isFinite(process.cpuPercent) ? `${process.cpuPercent.toFixed(1)}%` : '—'}</td><td data-label="Memory">${bytes(process.rssBytes)}</td><td data-label="Actions">${admin && process.canTerminate && process.identity ? `<div class="proj-actions"><button type="button" class="btn btn-secondary btn-sm" data-process="${index}" data-signal="TERM">Stop</button><button type="button" class="btn btn-danger btn-sm" data-process="${index}" data-signal="KILL">Force kill</button></div>` : '<span class="mon-muted">Read-only</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="mon-muted">No process data available.</td></tr>'}</tbody></table></div>`;
+        body.innerHTML = `<p class="mon-muted">${rows.length} of ${esc(data.total ?? rows.length)} processes, by ${used === 'memory' ? 'memory' : 'CPU'} · refreshes every 5 s. Process controls are available only for eligible service-user processes on Linux.</p><div class="system-process-scroll" tabindex="0" role="region" aria-label="Processes"><table class="system-process-table"><thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>Memory</th><th>Actions</th></tr></thead><tbody>${rows.map((process, index) => `<tr><td data-label="PID">${esc(process.pid)}</td><td data-label="Process">${esc(process.name)}</td><td data-label="CPU">${Number.isFinite(process.cpuPercent) ? `${process.cpuPercent.toFixed(1)}%` : '—'}</td><td data-label="Memory">${bytes(process.rssBytes)}</td><td data-label="Actions">${admin && process.canTerminate && process.identity ? `<div class="proj-actions"><button type="button" class="btn btn-secondary btn-sm" data-process="${index}" data-signal="TERM">Stop</button><button type="button" class="btn btn-danger btn-sm" data-process="${index}" data-signal="KILL">Force kill</button></div>` : '<span class="mon-muted">Read-only</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="mon-muted">No process data available.</td></tr>'}</tbody></table></div>`;
         body.querySelectorAll('[data-process]').forEach(button => {
           const process = rows[Number(button.dataset.process)], signal = button.dataset.signal;
           button.onclick = () => confirm({ title: `${signal === 'KILL' ? 'Force kill' : 'Stop'} ${process.name} (${process.pid})?`, warning: signal === 'KILL' ? 'Force kill prevents cleanup and may lose data. Use only if a normal stop did not work.' : 'Send SIGTERM to this process. It may stop running commands or services and lose unsaved work.', section: 'processes',

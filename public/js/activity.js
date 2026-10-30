@@ -7,6 +7,7 @@
   'use strict';
 
   let api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state;
+  let requestGeneration = 0;
 
   const REQUIRED = ['api', 'escapeHtml', 'hostApiPath', 'moduleEnabled', 'navigateTo', 'saveUiState', 'state'];
 
@@ -27,6 +28,14 @@
         navigateTo('activity');
       };
     });
+  }
+
+  function requestIsCurrent(tab) {
+    const attempt = ++requestGeneration;
+    const hostId = state.activeHostId, userId = state.user?.id, role = state.user?.role;
+    return () => attempt === requestGeneration && state.currentView === 'activity'
+      && (state.activityTab || 'activity') === tab && state.activeHostId === hostId
+      && state.user?.id === userId && state.user?.role === role;
   }
 
   async function renderActivityView() {
@@ -69,13 +78,16 @@
   async function refreshServiceLog() {
     const content = document.getElementById('main-content');
     if (!content) return;
+    const present = requestIsCurrent('service');
     let res;
     try {
       res = await api('/api/system/logs?lines=500');
     } catch (err) {
+      if (!present()) return;
       content.innerHTML = `<div style="color:var(--danger-color);">Failed to load the service log: ${escapeHtml(err.message)}</div>`;
       return;
     }
+    if (!present()) return;
     const sources = { journal: 'System journal', file: 'Log file', events: 'Panel events (no journal access)' };
     const lines = String(res.text || '').split('\n');
     state.serviceLogLines = lines;
@@ -107,10 +119,13 @@
   async function refreshAudit() {
     const content = document.getElementById('main-content');
     if (!content) return;
+    const present = requestIsCurrent('audit');
     try {
       const res = await api(`/api/audit?limit=${state.auditLimit || 100}`);
+      if (!present()) return;
       state.auditLogs = res.logs || [];
     } catch (err) {
+      if (!present()) return;
       content.innerHTML = `<div style="color:var(--danger-color);">Failed to load audit logs: ${escapeHtml(err.message)}</div>`;
       return;
     }
@@ -181,6 +196,7 @@
   async function refreshLogs() {
     const content = document.getElementById('main-content');
     if (!content) return;
+    const present = requestIsCurrent('activity');
     const f = state.logsFilter;
     const since = new Date(Date.now() - (LOG_RANGES[f.range] || LOG_RANGES['24h'])).toISOString();
     const qs = new URLSearchParams({ since });
@@ -196,10 +212,12 @@
         api(`/api/logs/summary?since=${encodeURIComponent(since)}`),
         wantMetrics ? api('/api/logs/metrics?limit=120') : Promise.resolve({ metrics: [] }),
       ]);
+      if (!present()) return;
       state.logsEvents = ev.events || [];
       state.logsMetrics = me.metrics || [];
       state.logsSummary = su.summary || null;
     } catch (err) {
+      if (!present()) return;
       content.innerHTML = `<div style="color:var(--danger-color);">Failed to load logs: ${escapeHtml(err.message)}</div>`;
       return;
     }

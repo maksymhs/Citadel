@@ -322,7 +322,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       ];
       const ctx = {
         state: { activeHostId: 'local', user: { id: 'admin', role: 'admin' }, hosts: [] },
-        openModal() {}, showToast() {}, forgetTerminal() {},
+        navigateTo() {}, openModal() {}, showToast() {}, forgetTerminal() {},
         escapeHtml: (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
         installAgent: (...args) => calls.push(args),
         localApi: async (url) => {
@@ -358,8 +358,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await sleep(800);
       assert.ok(w.document.getElementById('main-content').innerHTML.length > 100, `${view} rendered nothing`);
       if (view === 'system') {
-        assert.deepEqual([...w.document.querySelectorAll('[data-system-section]')].map(section => section.dataset.systemSection), ['processes', 'workspace', 'agents', 'tools']);
-        assert.equal(w.document.querySelector('[data-system-tab], [role="tab"]'), null, 'System shows four section cards, not tabs');
+        assert.deepEqual([...w.document.querySelectorAll('[data-system-section]')].map(section => section.dataset.systemSection), ['processes', 'workspace', 'agents', 'tools', 'activity']);
+        assert.equal(w.document.querySelector('[data-system-tab], [role="tab"]'), null, 'System shows five section cards, not tabs');
       }
       if (view === 'dashboard') assert.equal(w.document.querySelector('[data-mon-tab], #mon-tabs, .mon-tabs'), null, 'Dashboard has no Overview tab');
     }
@@ -418,7 +418,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         back.click();
         await sleep(400);
         assert.equal(back.hidden, true);
-        assert.equal(w.document.querySelectorAll('.system-card').length, 4);
+        assert.equal(w.document.querySelectorAll('.system-card').length, 5);
         assert.equal(w.document.getElementById('top-bar-title').textContent, 'System');
       }
       w.document.querySelector('[data-system-section="processes"]').click();
@@ -443,7 +443,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.ok(hub.querySelector('nav[aria-label="Settings sections"]'));
       assert.equal(w.getComputedStyle(hub.querySelector('.settings-tiles')).gridTemplateColumns, 'repeat(3, minmax(0, 1fr))', 'desktop Settings uses three equal columns');
       assert.notEqual(w.getComputedStyle(hub.querySelector('.settings-tile:last-child')).gridColumn, '1 / -1', 'the last tile does not stretch across the row');
-      assert.deepEqual([...hub.querySelectorAll('.settings-tile')].map(button => button.textContent.replace('›', '').trim()), ['AI Gateway', 'Updates', 'Machines', 'Network & access', 'Alerts', 'Credentials', 'Activity & Audit']);
+      assert.deepEqual([...hub.querySelectorAll('.settings-tile')].map(button => button.textContent.replace('›', '').trim()), ['AI Gateway', 'Updates', 'Machines', 'Network & access', 'Alerts', 'Credentials']);
       assert.equal(hub.querySelector('.settings-hero, .settings-screen-head, .connect-qr, .settings-tile-text span'), null, 'no duplicate heading, QR, diagnostics or descriptive subtitles');
       assert.equal(calls.filter(url => /\/api\/(?:settings\/connect|system\/(?:connect|node|version)|secrets|pair\/invite)(?:\?|$)/.test(url)).length, 0, 'the hub does not fetch unused section data or create pairing codes');
       const updateIcon = hub.querySelector('[data-settings-section="updates"] .settings-tile-icon svg path');
@@ -475,17 +475,61 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     } finally { w.fetch = originalFetch; }
   });
 
-  test('Settings Activity & Audit opens the view directly and Back returns to the hub', async () => {
+  test('System Activity & Audit opens directly and Back returns to System', async () => {
     w.document.querySelector('.nav-item[data-view="settings"]').click(); await sleep(400);
-    w.document.querySelector('[data-settings-section="activity"]').click(); await sleep(400);
+    assert.equal(w.document.querySelector('[data-settings-section="activity"]'), null);
+    w.document.querySelector('.nav-item[data-view="system"]').click(); await sleep(400);
+    w.document.querySelector('[data-system-section="activity"]').click(); await sleep(400);
     assert.equal(w.document.getElementById('top-bar-title').textContent, 'Activity & Audit');
     assert.deepEqual([...w.document.querySelectorAll('#top-bar-actions [data-activity-tab]')].map(button => button.textContent), ['Activity', 'Audit', 'Service log']);
     assert.equal(w.document.querySelector('.open-activity-btn'), null, 'there is no intermediate selector');
     assert.ok(w.document.getElementById('logs-refresh'));
     w.document.getElementById('top-bar-back').click(); await sleep(400);
-    assert.equal(w.document.getElementById('top-bar-title').textContent, 'Settings');
-    assert.ok(w.document.querySelector('[data-settings-section="activity"]'));
+    assert.equal(w.document.getElementById('top-bar-title').textContent, 'System');
+    assert.ok(w.document.querySelector('[data-system-section="activity"]'));
     assert.deepEqual(errors, []);
+  });
+
+  test('Dashboard metrics open the corresponding System, Files and Settings destinations', async () => {
+    const originalFetch = w.fetch, calls = [];
+    const host = { id: 'local', name: 'Local', isLocal: true, online: true, alerts: [], version: '0.65.0', uptime7d: 100,
+      health: { loadPerCore: 0.1, load1: 0.1, cores: 2, uptimeSeconds: 60, memory: { usedPercent: 20 }, disk: { usedPercent: 30 } } };
+    w.fetch = (url, options) => {
+      calls.push(String(url));
+      const result = String(url) === '/api/monitor/overview' ? { hosts: [host] }
+        : String(url).includes('/api/monitor/hosts/local/history') ? { points: [], events: [], uptime: 100 }
+          : String(url) === '/api/system/integrations' ? { integrations: { agents: [] } } : null;
+      return result ? Promise.resolve({ ok: true, json: async () => result }) : originalFetch(url, options);
+    };
+    try {
+      for (const metric of ['cpu', 'memory', 'disk', 'audit', 'updates']) {
+        w.document.querySelector('.nav-item[data-view="dashboard"]').click();
+        await sleep(500);
+        const buttons = w.document.querySelectorAll(`[data-metric="${metric}"]`);
+        assert.equal(buttons.length, metric === 'audit' ? 2 : 1);
+        assert.equal(buttons[0].tagName, 'BUTTON');
+        buttons[0].click();
+        await sleep(700);
+        if (metric === 'cpu' || metric === 'memory') {
+          assert.ok(w.document.querySelector('[data-system-detail="processes"]'), `${metric}: ${w.document.getElementById('top-bar-title').textContent} · ${w.document.getElementById('main-content').textContent.slice(0, 300)}`);
+          assert.equal(w.document.querySelector(`[data-sort="${metric}"]`).getAttribute('aria-pressed'), 'true');
+          assert.ok(calls.some(url => url.includes(`/system/processes?limit=50&sort=${metric}`)));
+        } else if (metric === 'disk') {
+          assert.match(w.document.querySelector('.disk-view').textContent, /Find what is taking space/);
+          assert.equal(calls.some(url => url.includes('/files/usage')), false, 'opening Analyze does not scan');
+        } else if (metric === 'audit') {
+          assert.ok(w.document.querySelector('[data-activity-tab="audit"].active'));
+          w.document.getElementById('top-bar-back').click();
+          await sleep(400);
+          assert.equal(w.document.getElementById('top-bar-title').textContent, 'System');
+        } else {
+          assert.equal(w.document.getElementById('top-bar-title').textContent, 'Settings · Updates');
+          assert.ok(w.document.getElementById('check-updates-btn'));
+          w.document.getElementById('top-bar-back').click();
+        }
+      }
+      assert.deepEqual(errors, []);
+    } finally { w.fetch = originalFetch; }
   });
 
   test('AI Gateway settings expose installation, login and 1M context controls', async () => {

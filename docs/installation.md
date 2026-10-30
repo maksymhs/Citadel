@@ -140,8 +140,8 @@ requires no sudo and remains off by default. This experimental integration offer
 
 **Dashboard** shows machine health directly, without an Overview tab or name; Projects is
 managed separately. **System** sits right under Files in the sidebar and shows the
-selected machine as four cards, each with a one-line summary: **Processes**,
-**Terminals & VS Code**, **AI coding agents** and **Installed tools**. Opening a card shows its detail with the same icon-only Back
+selected machine as five cards, each with a one-line summary: **Processes**,
+**Terminals & VS Code**, **AI coding agents**, **Installed tools** and **Activity & Audit**. Opening a card shows its detail with the same icon-only Back
 arrow in the top bar as Settings. Both screens share the same centered width,
 three-column desktop grid, card sizing and detail heading spacing (one column on
 narrow screens). System's machine name and Refresh stay in the top bar, so its
@@ -159,8 +159,14 @@ prove exit—refresh to check. Terminal stops end their running commands; VS Cod
 stop affects its shared instance across projects. AI coding agents retains agent install,
 reinstall/update and managed-launcher removal actions, not automatic installs.
 
-**Settings → Activity & Audit** opens the Activity/Audit/Service log view directly;
-Back returns to the Settings hub.
+**System → Activity & Audit** opens the Activity/Audit/Service log view directly;
+Back returns to the System hub. Processes stay on one row at narrow widths,
+with horizontal scrolling inside the table when needed instead of stacked cards.
+
+Dashboard metric cards are shortcuts for the selected machine: **CPU** and
+**Memory** open System processes sorted accordingly; **Disk** opens Files → Analyze
+(Find what is taking space), without starting a scan. Both **Availability** cards
+open the **Audit** tab, and **Version** opens **Settings → Updates** without updating.
 
 File Explorer initially opens the selected machine's configured `PROJECTS_DIR`
 (`/srv/citadel/projects` on this installation). Breadcrumbs still allow browsing
@@ -352,7 +358,7 @@ The **Files** view browses the host filesystem: navigate directories, read and e
 
 ## Remote access, pairing and tunnels
 
-Settings is a compact list of seven destinations, with no QR, diagnostics or descriptive subtitles on its hub. Section data loads only when needed. Administrators can generate the QR and copy its one-use pairing link from **Settings → Machines → Show pairing QR**; opening Settings or Machines alone creates no invitation. **Pair a machine** still scans or accepts another machine's code. Version/update status lives in Updates, and the public address and remote-access setup live in Network & access.
+Settings is a compact list of six destinations, with no QR, diagnostics or descriptive subtitles on its hub. Section data loads only when needed. Administrators can generate the QR and copy its one-use pairing link from **Settings → Machines → Show pairing QR**; opening Settings or Machines alone creates no invitation. **Pair a machine** still scans or accepts another machine's code. Version/update status lives in Updates, and the public address and remote-access setup live in Network & access.
 
 Scan a QR from your phone, pair several Citadel machines and expose the panel globally (Cloudflare Quick Tunnel, or a stable URL on your own domain from **Settings → Network & access → Tunnel**). Quick start: `citadel qr` (or `citadel qr --url` on small terminals), `citadel tunnel`, `citadel tunnel --domain=HOST --token=TOKEN`. Full details: [docs/remote-access.md](remote-access.md).
 

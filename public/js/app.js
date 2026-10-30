@@ -1208,7 +1208,7 @@
   // Secondary screens reached from another one get a Back button at the top
   // left. It returns to the screen the user came from, or to a sensible parent
   // when the page was opened directly on it.
-  const DETAIL_VIEWS = { activity: 'settings' };
+  const DETAIL_VIEWS = { activity: 'system' };
 
   function updateBackButton(view) {
     const btn = document.getElementById('top-bar-back');
@@ -1221,10 +1221,10 @@
     }
     const isDetail = Object.prototype.hasOwnProperty.call(DETAIL_VIEWS, view);
     btn.hidden = !isDetail;
-    btn.onclick = isDetail ? () => navigateTo(state.backView && state.backView !== view ? state.backView : DETAIL_VIEWS[view]) : null;
+    btn.onclick = isDetail ? () => navigateTo(DETAIL_VIEWS[view]) : null;
   }
 
-  function navigateTo(view) {
+  function navigateTo(view, options = {}) {
     window.CitadelBrowserEditor.close();
     window.CitadelSystem.dispose();
     workspaceGeneration++;
@@ -1249,7 +1249,7 @@
       state.dashboardTimer = null;
     }
     state.dashboardPaused = false;
-    setActiveNav(view);
+    setActiveNav(DETAIL_VIEWS[view] || view);
 
     const titleEl = document.getElementById('top-bar-title');
     const actionsEl = document.getElementById('top-bar-actions');
@@ -1262,7 +1262,7 @@
       renderDashboardView();
     } else if (view === 'system') {
       titleEl.textContent = 'System';
-      window.CitadelSystem.render();
+      window.CitadelSystem.render(options.section, options.sort);
     } else if (view === 'projects') {
       titleEl.textContent = 'Projects & Repositories';
       renderProjectsView();
@@ -1277,7 +1277,7 @@
       renderSettingsView();
     } else if (view === 'files') {
       titleEl.textContent = 'File Explorer';
-      renderFilesView();
+      renderFilesView(options.disk);
     } else if (view === 'proxy') {
       titleEl.textContent = 'Proxy & Domains';
       renderDeploymentsView();
@@ -1334,6 +1334,13 @@
       isAdmin: Boolean(state.user && state.user.role === 'admin'),
       activeHostId: () => state.activeHostId,
       useMachine,
+      openMetric: (hostId, target) => {
+        if (state.activeHostId !== hostId || state.currentView !== 'dashboard') return;
+        if (target === 'cpu' || target === 'memory') navigateTo('system', { section: 'processes', sort: target });
+        else if (target === 'disk') navigateTo('files', { disk: true });
+        else if (target === 'audit') { state.activityTab = 'audit'; saveUiState({ activityTab: 'audit' }); navigateTo('activity'); }
+        else if (target === 'updates') openSettingsAt('updates');
+      },
       renameMachine: showRenameMachineModal,
       openLogs: () => { state.activityTab = 'service'; saveUiState({ activityTab: 'service' }); navigateTo('activity'); },
       openProject: openProjectOn,
@@ -3303,7 +3310,6 @@
     network: { title: 'Network & access', desc: 'The address Citadel advertises to other devices. This only changes the advertised address; it never opens ports or exposes anything by itself.' },
     alerts: { title: 'Alerts', desc: 'Get told when a paired machine goes offline or runs low on disk, memory or CPU. Each Citadel watches the machines paired with it, checking every minute.' },
     credentials: { title: 'Credentials', desc: 'One encrypted vault for everything agents and git need. Environment variables are injected into every terminal; agents can read any entry with the citadel-creds CLI. Values are never shown again.' },
-    activity: { title: 'Activity & Audit', desc: 'The live event stream and the security audit trail for this host.' },
   };
 
   const SETTINGS_ICONS = {
@@ -3313,7 +3319,6 @@
     network: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>',
     alerts: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2a2 2 0 01-.6 1.4L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>',
     credentials: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>',
-    activity: NAV_ICONS.activity,
   };
 
   // Open Settings directly on one of its screens, from anywhere.
@@ -3336,7 +3341,6 @@
     const content = document.getElementById('main-content');
     const section = SETTINGS_SECTIONS[state.settingsSection] ? state.settingsSection : null;
     state.settingsSection = section;
-    if (section === 'activity') return navigateTo('activity');
     const titleEl = document.getElementById('top-bar-title');
     if (titleEl) titleEl.textContent = section ? `Settings · ${SETTINGS_SECTIONS[section].title}` : 'Settings';
     updateBackButton('settings');
@@ -3934,8 +3938,9 @@
     for (const [id, def] of Object.entries(SETTINGS_SECTIONS)) {
       add('Settings', def.title, def.desc.split('. ')[0].slice(0, 70), () => openSettingsAt(id));
     }
-    add('Settings', 'Service log', 'Citadel service log', () => { state.activityTab = 'service'; navigateTo('activity'); });
-    add('Settings', 'Audit trail', 'Security audit', () => { state.activityTab = 'audit'; navigateTo('activity'); });
+    add('System', 'Activity & Audit', 'Events and security audit', go('activity'));
+    add('System', 'Service log', 'Citadel service log', () => { state.activityTab = 'service'; navigateTo('activity'); });
+    add('System', 'Audit trail', 'Security audit', () => { state.activityTab = 'audit'; navigateTo('activity'); });
     for (const item of OPTIONAL_NAV) {
       if (moduleEnabled(item.module)) add('Go to', item.label, 'Module', go(item.view));
     }
@@ -4067,7 +4072,7 @@
   window.CitadelDeployments.init({ api, escapeHtml, openModal, showToast, state });
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
-  window.CitadelSystem.init({ state, localApi, escapeHtml, openModal, showToast, installAgent: installAgentOn, forgetTerminal: monitorCtx().forgetTerminal,
+  window.CitadelSystem.init({ state, localApi, escapeHtml, openModal, showToast, navigateTo, installAgent: installAgentOn, forgetTerminal: monitorCtx().forgetTerminal,
     setToolbar: toolbar => {
       if (state.currentView === 'system') document.getElementById('top-bar-actions').replaceChildren(toolbar);
     },

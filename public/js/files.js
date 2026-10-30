@@ -147,7 +147,7 @@
       </div>`;
   }
 
-  async function renderFilesView() {
+  async function renderFilesView(openDisk = false) {
     const content = document.getElementById('main-content');
     if (!state.filesPath) {
       const hostId = state.activeHostId;
@@ -186,6 +186,7 @@
     document.getElementById('files-new-file').onclick = () => promptNewEntry('file', state.filesPath);
     document.getElementById('files-new-folder').onclick = () => promptNewEntry('dir', state.filesPath);
     document.getElementById('files-refresh').onclick = () => renderFilesView();
+    if (openDisk) return document.getElementById('files-disk').onclick();
 
     const crumbs = document.getElementById('files-crumbs');
     crumbs.onclick = (ev) => {

@@ -13,7 +13,7 @@ function fixture(role = 'admin') {
   let dialog, failure = false;
   const failing = new Set(), holds = new Map(), flags = { ignoreSort: false };
   const state = { activeHostId: 'peer-one', user: { id: 'owner', role }, hosts: [{ id: 'peer-one', name: 'First machine' }] };
-  win.CitadelSystem.init({ state, escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
+  win.CitadelSystem.init({ state, navigateTo: view => { flags.navigated = view; }, escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
     openModal: value => { dialog = value; }, showToast: value => notices.push(value), forgetTerminal: (...args) => forgotten.push(args), installAgent() {},
     setToolbar: toolbar => win.document.getElementById('top-bar-actions').replaceChildren(toolbar),
     setDetailNavigation: (label, onBack) => {
@@ -128,8 +128,37 @@ test('leaving System invalidates a pending confirmation', async () => {
 });
 
 const tick = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms));
-const SECTION_IDS = ['processes', 'workspace', 'agents', 'tools'];
+const SECTION_IDS = ['processes', 'workspace', 'agents', 'tools', 'activity'];
 const processRows = doc => [...doc.querySelectorAll('#system-processes-body tbody tr')].map(row => row.querySelector('[data-label="Process"]')?.textContent);
+
+test('Activity card opens the shared activity view without requesting detail data', async () => {
+  const f = fixture();
+  try {
+    await f.win.CitadelSystem.render();
+    const count = f.calls.length;
+    f.win.document.querySelector('[data-system-section="activity"]').click();
+    assert.equal(f.flags.navigated, 'activity');
+    assert.equal(f.calls.length, count);
+  } finally { f.close(); }
+});
+
+test('processes can open directly sorted by memory and keep native table rows in mobile UI', async () => {
+  const f = fixture();
+  try {
+    f.win.document.documentElement.classList.add('is-mobile-ui');
+    const style = f.win.document.createElement('style');
+    style.textContent = fs.readFileSync(path.join(__dirname, '../public/css/app.css'), 'utf8');
+    f.win.document.head.append(style);
+    await f.win.CitadelSystem.render('processes', 'memory');
+    assert.ok(f.calls.some(call => call.url.includes('sort=memory')));
+    assert.equal(f.win.document.querySelector('[data-sort="memory"]').getAttribute('aria-pressed'), 'true');
+    const row = f.win.document.querySelector('.system-process-table tbody tr');
+    assert.equal(f.win.getComputedStyle(row).display, 'table-row');
+    assert.equal(f.win.getComputedStyle(row.firstElementChild).display, 'table-cell');
+    assert.equal(f.win.getComputedStyle(row.firstElementChild).whiteSpace, 'nowrap');
+    assert.equal(f.win.getComputedStyle(f.win.document.querySelector('.system-process-scroll')).overflowX, 'auto');
+  } finally { f.close(); }
+});
 
 test('a captured header Refresh is inert after leaving System', async () => {
   const f = fixture();
@@ -143,7 +172,7 @@ test('a captured header Refresh is inert after leaving System', async () => {
   } finally { f.close(); }
 });
 
-test('System opens on four summary cards, with no tabs and no mutations', async () => {
+test('System opens on five summary cards, with no tabs and no mutations', async () => {
   const f = fixture();
   try {
     await f.win.CitadelSystem.render();
@@ -154,8 +183,8 @@ test('System opens on four summary cards, with no tabs and no mutations', async 
     assert.equal(doc.querySelector('[role="tablist"], [role="tab"], [data-system-tab], .mon-tabs'), null);
     const cards = [...doc.querySelectorAll('nav.system-cards[aria-label="System sections"] > button.system-card')];
     assert.deepEqual(cards.map(card => card.dataset.systemSection), SECTION_IDS);
-    assert.deepEqual(cards.map(card => card.querySelector('strong').textContent), ['Processes', 'Terminals & VS Code', 'AI coding agents', 'Installed tools']);
-    assert.deepEqual(cards.map(card => card.querySelector('[data-system-summary]').textContent), ['3 running', '1 terminal · VS Code running', '0 AI agents', '1 tool']);
+    assert.deepEqual(cards.map(card => card.querySelector('strong').textContent), ['Processes', 'Terminals & VS Code', 'AI coding agents', 'Installed tools', 'Activity & Audit']);
+    assert.deepEqual(cards.map(card => card.querySelector('[data-system-summary]').textContent), ['3 running', '1 terminal · VS Code running', '0 AI agents', '1 tool', 'Events · Audit · Service log']);
     assert.equal(doc.querySelector('#top-bar-back').hidden, true);
     assert.equal(doc.querySelector('[data-process], [data-stop-terminal], #system-stop-editor'), null, 'details load only when opened');
     assert.equal(f.calls.filter(call => call.method).length, 0);
@@ -180,7 +209,7 @@ test('opening a card shows its detail and Back returns to the cards', async () =
     assert.equal(doc.querySelector('#top-bar-back').hidden, false);
     doc.querySelector('#top-bar-back').click();
     await tick();
-    assert.equal(doc.querySelectorAll('.system-card').length, 4);
+    assert.equal(doc.querySelectorAll('.system-card').length, 5);
     assert.equal(doc.querySelector('[data-system-detail]'), null);
     doc.querySelector('[data-system-section="tools"]').click();
     await tick();
@@ -218,7 +247,7 @@ test('hub summaries and detail mounts fail independently', async () => {
   try {
     await f.win.CitadelSystem.render();
     const summaries = [...f.win.document.querySelectorAll('[data-system-summary]')].map(node => node.textContent);
-    assert.deepEqual(summaries, ['3 running', 'Unavailable', '0 AI agents', '1 tool']);
+    assert.deepEqual(summaries, ['3 running', 'Unavailable', '0 AI agents', '1 tool', 'Events · Audit · Service log']);
     f.win.document.querySelector('[data-system-section="workspace"]').click();
     await tick();
     const doc = f.win.document;
@@ -290,7 +319,7 @@ test('a stop confirmed after returning to the hub refreshes the summaries instea
     const before = f.calls.length;
     await f.dialog().onConfirm();
     assert.equal(f.calls.slice(before).some(call => !call.method && call.url.endsWith('/terminals')), true);
-    assert.equal(doc.querySelectorAll('.system-card').length, 4);
+    assert.equal(doc.querySelectorAll('.system-card').length, 5);
   } finally { f.close(); }
 });
 

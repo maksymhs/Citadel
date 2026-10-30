@@ -188,7 +188,8 @@
   function gaugeCard(esc, { label, value, warn, crit, detail, points, key, max }) {
     const v = Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : null;
     const cls = levelClass(v, warn, crit);
-    return `<div class="card mon-gauge ${cls}">
+    const action = { loadPerCore: 'cpu', memPercent: 'memory', diskPercent: 'disk' }[key];
+    return `<button type="button" class="card mon-gauge mon-metric-link ${cls}" data-metric="${action}">
       <div class="mon-gauge-top">
         ${ring(esc, label, v, warn, crit)}
         <div class="mon-gauge-meta">
@@ -198,15 +199,16 @@
         </div>
       </div>
       <div class="mon-gauge-trend">${areaSpark(points, key, { max })}<span class="mon-muted">last 24 h</span></div>
-    </div>`;
+    </button>`;
   }
 
-  function kpiTile(esc, label, value, sub, tone) {
-    return `<div class="mon-kpi${tone ? ` mon-kpi-${tone}` : ''}">
+  function kpiTile(esc, label, value, sub, tone, action) {
+    const tag = action ? 'button' : 'div';
+    return `<${tag}${action ? ` type="button" data-metric="${action}"` : ''} class="mon-kpi${tone ? ` mon-kpi-${tone}` : ''}${action ? ' mon-metric-link' : ''}">
       <span class="mon-kpi-label">${esc(label)}</span>
       <strong class="mon-kpi-value">${esc(String(value))}</strong>
       ${sub ? `<span class="mon-kpi-sub">${esc(sub)}</span>` : ''}
-    </div>`;
+    </${tag}>`;
   }
 
   function uptimeTone(p) {
@@ -322,13 +324,14 @@
           ${kpiTile(esc, 'Uptime', fmtDuration(hl.uptimeSeconds), 'since last boot')}
           ${kpiTile(esc, 'Terminals', hl.activeTerminals ?? 0, 'persistent sessions')}
           ${hl.temperature ? kpiTile(esc, hl.temperature.source === 'battery' ? 'Battery temp' : 'CPU temp', `${Math.round(hl.temperature.celsius)} °C`, 'current', hl.temperature.celsius >= 85 ? 'crit' : hl.temperature.celsius >= 70 ? 'warn' : 'ok') : ''}
-          ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24))}
-          ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7))}
-          ${host.latencyMs !== null && host.latencyMs !== undefined && !host.isLocal ? kpiTile(esc, 'Latency', `${host.latencyMs} ms`, 'round trip') : kpiTile(esc, 'Version', host.version ? `v${host.version}` : '—', 'Citadel')}
+          ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24), 'audit')}
+          ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7), 'audit')}
+          ${host.latencyMs !== null && host.latencyMs !== undefined && !host.isLocal ? kpiTile(esc, 'Latency', `${host.latencyMs} ms`, 'round trip') : ''}
+          ${kpiTile(esc, 'Version', host.version ? `v${host.version}` : '—', 'Citadel', null, 'updates')}
         </div>` : `<div class="card mon-muted">${offline ? esc(host.error || 'Not responding.') : 'No detailed metrics: update this machine to see load, memory and disk.'}</div>
         <div class="mon-kpis">
-          ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24))}
-          ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7))}
+          ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24), 'audit')}
+          ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7), 'audit')}
         </div>`}
         <div class="mon-panels">
           <div class="card mon-panel">
@@ -343,6 +346,9 @@
   : '<div class="mon-allclear"><span>✓</span>All clear — no incidents in the last 30 days.</div>'}
           </div>
         </div>`;
+      body.querySelectorAll('[data-metric]').forEach(button => {
+        button.onclick = () => { if (present()) ctx.openMetric?.(host.id, button.dataset.metric); };
+      });
     } catch (err) { fail(err); }
   }
 
