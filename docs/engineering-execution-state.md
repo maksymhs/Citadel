@@ -825,3 +825,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Safety guards (captured machine/account/role, explicit confirmation, signal-vs-exit wording, verified VS Code stop, terminal client forgetting only after a successful stop) are unchanged. Cache tokens moved to v0620-system.
 - Verification: tests/system-ui.test.js 19/19 (hub summaries, independent failures, sort order and request URL, old-peer local sort, polling lifecycle, stale responses, slow request left behind by Back), tests/system.test.js 6/6 including `sort=memory`; ui-smoke assertions updated.
 - Gaps: jsdom/fixture validation only; no real-browser or phone layout check, no real remote peer; README screenshots not regenerated. Not committed or released.
+
+## 178. Release v0.63.0
+- Packages entry 177: System as three summary cards with detail views, and processes sortable by CPU or memory (host ranks before limiting).
+- Bumps package/lock versions to 0.63.0, all 17 frontend asset tokens to v0630 and README Latest. CHANGELOG.md is generated from the local version tag before publishing main then the tag.
+- Implementation verification: TMPDIR=/var/tmp npm test ran 674 tests: 673 passed, 0 failed, 1 skipped; lint and git diff --check clean (log /var/tmp/citadel-system-hub-full.log).
+- Gaps: jsdom/fixture validation only; no real-browser/mobile layout check or real remote peer, and README screenshots were not regenerated (no browser tooling).

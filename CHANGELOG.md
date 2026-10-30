@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.63.0](https://github.com/maksymhs/Citadel/releases/tag/v0.63.0) · 2026-10-30
+
+### Added
+
+- **system**: Open System as three summary cards and sort processes by CPU or memory
+
 ## [0.62.0](https://github.com/maksymhs/Citadel/releases/tag/v0.62.0) · 2026-10-30
 
 ### Added
