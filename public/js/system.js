@@ -1,12 +1,25 @@
 /**
- * System management for the selected machine: processes, terminals, shared VS Code and tools.
- * Destructive actions capture the machine and account and require explicit confirmation.
+ * System management for the selected machine: a hub of three sections (processes, terminals and
+ * shared VS Code, tools) that each open a detail view. Destructive actions capture the machine
+ * and account and require explicit confirmation.
  */
 (function () {
   'use strict';
   const REQUIRED = ['state', 'localApi', 'escapeHtml', 'openModal', 'showToast', 'forgetTerminal', 'installAgent'];
   let ctx, timer, generation = 0;
-  const SECTIONS = [['processes', 'Processes'], ['terminals', 'Terminals'], ['editor', 'VS Code'], ['tools', 'Tools']];
+  const SECTIONS = [['processes', 'Processes'], ['workspace', 'Terminals & VS Code'], ['tools', 'Tools']];
+  // Detail bodies each section mounts; every one loads, fails and reloads on its own.
+  const MOUNTS = { processes: ['processes'], workspace: ['terminals', 'editor'], tools: ['tools'] };
+  const ICONS = {
+    processes: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 19V9m6 10V5m6 14v-7m4 7H2"/>',
+    workspace: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 6h16v12H4zM8 10l3 2-3 2m5 0h3"/>',
+    tools: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14.7 6.3a4 4 0 0 0-5 5L4 17l3 3 5.7-5.7a4 4 0 0 0 5-5l-2.4 2.4-2.3-.7-.7-2.3z"/>',
+  };
+  const COMPARATORS = {
+    cpu: (a, b) => (num(b.cpuPercent) - num(a.cpuPercent)) || (num(b.rssBytes) - num(a.rssBytes)),
+    memory: (a, b) => (num(b.rssBytes) - num(a.rssBytes)) || (num(b.cpuPercent) - num(a.cpuPercent)),
+  };
+  function num(value) { return Number.isFinite(value) ? value : 0; }
   function init(context) {
     const missing = REQUIRED.filter(key => context[key] === undefined);
     if (missing.length) throw new Error(`system.js: missing ${missing.join(', ')}`);
@@ -17,7 +30,7 @@
     if (!Number.isFinite(value)) return '—';
     return value >= 1048576 ? `${(value / 1048576).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
   }
-  async function render() {
+  async function render(initialSection) {
     dispose();
     const attempt = generation, hostId = ctx.state.activeHostId, user = ctx.state.user;
     const owner = user?.id ?? user?.username;
@@ -32,44 +45,122 @@
     const path = suffix => hostId === 'local' ? `/api${suffix}` : `/api/remote/${encodeURIComponent(hostId)}${suffix}`;
     const request = (suffix, options) => ctx.localApi(path(suffix), options);
     const hostName = hostId === 'local' ? (ctx.state.hostIdentity?.name || 'This machine') : (ctx.state.hosts.find(host => host.id === hostId)?.name || hostId);
-    pane.innerHTML = `<div class="mon-tab-toolbar"><span class="mon-muted">${esc(hostName)}</span><button type="button" class="btn btn-secondary btn-sm" id="system-refresh">Refresh</button></div>
-      <div class="system-sections">${SECTIONS.map(([id, label]) => `<section class="card system-section${id === 'processes' || id === 'tools' ? ' system-section-wide' : ''}" data-system-section="${id}" aria-labelledby="system-${id}-heading"><div class="system-section-head"><h2 id="system-${id}-heading">${label}</h2></div><div id="system-${id}-body"><div class="mon-muted">Loading…</div></div></section>`).join('')}</div>`;
-    const bodies = Object.fromEntries(SECTIONS.map(([id]) => [id, pane.querySelector(`#system-${id}-body`)]));
-    const pending = {};
-    let refreshTimer;
+    pane.innerHTML = `<div class="mon-tab-toolbar"><div class="system-toolbar-main"><button type="button" class="btn btn-secondary btn-sm" id="system-back" hidden>&lsaquo; Back</button><span class="mon-muted">${esc(hostName)}</span></div><button type="button" class="btn btn-secondary btn-sm" id="system-refresh">Refresh</button></div><div id="system-content"></div>`;
+    const content = pane.querySelector('#system-content');
+    const backButton = pane.querySelector('#system-back');
+    let current = null, bodies = {}, sort = 'cpu', pending = {}, refreshTimer;
     function stopPolling() {
       clearInterval(refreshTimer);
       if (timer === refreshTimer) timer = undefined;
       refreshTimer = undefined;
     }
-    // Each mount owns its errors and in-flight request; slow sections cannot hide the others.
+    // Each mount owns its errors and in-flight request; a slow one cannot hide the others.
     function loadSection(id) {
       if (!present()) { stopPolling(); return Promise.resolve(false); }
-      if (pending[id]) return pending[id];
-      pending[id] = (async () => {
+      const body = bodies[id];
+      if (!body) return Promise.resolve(false);
+      if (pending[id]?.body === body) return pending[id].promise;
+      const promise = (async () => {
         try {
-          await loaders[id]();
+          await loaders[id](body);
           return present();
         } catch (error) {
-          if (present()) bodies[id].innerHTML = `<div class="mon-muted">${esc(error.message)}</div>`;
+          if (present()) body.innerHTML = `<div class="mon-muted">${esc(error.message)}</div>`;
           return false;
-        } finally { delete pending[id]; }
+        } finally { if (pending[id]?.promise === promise) delete pending[id]; }
       })();
-      return pending[id];
+      pending[id] = { body, promise };
+      return promise;
     }
     async function refreshProcesses() {
       const loaded = await loadSection('processes');
-      if (!present()) { stopPolling(); return; }
-      if (!loaded) { stopPolling(); return; }
+      if (!present() || !loaded || !bodies.processes) { stopPolling(); return; }
       if (refreshTimer === undefined) timer = refreshTimer = setInterval(() => {
-        if (!present()) { stopPolling(); return; }
+        if (!present() || !bodies.processes) { stopPolling(); return; }
         if (!document.hidden) refreshProcesses();
       }, 5000);
     }
-    function refreshAll() {
-      return Promise.all([refreshProcesses(), ...['terminals', 'editor', 'tools'].map(loadSection)]);
+    function loadDetail() {
+      return Promise.all(MOUNTS[current].map(id => id === 'processes' ? refreshProcesses() : loadSection(id)));
     }
-    pane.querySelector('#system-refresh').onclick = refreshAll;
+    // The hub only needs one cheap number per section; failures show as unavailable.
+    async function loadSummaries() {
+      const summaries = {
+        processes: async () => {
+          const result = await request('/system/processes?limit=1');
+          const total = result.processes?.total;
+          return Number.isFinite(total) ? `${total} running` : 'Unavailable';
+        },
+        workspace: async () => {
+          const [terminals, editor] = await Promise.all([
+            request('/terminals'),
+            admin ? request('/editor').catch(() => null) : Promise.resolve(null),
+          ]);
+          const count = (terminals.sessions || []).filter(session => session.isAlive || session.status === 'active').length;
+          const editorState = editor?.editor && typeof editor.editor.running === 'boolean' ? ` · VS Code ${editor.editor.running ? 'running' : 'stopped'}` : '';
+          return `${count} terminal${count === 1 ? '' : 's'}${editorState}`;
+        },
+        tools: async () => {
+          const [integrations, tools] = await Promise.all([request('/system/integrations'), request('/system/tools').catch(() => null)]);
+          const agents = (integrations.integrations?.agents || []).filter(agent => agent.available).length;
+          const installed = (tools?.tools || []).filter(tool => tool.installed).length;
+          return `${agents} AI agent${agents === 1 ? '' : 's'} · ${installed} tool${installed === 1 ? '' : 's'}`;
+        },
+      };
+      await Promise.all(SECTIONS.map(async ([id]) => {
+        const target = content.querySelector(`[data-system-summary="${id}"]`);
+        let text;
+        try { text = await summaries[id](); } catch { text = 'Unavailable'; }
+        if (present() && target?.isConnected) target.textContent = text;
+      }));
+    }
+    function showHub() {
+      stopPolling();
+      current = null; bodies = {}; pending = {};
+      backButton.hidden = true;
+      content.innerHTML = `<nav class="system-cards" aria-label="System sections">${SECTIONS.map(([id, label]) => `<button type="button" class="system-card" data-system-section="${id}"><span class="settings-tile-icon" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${ICONS[id]}</svg></span><span class="system-card-text"><strong>${label}</strong><span class="mon-muted" data-system-summary="${id}">Loading…</span></span><span class="settings-tile-chev" aria-hidden="true">&rsaquo;</span></button>`).join('')}</nav>`;
+      content.querySelectorAll('[data-system-section]').forEach(button => { button.onclick = () => showSection(button.dataset.systemSection); });
+      return loadSummaries();
+    }
+    function showSection(id) {
+      stopPolling();
+      current = id; bodies = {}; pending = {};
+      backButton.hidden = false;
+      const label = SECTIONS.find(([key]) => key === id)[1];
+      const mounts = MOUNTS[id];
+      const mountHtml = key => `<div id="system-${key}-body"><div class="mon-muted">Loading…</div></div>`;
+      const inner = id === 'workspace'
+        ? `<div class="system-split"><div><h3>Terminals</h3>${mountHtml('terminals')}</div><div><h3>VS Code</h3>${mountHtml('editor')}</div></div>`
+        : mountHtml(id);
+      const sortControls = id === 'processes'
+        ? `<div class="system-sort" role="group" aria-label="Sort processes">${[['cpu', 'CPU'], ['memory', 'Memory']].map(([key, text]) => `<button type="button" class="btn btn-sm ${key === sort ? 'btn-primary' : 'btn-secondary'}" data-sort="${key}" aria-pressed="${key === sort}">${text}</button>`).join('')}</div>`
+        : '';
+      content.innerHTML = `<section class="card system-section system-detail" data-system-detail="${id}" aria-labelledby="system-${id}-heading"><div class="system-section-head"><h2 id="system-${id}-heading">${label}</h2>${sortControls}</div>${inner}</section>`;
+      for (const key of mounts) bodies[key] = content.querySelector(`#system-${key}-body`);
+      content.querySelectorAll('[data-sort]').forEach(button => {
+        button.onclick = async () => {
+          if (button.dataset.sort === sort) return;
+          sort = button.dataset.sort;
+          content.querySelectorAll('[data-sort]').forEach(other => {
+            const active = other.dataset.sort === sort;
+            other.setAttribute('aria-pressed', String(active));
+            other.classList.toggle('btn-primary', active);
+            other.classList.toggle('btn-secondary', !active);
+          });
+          // Wait out a request that was sent with the previous order, then fetch in the new one.
+          await pending.processes?.promise;
+          if (current === 'processes') refreshProcesses();
+        };
+      });
+      return loadDetail();
+    }
+    pane.querySelector('#system-refresh').onclick = () => (current ? loadDetail() : loadSummaries());
+    backButton.onclick = showHub;
+    // Reload whatever the stop changed: its detail mount when open, otherwise the hub summaries.
+    function afterChange(section) {
+      if (current === null) return loadSummaries();
+      return section === 'processes' ? refreshProcesses() : loadSection(section);
+    }
     function confirm({ title, warning, run, success, section }) {
       if (!present() || !admin || ctx.state.user?.role !== 'admin') return;
       let open = true, confirming = false;
@@ -84,16 +175,15 @@
             open = false;
             if (!present()) return;
             ctx.showToast(success, 'success');
-            await (section === 'processes' ? refreshProcesses() : loadSection(section));
+            await afterChange(section);
           } finally { confirming = false; }
         },
       });
     }
     const loaders = {
-      terminals: async () => {
+      terminals: async body => {
         const [result, projects] = await Promise.all([request('/terminals'), request('/projects').catch(() => ({ projects: [] }))]);
         if (!present()) return;
-        const body = bodies.terminals;
         const names = new Map((projects.projects || []).map(project => [project.id, project.name]));
         const sessions = (result.sessions || []).filter(session => session.isAlive || session.status === 'active');
         body.innerHTML = `<p class="mon-muted">Persistent sessions keep running when you leave this view.</p>${sessions.length ? `<div class="mon-rows">${sessions.map((session, index) => `<div class="mon-row"><div class="mon-row-main"><strong>${esc(session.name)}</strong><span class="mon-muted">${esc(session.project_id ? names.get(session.project_id) || 'Project' : 'System (host)')}</span></div><span class="badge badge-success">Running</span>${admin ? `<button type="button" class="btn btn-danger btn-sm" data-stop-terminal="${index}">Stop</button>` : ''}</div>`).join('')}</div>` : '<div class="mon-muted">No persistent terminals are running.</div>'}`;
@@ -103,8 +193,7 @@
             run: async () => { await request(`/terminals/${encodeURIComponent(session.id)}`, { method: 'DELETE' }); ctx.forgetTerminal(hostId, session.id); }, success: 'Terminal stopped.' });
         });
       },
-      editor: async () => {
-        const body = bodies.editor;
+      editor: async body => {
         if (!admin) { body.innerHTML = '<div class="mon-muted">Administrator privileges are required to inspect or stop VS Code.</div>'; return; }
         let result;
         try { result = await request('/editor'); } catch (error) { throw new Error(`VS Code status unavailable: ${error.message}`); }
@@ -115,22 +204,23 @@
         body.querySelector('#system-stop-editor')?.addEventListener('click', () => confirm({ title: 'Stop shared VS Code?', warning: 'This disconnects every project and browser using this editor. Unsaved work may be lost.', section: 'editor',
           run: async () => { const stopped = await request('/editor', { method: 'DELETE' }); if (stopped.editor?.running !== false) throw new Error('Editor shutdown could not be verified.'); }, success: 'Shared VS Code stopped.' }));
       },
-      processes: async () => {
-        const result = await request('/system/processes?limit=50');
+      processes: async body => {
+        const used = sort;
+        const result = await request(`/system/processes?limit=50&sort=${used}`);
         if (!present()) return;
-        const body = bodies.processes;
-        const data = result.processes || {}, rows = data.processes || [];
-        body.innerHTML = `<p class="mon-muted">${rows.length} of ${esc(data.total ?? rows.length)} processes · refreshes every 5 s. Process controls are available only for eligible service-user processes on Linux.</p><div class="table-container"><table class="data-table"><thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>Memory</th><th>Actions</th></tr></thead><tbody>${rows.map((process, index) => `<tr><td data-label="PID">${esc(process.pid)}</td><td data-label="Process">${esc(process.name)}</td><td data-label="CPU">${Number.isFinite(process.cpuPercent) ? `${process.cpuPercent.toFixed(1)}%` : '—'}</td><td data-label="Memory">${bytes(process.rssBytes)}</td><td data-label="Actions">${admin && process.canTerminate && process.identity ? `<div class="proj-actions"><button type="button" class="btn btn-secondary btn-sm" data-process="${index}" data-signal="TERM">Stop</button><button type="button" class="btn btn-danger btn-sm" data-process="${index}" data-signal="KILL">Force kill</button></div>` : '<span class="mon-muted">Read-only</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="mon-muted">No process data available.</td></tr>'}</tbody></table></div>`;
+        const data = result.processes || {};
+        // Older peers ignore ?sort=, so order here as well.
+        const rows = (data.processes || []).slice().sort(COMPARATORS[used]);
+        body.innerHTML = `<p class="mon-muted">${rows.length} of ${esc(data.total ?? rows.length)} processes, by ${used === 'memory' ? 'memory' : 'CPU'} · refreshes every 5 s. Process controls are available only for eligible service-user processes on Linux.</p><div class="table-container"><table class="data-table"><thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>Memory</th><th>Actions</th></tr></thead><tbody>${rows.map((process, index) => `<tr><td data-label="PID">${esc(process.pid)}</td><td data-label="Process">${esc(process.name)}</td><td data-label="CPU">${Number.isFinite(process.cpuPercent) ? `${process.cpuPercent.toFixed(1)}%` : '—'}</td><td data-label="Memory">${bytes(process.rssBytes)}</td><td data-label="Actions">${admin && process.canTerminate && process.identity ? `<div class="proj-actions"><button type="button" class="btn btn-secondary btn-sm" data-process="${index}" data-signal="TERM">Stop</button><button type="button" class="btn btn-danger btn-sm" data-process="${index}" data-signal="KILL">Force kill</button></div>` : '<span class="mon-muted">Read-only</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="mon-muted">No process data available.</td></tr>'}</tbody></table></div>`;
         body.querySelectorAll('[data-process]').forEach(button => {
           const process = rows[Number(button.dataset.process)], signal = button.dataset.signal;
           button.onclick = () => confirm({ title: `${signal === 'KILL' ? 'Force kill' : 'Stop'} ${process.name} (${process.pid})?`, warning: signal === 'KILL' ? 'Force kill prevents cleanup and may lose data. Use only if a normal stop did not work.' : 'Send SIGTERM to this process. It may stop running commands or services and lose unsaved work.', section: 'processes',
             run: async () => { const result = await request(`/system/processes/${encodeURIComponent(process.pid)}/terminate`, { method: 'POST', body: { identity: process.identity, signal } }); if (result.signalSent !== true) throw new Error('Signal delivery could not be verified.'); }, success: `SIG${signal} sent. Process exit is not guaranteed.` });
         });
       },
-      tools: async () => {
+      tools: async body => {
         const [result, toolsResult] = await Promise.all([request('/system/integrations'), request('/system/tools').catch(() => null)]);
         if (!present()) return;
-        const body = bodies.tools;
         const integrations = result.integrations || {};
         const tools = toolsResult?.tools || ['tmux', 'git', 'docker', 'caddy'].map(id => ({ id, name: id, group: 'System', installed: Boolean(integrations[id]?.available) }));
         body.innerHTML = `<div class="system-tools-grid"><div><h3>AI coding agents</h3><div class="mon-rows">${(integrations.agents || []).map(agent => `<div class="mon-row"><div class="mon-row-main"><strong>${esc(agent.name)}</strong>${agent.version ? `<span class="mon-muted">${esc(agent.version)}</span>` : agent.detected ? '<span class="mon-muted">Executable found; version check failed</span>' : ''}${agent.warning ? `<span class="mon-muted">${esc(agent.warning)}</span>` : ''}</div>${agent.available ? '<span class="badge badge-success">Installed</span>' : `<button type="button" class="btn btn-secondary btn-sm" data-agent="${esc(agent.id)}" data-action="install" ${admin ? '' : 'disabled'}>Install</button>`}${agent.available || agent.detected ? `<button type="button" class="btn btn-secondary btn-sm" data-agent="${esc(agent.id)}" data-action="reinstall" ${admin ? '' : 'disabled'}>Reinstall / update</button>` : ''}${agent.managed ? `<button type="button" class="btn btn-secondary btn-sm" data-agent="${esc(agent.id)}" data-action="remove" ${admin ? '' : 'disabled'}>Remove</button>` : ''}</div>`).join('') || '<p class="mon-muted">No AI coding agents detected.</p>'}</div></div>
@@ -147,7 +237,7 @@
         });
       },
     };
-    await refreshAll();
+    await (SECTIONS.some(([key]) => key === initialSection) ? showSection(initialSection) : showHub());
   }
   window.CitadelSystem = { init, render, dispose };
 })();

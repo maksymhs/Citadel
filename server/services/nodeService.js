@@ -175,12 +175,13 @@ class LocalNodeService extends INodeService {
   }
 
   /**
-   * Return the top processes ordered by instantaneous CPU usage.
+   * Return the top processes ordered by instantaneous CPU usage (or by memory with options.sort).
    * On Linux we sample /proc and compute deltas between calls (accurate,
    * non-blocking). On any other platform we fall back to `ps`.
    */
   async getProcesses(options = {}) {
     const limit = clampLimit(options.limit);
+    const sort = options.sort === 'memory' ? 'memory' : 'cpu';
     const totalMem = os.totalmem();
 
     if (process.platform === 'linux') {
@@ -191,12 +192,12 @@ class LocalNodeService extends INodeService {
       }
       const procs = this._sampleLinuxProcesses();
       if (procs) {
-        return this._formatProcessResult(procs, limit, totalMem);
+        return this._formatProcessResult(procs, limit, totalMem, sort);
       }
     }
 
     const fallback = this._getPsProcesses(totalMem);
-    return this._formatProcessResult(fallback, limit, totalMem);
+    return this._formatProcessResult(fallback, limit, totalMem, sort);
   }
 
   _getLinuxBootId() {
@@ -356,8 +357,11 @@ class LocalNodeService extends INodeService {
     }
   }
 
-  _formatProcessResult(processes, limit, totalMem) {
-    processes.sort((a, b) => (b.cpuPercent - a.cpuPercent) || (b.rssBytes - a.rssBytes));
+  _formatProcessResult(processes, limit, totalMem, sort = 'cpu') {
+    // Rank before slicing: sorting only the CPU top-N would hide idle but memory-hungry processes.
+    processes.sort(sort === 'memory'
+      ? (a, b) => (b.rssBytes - a.rssBytes) || (b.cpuPercent - a.cpuPercent)
+      : (a, b) => (b.cpuPercent - a.cpuPercent) || (b.rssBytes - a.rssBytes));
     let control = null;
     try { control = this.getProcessControlContext(); } catch { /* Read-only fallback, never guess ownership/ancestry. */ }
 

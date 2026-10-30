@@ -332,14 +332,14 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         },
       };
       win.CitadelSystem.init(ctx);
-      await win.CitadelSystem.render();
+      await win.CitadelSystem.render('tools');
       const buttons = [...win.document.querySelectorAll('[data-agent]')];
       assert.equal(buttons.length, 4);
       for (const button of buttons) button.click();
       assert.deepEqual(calls.map((args) => args[3]), ['reinstall', 'remove', 'reinstall', 'install']);
       assert.match(win.document.body.textContent, /Daemon package missing/);
       ctx.state.user.role = 'user';
-      await win.CitadelSystem.render();
+      await win.CitadelSystem.render('tools');
       assert.ok([...win.document.querySelectorAll('[data-agent]')].every((button) => button.disabled));
     } finally { toolsDom.window.close(); }
   });
@@ -358,8 +358,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await sleep(800);
       assert.ok(w.document.getElementById('main-content').innerHTML.length > 100, `${view} rendered nothing`);
       if (view === 'system') {
-        assert.deepEqual([...w.document.querySelectorAll('[data-system-section]')].map(section => section.dataset.systemSection), ['processes', 'terminals', 'editor', 'tools']);
-        assert.equal(w.document.querySelector('[data-system-tab], [role="tab"]'), null, 'System shows sections, not tabs');
+        assert.deepEqual([...w.document.querySelectorAll('[data-system-section]')].map(section => section.dataset.systemSection), ['processes', 'workspace', 'tools']);
+        assert.equal(w.document.querySelector('[data-system-tab], [role="tab"]'), null, 'System shows three section cards, not tabs');
       }
       if (view === 'dashboard') assert.equal(w.document.querySelector('[data-mon-tab], #mon-tabs, .mon-tabs'), null, 'Dashboard has no Overview tab');
     }

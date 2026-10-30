@@ -74,11 +74,12 @@ async function systemRoutes(fastify) {
     return { restarting: true };
   });
 
-  // Top running processes by CPU and memory usage
+  // Top running processes, ranked by CPU (default) or by resident memory (?sort=memory)
   fastify.get('/api/system/processes', async (request) => {
     const limit = request.query?.limit;
+    const sort = request.query?.sort === 'memory' ? 'memory' : 'cpu';
     return {
-      processes: await nodeService.getProcesses({ limit }),
+      processes: await nodeService.getProcesses({ limit, sort }),
     };
   });
 

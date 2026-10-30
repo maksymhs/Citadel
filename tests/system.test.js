@@ -75,6 +75,20 @@ describe('System, Metrics & Audit Trail Tests', () => {
     assert.deepEqual(cpus, sorted);
   });
 
+  test('GET /api/system/processes?sort=memory ranks by resident memory before limiting', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/system/processes?limit=8&sort=memory',
+      cookies: { session_id: authCookie },
+    });
+    assert.equal(res.statusCode, 200);
+    const rss = JSON.parse(res.payload).processes.processes.map((p) => p.rssBytes);
+    assert.deepEqual(rss, [...rss].sort((x, y) => y - x));
+
+    const unknown = await app.inject({ method: 'GET', url: '/api/system/processes?limit=3&sort=bogus', cookies: { session_id: authCookie } });
+    assert.equal(unknown.statusCode, 200, 'an unknown sort falls back to CPU instead of failing');
+  });
+
   test('GET /api/system/integrations reports availability of platform dependencies', async () => {
     const res = await app.inject({
       method: 'GET',
