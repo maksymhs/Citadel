@@ -7,6 +7,7 @@
  * operations are audited.
  */
 const path = require('node:path');
+const { PROJECTS_DIR } = require('../config');
 const { requireAuth } = require('../security/auth');
 const { requireModule } = require('../modules/registry');
 const fileService = require('../services/fileService');
@@ -46,6 +47,7 @@ async function fileRoutes(fastify) {
   fastify.get('/api/files/capabilities', async () => ({
     privileged: fileService.isPrivileged(),
     root: '/',
+    defaultPath: PROJECTS_DIR,
   }));
 
   // List a directory.

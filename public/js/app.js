@@ -54,7 +54,7 @@
     dashboardTimer: null,
     dashboardPaused: false,
     tmuxAvailable: false,
-    filesPath: '/',
+    filesPath: null,
     keepSettingsSection: false,
     settingsSection: null, // null = Settings hub, otherwise a section id
     filesMode: 'grid', // 'grid' (folder view, default) | 'list' (tree); list only lasts until you leave Files
@@ -4068,6 +4068,9 @@
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
   window.CitadelSystem.init({ state, localApi, escapeHtml, openModal, showToast, installAgent: installAgentOn, forgetTerminal: monitorCtx().forgetTerminal,
+    setToolbar: toolbar => {
+      if (state.currentView === 'system') document.getElementById('top-bar-actions').replaceChildren(toolbar);
+    },
     setDetailNavigation: (label, onBack) => {
       if (state.currentView !== 'system') return;
       document.getElementById('top-bar-title').textContent = label ? `System · ${label}` : 'System';

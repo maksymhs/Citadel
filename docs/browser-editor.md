@@ -106,9 +106,16 @@ extraction and while the IDE is running. It is optional and is not installed by
 Citadel's installer. It needs `tar`, network access to GitHub and sufficient disk
 space. No sudo, system service, desktop handler or public port is configured.
 
+VS Code opens on a black loading surface. Citadel keeps the embedded document
+masked until the workbench has replaced its startup splash, avoiding the white
+flash during initial loading. If readiness cannot be confirmed within 60 seconds,
+use **Try again** or **Open in new tab**. Closing or switching away cancels this
+wait without stopping the shared editor. This only covers initial startup, not
+later navigations or reloads inside VS Code.
+
 New editor profiles use **Default Dark Modern** with automatic system-theme
 switching off. Existing explicit theme choices and commented JSONC settings
-files are preserved.
+files are preserved; the loading mask does not recolor a light/custom workbench.
 
 After installation, either project action starts one shared editor process on
 demand and opens the selected registered folder. VS Code workspace trust prompts

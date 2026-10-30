@@ -149,6 +149,12 @@
 
   async function renderFilesView() {
     const content = document.getElementById('main-content');
+    if (!state.filesPath) {
+      const hostId = state.activeHostId;
+      const capabilities = await api('/api/files/capabilities').catch(() => ({}));
+      if (state.currentView !== 'files' || state.activeHostId !== hostId) return;
+      state.filesPath = capabilities.defaultPath || '/';
+    }
     document.getElementById('top-bar-actions').innerHTML = '';
     content.style.padding = '0'; // The explorer manages its own full-height layout.
 

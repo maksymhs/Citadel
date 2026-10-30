@@ -54,6 +54,8 @@ describe('Filesystem explorer', () => {
     const res = await app.inject({ method: 'GET', url: '/api/files/capabilities', cookies: { session_id: authCookie } });
     assert.equal(res.statusCode, 200);
     assert.equal(JSON.parse(res.payload).privileged, false);
+    assert.equal(JSON.parse(res.payload).defaultPath, require('../server/config').PROJECTS_DIR);
+    assert.equal(JSON.parse(res.payload).root, '/');
   });
 
   test('requires authentication', async () => {

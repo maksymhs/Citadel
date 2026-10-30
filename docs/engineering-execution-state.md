@@ -844,3 +844,12 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Bumps package/lock versions to 0.64.0, all 17 frontend asset tokens to v0640 and README Latest. CHANGELOG.md is generated using the local version tag, amended into the release commit, and the tag moved before publication.
 - Verification: implementation full isolated suite passed 674/675 tests (0 failed, 1 skipped; /var/tmp/citadel-back-grid-full.log). After the version bump, release-notes tests passed 3/3, lint and git diff --check passed, and assertions verified package/lock version agreement and all 17 asset tokens. The full suite was not rerun for metadata-only changes.
 - Gaps: no real-browser/mobile visual check; README screenshots not regenerated because browser tooling is unavailable. No live-host installation, update or restart performed.
+
+## 181. System and Settings surfaces, separate agents/tools and Files starting folder
+- Polished shared System/Settings tiles with matching icon surfaces, label typography, hover/focus accents and reduced-motion support; preserved existing navigation-only Settings and responsive grid.
+- System now has four destinations: Processes, Terminals & VS Code, AI coding agents and Installed tools. Agents/tools have independent summaries and loaders; agent lifecycle actions remain admin-only.
+- Files capabilities expose the host's configured PROJECTS_DIR as defaultPath. First entry uses that path, renders its breadcrumbs and preserves later navigation, including back to /. No filesystem authorization changes.
+- Preserved the existing black VS Code startup mask and readiness checks; editor regression tests pass. Updated changed frontend cache tokens and user documentation.
+- Verification: focused System and browser-editor test files passed; additional independent agent/tool-loading and Files breadcrumb/navigation regression checks passed; ESLint and git diff --check passed. Full suite rerun outside the sandbox because subprocess-based suites failed inside it; result follows below.
+- Gaps: no real browser/mobile visual check, no README screenshot regeneration (Chrome unavailable), no real remote peer or host installation/restart, no commit or release.
+- Full verification outside sandbox: npm test completed 682 tests, 681 passed, 0 failed, 1 skipped (/tmp/citadel-final-full.log). The independent-agent-loader and Files UI tests added during that run also passed separately. Final lint and diff whitespace checks are clean.

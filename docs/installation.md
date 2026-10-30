@@ -140,10 +140,15 @@ requires no sudo and remains off by default. This experimental integration offer
 
 **Dashboard** shows machine health directly, without an Overview tab or name; Projects is
 managed separately. **System** sits right under Files in the sidebar and shows the
-selected machine as three cards, each with a one-line summary: **Processes**,
-**Terminals & VS Code** and **Tools**. Opening a card shows its detail with the same icon-only Back
-arrow in the top bar as Settings. Settings shows three equal tiles per row on
-desktop and one per row on narrow screens. Processes can be ordered by **CPU** or **Memory** (the host ranks before
+selected machine as four cards, each with a one-line summary: **Processes**,
+**Terminals & VS Code**, **AI coding agents** and **Installed tools**. Opening a card shows its detail with the same icon-only Back
+arrow in the top bar as Settings. Both screens share the same centered width,
+three-column desktop grid, card sizing and detail heading spacing (one column on
+narrow screens). System's machine name and Refresh stay in the top bar, so its
+cards start at the same content edge as Settings. Both hubs use matching rounded
+icon surfaces, label typography and hover/keyboard-focus accents in light and dark
+themes; transitions respect reduced-motion preferences. Processes can be ordered by
+**CPU** or **Memory** (the host ranks before
 limiting, so a memory-hungry idle process is not hidden) and refreshes every 5 s only
 while it is open. Browsing/refreshing these screens never stops work. Administrator
 controls confirm destructive effects and name the target machine before sending
@@ -151,11 +156,15 @@ anything. Process **Stop** sends TERM; **Force kill** sends KILL separately, wit
 automatic escalation. Only eligible service-user processes on Linux are actionable;
 other platforms and protected processes remain read-only. A sent signal does not
 prove exit—refresh to check. Terminal stops end their running commands; VS Code
-stop affects its shared instance across projects. Tools retains agent install,
+stop affects its shared instance across projects. AI coding agents retains agent install,
 reinstall/update and managed-launcher removal actions, not automatic installs.
 
 **Settings → Activity & Audit** opens the Activity/Audit/Service log view directly;
 Back returns to the Settings hub.
+
+File Explorer initially opens the selected machine's configured `PROJECTS_DIR`
+(`/srv/citadel/projects` on this installation). Breadcrumbs still allow browsing
+back to `/`; this starting location does not change filesystem permissions.
 
 ### Project folders and VS Code
 

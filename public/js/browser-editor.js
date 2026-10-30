@@ -2,12 +2,13 @@
 (function () {
   'use strict';
   const REQUIRED = ['api', 'escapeHtml', 'showToast', 'state'];
-  let ctx, overlay, mounted = [], hostContent;
+  let ctx, overlay, mounted = [], hostContent, cancelStartup;
   function init(context) {
     for (const name of REQUIRED) if (context[name] === undefined) throw new Error(`browser-editor.js requires ${name}`);
     ctx = context;
   }
   function close() {
+    cancelStartup?.();
     overlay?.remove(); overlay = null;
     hostContent?.classList.remove('editor-host'); hostContent = null;
     for (const { element, inert } of mounted) if (!inert) element.removeAttribute('inert');
@@ -23,7 +24,7 @@
     const current = document.createElement('section');
     current.className = `browser-editor${options.content ? ' browser-editor-embedded' : ''}`;
     current.setAttribute('aria-label', `Browser editor: ${project.name}`);
-    current.innerHTML = `<header class="browser-editor-bar"><button class="btn btn-secondary btn-sm" id="editor-back">← Back to Citadel</button><strong>${esc(project.name)} · VS Code web</strong><button class="btn btn-secondary btn-sm" id="editor-stop" hidden>Stop editor</button></header><div class="browser-editor-body" id="browser-editor-body"><p>Preparing editor…</p></div>`;
+    current.innerHTML = `<header class="browser-editor-bar"><button class="btn btn-secondary btn-sm" id="editor-back">← Back to Citadel</button><strong>${esc(project.name)} · VS Code web</strong><button class="btn btn-secondary btn-sm" id="editor-stop" hidden>Stop editor</button></header><div class="browser-editor-body" id="browser-editor-body"><p class="browser-editor-loading" role="status">Preparing editor…</p></div>`;
     overlay = current;
     if (options.content) {
       hostContent = options.content;
@@ -48,22 +49,61 @@
     };
     const scope = JSON.stringify([state.user?.id ?? state.user?.username, state.hostIdentity?.instanceId, state.activeHostId]);
     const present = () => overlay === current && current.isConnected && scope === JSON.stringify([state.user?.id ?? state.user?.username, state.hostIdentity?.instanceId, state.activeHostId]);
+    let launchGeneration = 0;
     async function launch() {
       if (!present()) return;
-      body.innerHTML = '<p role="status">Starting browser editor…</p>';
+      const generation = ++launchGeneration;
+      const active = () => present() && generation === launchGeneration;
+      cancelStartup?.();
+      body.innerHTML = '<p class="browser-editor-loading" role="status">Starting browser editor…</p>';
       try {
         const result = await api(`/api/projects/${encodeURIComponent(project.id)}/editor`, { method: 'POST' });
-        if (!present()) return;
+        if (!active()) return;
         // The server supplies only a local project editor path, never an arbitrary iframe URL.
         if (!result.url?.startsWith(`/editor/${encodeURIComponent(project.id)}/?folder=`)) throw new Error('Invalid editor address.');
-        body.innerHTML = `<iframe class="browser-editor-frame" title="VS Code · ${esc(project.name)}" src="${esc(result.url)}" allow="clipboard-read; clipboard-write"></iframe>`;
+        body.innerHTML = `<p class="browser-editor-loading" role="status">Loading VS Code…</p><iframe class="browser-editor-frame browser-editor-frame-loading" title="VS Code · ${esc(project.name)}" src="${esc(result.url)}" allow="clipboard-read; clipboard-write" aria-hidden="true" tabindex="-1"></iframe>`;
+        waitForWorkbench(body.querySelector('iframe'), result.url);
         window.CitadelProjectTools?.workspacePreference(project.id, { editorOpened: true });
         options.onOpened?.();
         if (stop) stop.hidden = false;
-      } catch (err) { if (present()) showError(err); }
+      } catch (err) { if (active()) showError(err); }
     }
-    function showError(err) {
-      body.innerHTML = `<div class="card browser-editor-setup"><p class="settings-warn">${esc(err.message)}</p><button class="btn btn-primary" id="editor-retry">Try again</button></div>`;
+    function waitForWorkbench(frame, url) {
+      // The proxy streams code-server's document unchanged: a black iframe element
+      // cannot paint over its white canvas or theme splash. Keep that document
+      // hidden until VS Code has replaced its splash with the actual workbench.
+      const active = () => present() && frame.parentElement === body;
+      const stopWaiting = () => {
+        clearInterval(poll); clearTimeout(timeout);
+        frame.onerror = null;
+        if (cancelStartup === stopWaiting) cancelStartup = null;
+      };
+      const check = () => {
+        if (!active()) { stopWaiting(); return; }
+        try {
+          const doc = frame.contentDocument;
+          const splash = doc?.getElementById('monaco-parts-splash');
+          if (!doc?.querySelector('.monaco-workbench') || doc.getElementById('vscode-startup-fallback') || doc.querySelector('.initialShellColors')) return;
+          // VS Code hides this splash on first layout instead of removing it.
+          if (splash && doc.defaultView.getComputedStyle(splash).display !== 'none') return;
+          stopWaiting();
+          frame.classList.remove('browser-editor-frame-loading');
+          frame.removeAttribute('aria-hidden'); frame.removeAttribute('tabindex');
+          body.querySelector('.browser-editor-loading')?.remove();
+        } catch { /* An inaccessible or unexpected document stays masked until timeout. */ }
+      };
+      const fail = message => {
+        stopWaiting();
+        if (active()) showError(new Error(message), url);
+      };
+      const poll = setInterval(check, 100);
+      const timeout = setTimeout(() => fail('VS Code is taking longer than expected to load. Try again or open it in a new tab.'), 60000);
+      cancelStartup = stopWaiting;
+      frame.onerror = () => fail('VS Code could not load. Try again or open it in a new tab.');
+      check();
+    }
+    function showError(err, url) {
+      body.innerHTML = `<div class="card browser-editor-setup"><p class="settings-warn">${esc(err.message)}</p><button class="btn btn-primary" id="editor-retry">Try again</button>${url ? ` <a class="btn btn-secondary" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open in new tab</a>` : ''}</div>`;
       body.querySelector('#editor-retry').onclick = launch;
     }
     try {

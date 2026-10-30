@@ -1,16 +1,17 @@
 /**
- * System management for the selected machine: a hub of three sections (processes, terminals and
- * shared VS Code, tools) that each open a detail view. Destructive actions capture the machine
+ * System management for the selected machine: processes, terminals and shared VS Code,
+ * AI coding agents and installed tools each open a detail view. Destructive actions capture the machine
  * and account and require explicit confirmation.
  */
 (function () {
   'use strict';
   const REQUIRED = ['state', 'localApi', 'escapeHtml', 'openModal', 'showToast', 'forgetTerminal', 'installAgent'];
   let ctx, timer, generation = 0;
-  const SECTIONS = [['processes', 'Processes'], ['workspace', 'Terminals & VS Code'], ['tools', 'Tools']];
+  const SECTIONS = [['processes', 'Processes'], ['workspace', 'Terminals & VS Code'], ['agents', 'AI coding agents'], ['tools', 'Installed tools']];
   // Detail bodies each section mounts; every one loads, fails and reloads on its own.
-  const MOUNTS = { processes: ['processes'], workspace: ['terminals', 'editor'], tools: ['tools'] };
+  const MOUNTS = { processes: ['processes'], workspace: ['terminals', 'editor'], agents: ['agents'], tools: ['tools'] };
   const ICONS = {
+    agents: '<rect x="5" y="5" width="14" height="14" rx="3" stroke-width="1.8"/><path d="M9 10h.01M15 10h.01M9 14h6M12 2v3M12 19v3" stroke-width="1.8" stroke-linecap="round"/>',
     processes: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 19V9m6 10V5m6 14v-7m4 7H2"/>',
     workspace: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 6h16v12H4zM8 10l3 2-3 2m5 0h3"/>',
     tools: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14.7 6.3a4 4 0 0 0-5 5L4 17l3 3 5.7-5.7a4 4 0 0 0 5-5l-2.4 2.4-2.3-.7-.7-2.3z"/>',
@@ -45,8 +46,11 @@
     const path = suffix => hostId === 'local' ? `/api${suffix}` : `/api/remote/${encodeURIComponent(hostId)}${suffix}`;
     const request = (suffix, options) => ctx.localApi(path(suffix), options);
     const hostName = hostId === 'local' ? (ctx.state.hostIdentity?.name || 'This machine') : (ctx.state.hosts.find(host => host.id === hostId)?.name || hostId);
-    pane.innerHTML = `<div class="mon-tab-toolbar"><span class="mon-muted">${esc(hostName)}</span><button type="button" class="btn btn-secondary btn-sm" id="system-refresh">Refresh</button></div><div id="system-content"></div>`;
+    pane.innerHTML = `<div class="system-header-actions"><span class="system-host-name" title="${esc(hostName)}">${esc(hostName)}</span><button type="button" class="btn btn-secondary btn-sm" id="system-refresh">Refresh</button></div><div id="system-content"></div>`;
     const content = pane.querySelector('#system-content');
+    const refreshButton = pane.querySelector('#system-refresh');
+    // Keep host controls in the shell so both hubs start at the same content edge.
+    ctx.setToolbar?.(pane.querySelector('.system-header-actions'));
     let current = null, bodies = {}, sort = 'cpu', pending = {}, refreshTimer;
     function stopPolling() {
       clearInterval(refreshTimer);
@@ -99,11 +103,15 @@
           const editorState = editor?.editor && typeof editor.editor.running === 'boolean' ? ` · VS Code ${editor.editor.running ? 'running' : 'stopped'}` : '';
           return `${count} terminal${count === 1 ? '' : 's'}${editorState}`;
         },
-        tools: async () => {
-          const [integrations, tools] = await Promise.all([request('/system/integrations'), request('/system/tools').catch(() => null)]);
+        agents: async () => {
+          const integrations = await request('/system/integrations');
           const agents = (integrations.integrations?.agents || []).filter(agent => agent.available).length;
+          return `${agents} AI agent${agents === 1 ? '' : 's'}`;
+        },
+        tools: async () => {
+          const tools = await request('/system/tools');
           const installed = (tools?.tools || []).filter(tool => tool.installed).length;
-          return `${agents} AI agent${agents === 1 ? '' : 's'} · ${installed} tool${installed === 1 ? '' : 's'}`;
+          return `${installed} tool${installed === 1 ? '' : 's'}`;
         },
       };
       await Promise.all(SECTIONS.map(async ([id]) => {
@@ -134,7 +142,7 @@
       const sortControls = id === 'processes'
         ? `<div class="system-sort" role="group" aria-label="Sort processes">${[['cpu', 'CPU'], ['memory', 'Memory']].map(([key, text]) => `<button type="button" class="btn btn-sm ${key === sort ? 'btn-primary' : 'btn-secondary'}" data-sort="${key}" aria-pressed="${key === sort}">${text}</button>`).join('')}</div>`
         : '';
-      content.innerHTML = `<section class="card system-section system-detail" data-system-detail="${id}" aria-labelledby="system-${id}-heading"><div class="system-section-head"><h2 id="system-${id}-heading">${label}</h2>${sortControls}</div>${inner}</section>`;
+      content.innerHTML = `<div class="settings-screen-head system-detail-head"><div class="system-section-head"><h2 id="system-${id}-heading">${label}</h2>${sortControls}</div><p>${esc(hostName)}</p></div><section class="card system-section system-detail" data-system-detail="${id}" aria-labelledby="system-${id}-heading">${inner}</section>`;
       for (const key of mounts) bodies[key] = content.querySelector(`#system-${key}-body`);
       content.querySelectorAll('[data-sort]').forEach(button => {
         button.onclick = async () => {
@@ -153,7 +161,7 @@
       });
       return loadDetail();
     }
-    pane.querySelector('#system-refresh').onclick = () => (current ? loadDetail() : loadSummaries());
+    refreshButton.onclick = () => { if (present()) return current ? loadDetail() : loadSummaries(); };
     // Reload whatever the stop changed: its detail mount when open, otherwise the hub summaries.
     function afterChange(section) {
       if (current === null) return loadSummaries();
@@ -216,16 +224,11 @@
             run: async () => { const result = await request(`/system/processes/${encodeURIComponent(process.pid)}/terminate`, { method: 'POST', body: { identity: process.identity, signal } }); if (result.signalSent !== true) throw new Error('Signal delivery could not be verified.'); }, success: `SIG${signal} sent. Process exit is not guaranteed.` });
         });
       },
-      tools: async body => {
-        const [result, toolsResult] = await Promise.all([request('/system/integrations'), request('/system/tools').catch(() => null)]);
+      agents: async body => {
+        const result = await request('/system/integrations');
         if (!present()) return;
         const integrations = result.integrations || {};
-        const tools = toolsResult?.tools || ['tmux', 'git', 'docker', 'caddy'].map(id => ({ id, name: id, group: 'System', installed: Boolean(integrations[id]?.available) }));
-        body.innerHTML = `<div class="system-tools-grid"><div><h3>AI coding agents</h3><div class="mon-rows">${(integrations.agents || []).map(agent => `<div class="mon-row"><div class="mon-row-main"><strong>${esc(agent.name)}</strong>${agent.version ? `<span class="mon-muted">${esc(agent.version)}</span>` : agent.detected ? '<span class="mon-muted">Executable found; version check failed</span>' : ''}${agent.warning ? `<span class="mon-muted">${esc(agent.warning)}</span>` : ''}</div>${agent.available ? '<span class="badge badge-success">Installed</span>' : `<button type="button" class="btn btn-secondary btn-sm" data-agent="${esc(agent.id)}" data-action="install" ${admin ? '' : 'disabled'}>Install</button>`}${agent.available || agent.detected ? `<button type="button" class="btn btn-secondary btn-sm" data-agent="${esc(agent.id)}" data-action="reinstall" ${admin ? '' : 'disabled'}>Reinstall / update</button>` : ''}${agent.managed ? `<button type="button" class="btn btn-secondary btn-sm" data-agent="${esc(agent.id)}" data-action="remove" ${admin ? '' : 'disabled'}>Remove</button>` : ''}</div>`).join('') || '<p class="mon-muted">No AI coding agents detected.</p>'}</div></div>
-          <div><h3>Installed tools</h3>${['Runtimes', 'Development', 'Containers', 'Network', 'System'].map(group => {
-    const installed = tools.filter(tool => tool.group === group && tool.installed);
-    return installed.length ? `<div class="mon-tool-group"><div class="mon-tool-title">${esc(group)}</div><div class="mon-rows">${installed.map(tool => `<div class="mon-row"><strong>${esc(tool.name)}</strong><span class="mon-muted">${esc(tool.version || 'Installed')}</span></div>`).join('')}</div></div>` : '';
-  }).join('') || '<p class="mon-muted">No common tools detected.</p>'}</div></div>`;
+        body.innerHTML = `<div class="mon-rows">${(integrations.agents || []).map(agent => `<div class="mon-row"><div class="mon-row-main"><strong>${esc(agent.name)}</strong>${agent.version ? `<span class="mon-muted">${esc(agent.version)}</span>` : agent.detected ? '<span class="mon-muted">Executable found; version check failed</span>' : ''}${agent.warning ? `<span class="mon-muted">${esc(agent.warning)}</span>` : ''}</div>${agent.available ? '<span class="badge badge-success">Installed</span>' : `<button type="button" class="btn btn-secondary btn-sm" data-agent="${esc(agent.id)}" data-action="install" ${admin ? '' : 'disabled'}>Install</button>`}${agent.available || agent.detected ? `<button type="button" class="btn btn-secondary btn-sm" data-agent="${esc(agent.id)}" data-action="reinstall" ${admin ? '' : 'disabled'}>Reinstall / update</button>` : ''}${agent.managed ? `<button type="button" class="btn btn-secondary btn-sm" data-agent="${esc(agent.id)}" data-action="remove" ${admin ? '' : 'disabled'}>Remove</button>` : ''}</div>`).join('') || '<p class="mon-muted">No AI coding agents detected.</p>'}</div>`;
         body.querySelectorAll('[data-agent]').forEach(button => {
           button.onclick = () => {
             if (!present() || !admin || ctx.state.user?.role !== 'admin') return;
@@ -234,6 +237,15 @@
           };
         });
       },
+    };
+    loaders.tools = async body => {
+      const result = await request('/system/tools');
+      if (!present()) return;
+      const tools = result.tools || [];
+      body.innerHTML = ['Runtimes', 'Development', 'Containers', 'Network', 'System'].map(group => {
+        const installed = tools.filter(tool => tool.group === group && tool.installed);
+        return installed.length ? `<div class="mon-tool-group"><div class="mon-tool-title">${esc(group)}</div><div class="mon-rows">${installed.map(tool => `<div class="mon-row"><strong>${esc(tool.name)}</strong><span class="mon-muted">${esc(tool.version || 'Installed')}</span></div>`).join('')}</div></div>` : '';
+      }).join('') || '<p class="mon-muted">No common tools detected.</p>';
     };
     await (SECTIONS.some(([key]) => key === initialSection) ? showSection(initialSection) : showHub());
   }

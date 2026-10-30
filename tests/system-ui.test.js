@@ -6,7 +6,7 @@ const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
 function fixture(role = 'admin') {
-  const dom = new JSDOM('<button id="top-bar-back" hidden></button><div id="main-content"></div>', { runScripts: 'dangerously' });
+  const dom = new JSDOM('<button id="top-bar-back" hidden></button><div id="top-bar-actions"></div><div id="main-content"></div>', { runScripts: 'dangerously' });
   const win = dom.window;
   win.eval(fs.readFileSync(path.join(__dirname, '../public/js/system.js'), 'utf8'));
   const calls = [], notices = [], forgotten = [];
@@ -15,6 +15,7 @@ function fixture(role = 'admin') {
   const state = { activeHostId: 'peer-one', user: { id: 'owner', role }, hosts: [{ id: 'peer-one', name: 'First machine' }] };
   win.CitadelSystem.init({ state, escapeHtml: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'),
     openModal: value => { dialog = value; }, showToast: value => notices.push(value), forgetTerminal: (...args) => forgotten.push(args), installAgent() {},
+    setToolbar: toolbar => win.document.getElementById('top-bar-actions').replaceChildren(toolbar),
     setDetailNavigation: (label, onBack) => {
       const button = win.document.getElementById('top-bar-back');
       button.hidden = !onBack;
@@ -127,20 +128,34 @@ test('leaving System invalidates a pending confirmation', async () => {
 });
 
 const tick = (ms = 20) => new Promise(resolve => setTimeout(resolve, ms));
-const SECTION_IDS = ['processes', 'workspace', 'tools'];
+const SECTION_IDS = ['processes', 'workspace', 'agents', 'tools'];
 const processRows = doc => [...doc.querySelectorAll('#system-processes-body tbody tr')].map(row => row.querySelector('[data-label="Process"]')?.textContent);
 
-test('System opens on three summary cards, with no tabs and no mutations', async () => {
+test('a captured header Refresh is inert after leaving System', async () => {
+  const f = fixture();
+  try {
+    await f.win.CitadelSystem.render();
+    const refresh = f.win.document.querySelector('#system-refresh').onclick;
+    f.win.CitadelSystem.dispose();
+    const before = f.calls.length;
+    await refresh();
+    assert.equal(f.calls.length, before);
+  } finally { f.close(); }
+});
+
+test('System opens on four summary cards, with no tabs and no mutations', async () => {
   const f = fixture();
   try {
     await f.win.CitadelSystem.render();
     const doc = f.win.document, pane = doc.querySelector('#system-management');
     assert.equal(pane.className, 'management-screen system-screen');
+    assert.ok(doc.querySelector('#top-bar-actions #system-refresh'), 'host controls live in the shell, not above the grid');
+    assert.equal(pane.firstElementChild.id, 'system-content');
     assert.equal(doc.querySelector('[role="tablist"], [role="tab"], [data-system-tab], .mon-tabs'), null);
     const cards = [...doc.querySelectorAll('nav.system-cards[aria-label="System sections"] > button.system-card')];
     assert.deepEqual(cards.map(card => card.dataset.systemSection), SECTION_IDS);
-    assert.deepEqual(cards.map(card => card.querySelector('strong').textContent), ['Processes', 'Terminals & VS Code', 'Tools']);
-    assert.deepEqual(cards.map(card => card.querySelector('[data-system-summary]').textContent), ['3 running', '1 terminal · VS Code running', '0 AI agents · 1 tool']);
+    assert.deepEqual(cards.map(card => card.querySelector('strong').textContent), ['Processes', 'Terminals & VS Code', 'AI coding agents', 'Installed tools']);
+    assert.deepEqual(cards.map(card => card.querySelector('[data-system-summary]').textContent), ['3 running', '1 terminal · VS Code running', '0 AI agents', '1 tool']);
     assert.equal(doc.querySelector('#top-bar-back').hidden, true);
     assert.equal(doc.querySelector('[data-process], [data-stop-terminal], #system-stop-editor'), null, 'details load only when opened');
     assert.equal(f.calls.filter(call => call.method).length, 0);
@@ -156,18 +171,44 @@ test('opening a card shows its detail and Back returns to the cards', async () =
     doc.querySelector('[data-system-section="workspace"]').click();
     await tick();
     const detail = doc.querySelector('[data-system-detail="workspace"]');
-    assert.equal(doc.getElementById(detail.getAttribute('aria-labelledby')).textContent, 'Terminals & VS Code');
+    const heading = doc.getElementById(detail.getAttribute('aria-labelledby'));
+    assert.equal(heading.textContent, 'Terminals & VS Code');
+    assert.ok(heading.closest('.settings-screen-head'), 'detail headings align with Settings outside the card');
+    assert.equal(detail.contains(heading), false);
     assert.ok(detail.querySelector('[data-stop-terminal]'));
     assert.ok(detail.querySelector('#system-stop-editor'));
     assert.equal(doc.querySelector('#top-bar-back').hidden, false);
     doc.querySelector('#top-bar-back').click();
     await tick();
-    assert.equal(doc.querySelectorAll('.system-card').length, 3);
+    assert.equal(doc.querySelectorAll('.system-card').length, 4);
     assert.equal(doc.querySelector('[data-system-detail]'), null);
     doc.querySelector('[data-system-section="tools"]').click();
     await tick();
-    assert.match(doc.querySelector('#system-tools-body').textContent, /AI coding agents[\s\S]*Codex[\s\S]*Installed tools[\s\S]*git/);
+    assert.match(doc.querySelector('#system-tools-body').textContent, /git/);
+    assert.equal(doc.querySelector('[data-agent]'), null);
+    doc.querySelector('#top-bar-back').click();
+    await tick();
+    doc.querySelector('[data-system-section="agents"]').click();
+    await tick();
+    assert.match(doc.querySelector('#system-agents-body').textContent, /Codex/);
+    assert.equal(doc.querySelector('#system-tools-body'), null);
     assert.equal(f.calls.filter(call => call.method).length, 0);
+  } finally { f.close(); }
+});
+
+test('agents and installed tools load independently', async () => {
+  const f = fixture();
+  try {
+    f.failing.add('/system/integrations');
+    await f.win.CitadelSystem.render('tools');
+    assert.match(f.win.document.querySelector('#system-tools-body').textContent, /git/);
+    assert.equal(f.calls.some(call => call.url.endsWith('/system/integrations')), false);
+    f.failing.clear();
+    f.failing.add('/system/tools');
+    f.calls.length = 0;
+    await f.win.CitadelSystem.render('agents');
+    assert.match(f.win.document.querySelector('#system-agents-body').textContent, /Codex/);
+    assert.equal(f.calls.some(call => call.url.endsWith('/system/tools')), false);
   } finally { f.close(); }
 });
 
@@ -177,7 +218,7 @@ test('hub summaries and detail mounts fail independently', async () => {
   try {
     await f.win.CitadelSystem.render();
     const summaries = [...f.win.document.querySelectorAll('[data-system-summary]')].map(node => node.textContent);
-    assert.deepEqual(summaries, ['3 running', 'Unavailable', '0 AI agents · 1 tool']);
+    assert.deepEqual(summaries, ['3 running', 'Unavailable', '0 AI agents', '1 tool']);
     f.win.document.querySelector('[data-system-section="workspace"]').click();
     await tick();
     const doc = f.win.document;
@@ -249,7 +290,7 @@ test('a stop confirmed after returning to the hub refreshes the summaries instea
     const before = f.calls.length;
     await f.dialog().onConfirm();
     assert.equal(f.calls.slice(before).some(call => !call.method && call.url.endsWith('/terminals')), true);
-    assert.equal(doc.querySelectorAll('.system-card').length, 3);
+    assert.equal(doc.querySelectorAll('.system-card').length, 4);
   } finally { f.close(); }
 });
 

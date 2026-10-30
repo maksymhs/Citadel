@@ -332,14 +332,14 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         },
       };
       win.CitadelSystem.init(ctx);
-      await win.CitadelSystem.render('tools');
+      await win.CitadelSystem.render('agents');
       const buttons = [...win.document.querySelectorAll('[data-agent]')];
       assert.equal(buttons.length, 4);
       for (const button of buttons) button.click();
       assert.deepEqual(calls.map((args) => args[3]), ['reinstall', 'remove', 'reinstall', 'install']);
       assert.match(win.document.body.textContent, /Daemon package missing/);
       ctx.state.user.role = 'user';
-      await win.CitadelSystem.render('tools');
+      await win.CitadelSystem.render('agents');
       assert.ok([...win.document.querySelectorAll('[data-agent]')].every((button) => button.disabled));
     } finally { toolsDom.window.close(); }
   });
@@ -358,8 +358,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await sleep(800);
       assert.ok(w.document.getElementById('main-content').innerHTML.length > 100, `${view} rendered nothing`);
       if (view === 'system') {
-        assert.deepEqual([...w.document.querySelectorAll('[data-system-section]')].map(section => section.dataset.systemSection), ['processes', 'workspace', 'tools']);
-        assert.equal(w.document.querySelector('[data-system-tab], [role="tab"]'), null, 'System shows three section cards, not tabs');
+        assert.deepEqual([...w.document.querySelectorAll('[data-system-section]')].map(section => section.dataset.systemSection), ['processes', 'workspace', 'agents', 'tools']);
+        assert.equal(w.document.querySelector('[data-system-tab], [role="tab"]'), null, 'System shows four section cards, not tabs');
       }
       if (view === 'dashboard') assert.equal(w.document.querySelector('[data-mon-tab], #mon-tabs, .mon-tabs'), null, 'Dashboard has no Overview tab');
     }
@@ -373,17 +373,38 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       ? Promise.resolve({ ok: true, json: async () => ({ integrations: { agents: [] } }) })
       : originalFetch(url, options);
     try {
+      const styles = (selector, properties) => {
+        const computed = w.getComputedStyle(w.document.querySelector(selector));
+        return properties.map(property => computed[property]);
+      };
+      const gridProperties = ['display', 'gridTemplateColumns', 'gap'];
+      const tileProperties = ['display', 'minHeight', 'padding', 'gap', 'borderRadius', 'backgroundColor'];
       w.document.querySelector('.nav-item[data-view="settings"]').click();
       await sleep(400);
+      const settingsGrid = styles('.settings-tiles', gridProperties);
+      const settingsTile = styles('.settings-tile', tileProperties);
+      const iconProperties = ['width', 'height', 'borderRadius', 'backgroundColor', 'color'];
+      const settingsIcon = styles('.settings-tile-icon', iconProperties);
+      const settingsLabel = styles('.settings-tile-text strong', ['fontSize', 'fontWeight', 'lineHeight']);
+      assert.deepEqual(settingsIcon.slice(0, 3), ['40px', '40px', '10px']);
+      const settingsWidth = styles('.settings-screen', ['maxWidth', 'marginLeft', 'marginRight']);
       w.document.querySelector('[data-settings-section="machines"]').click();
       await sleep(400);
+      const settingsHeading = styles('.settings-screen-head h2', ['fontSize', 'fontWeight']);
       const back = w.document.getElementById('top-bar-back');
       const arrow = back.innerHTML;
       assert.equal(back.hidden, false);
       w.document.querySelector('.nav-item[data-view="system"]').click();
       await sleep(400);
       assert.equal(back.hidden, true);
-      for (const [id, title] of [['processes', 'Processes'], ['workspace', 'Terminals & VS Code'], ['tools', 'Tools']]) {
+      assert.deepEqual(styles('.system-cards', gridProperties), settingsGrid, 'both hubs use the same grid');
+      assert.deepEqual(styles('.system-card', tileProperties), settingsTile, 'both hubs share card dimensions and surfaces');
+      assert.deepEqual(styles('.system-card .settings-tile-icon', iconProperties), settingsIcon, 'both hubs share icon surfaces');
+      assert.deepEqual(styles('.system-card-text strong', ['fontSize', 'fontWeight', 'lineHeight']), settingsLabel, 'both hubs share label typography');
+      assert.deepEqual(styles('.management-screen', ['maxWidth', 'marginLeft', 'marginRight']), settingsWidth);
+      assert.equal(w.document.querySelector('#system-management').firstElementChild.id, 'system-content', 'no extra toolbar offsets the System grid');
+      assert.ok(w.document.querySelector('#top-bar-actions #system-refresh'));
+      for (const [id, title] of [['processes', 'Processes'], ['workspace', 'Terminals & VS Code'], ['agents', 'AI coding agents'], ['tools', 'Installed tools']]) {
         w.document.querySelector(`[data-system-section="${id}"]`).click();
         await sleep(400);
         assert.equal(w.document.getElementById('top-bar-back'), back, 'the shell owns a single Back button');
@@ -392,10 +413,12 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         assert.equal(back.innerHTML, arrow, 'same icon as Settings, without a separate text button');
         assert.equal(w.document.getElementById('system-back'), null);
         assert.equal(w.document.getElementById('top-bar-title').textContent, `System · ${title}`);
+        assert.deepEqual(styles('.system-detail-head h2', ['fontSize', 'fontWeight']), settingsHeading);
+        assert.equal(w.document.querySelector('.system-detail-head').nextElementSibling.dataset.systemDetail, id);
         back.click();
         await sleep(400);
         assert.equal(back.hidden, true);
-        assert.equal(w.document.querySelectorAll('.system-card').length, 3);
+        assert.equal(w.document.querySelectorAll('.system-card').length, 4);
         assert.equal(w.document.getElementById('top-bar-title').textContent, 'System');
       }
       w.document.querySelector('[data-system-section="processes"]').click();
@@ -629,6 +652,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.ok(w.document.querySelector('.open-workspace-btn'), 'dismissal preserves registered projects');
     assert.ok(fs.existsSync(path.join(data, 'projects', 'ui-later')));
     await w.CitadelBrowserEditor.open({ id: 'fixture-project', name: 'Project', path: '/srv/a # b' });
+    assert.equal(w.getComputedStyle(w.document.querySelector('.browser-editor')).backgroundColor, 'rgb(0, 0, 0)');
+    assert.equal(w.getComputedStyle(w.document.querySelector('.browser-editor-body')).backgroundColor, 'rgb(0, 0, 0)', 'VS Code startup canvas stays black');
     assert.ok(w.document.getElementById('editor-back'));
     assert.ok(w.document.getElementById('editor-install'));
     assert.equal(w.document.getElementById('editor-ssh-host'), null);
