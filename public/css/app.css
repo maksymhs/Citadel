@@ -210,9 +210,8 @@ html.is-mobile-ui #app-container {
 
 /* Machine selector pinned above the navigation sections. */
 .host-selector {
-  padding: 0 2px 10px 2px;
-  border-bottom: 1px solid var(--border-color);
-  margin-bottom: 6px;
+  padding: 0 2px;
+  margin-bottom: 8px;
 }
 
 .host-current {
@@ -220,51 +219,48 @@ html.is-mobile-ui #app-container {
   align-items: center;
   gap: 9px;
   width: 100%;
-  padding: 9px 12px;
-  background-color: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+  min-height: 40px;
+  padding: 9px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--text-primary);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   text-align: left;
+  transition: background-color .15s ease;
 }
 
 .host-current:hover {
-  border-color: var(--accent-color);
+  background-color: var(--bg-tertiary);
+}
+
+.host-current:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
 }
 
 .host-current-text {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
 }
 
-.host-current-name,
-.host-current-url {
+.host-current-name {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.host-current-url {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-}
-
 .host-chevron {
   color: var(--text-muted);
-  font-size: 11px;
+  flex-shrink: 0;
 }
 
 .host-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background-color: var(--text-muted);
   flex-shrink: 0;
@@ -272,7 +268,6 @@ html.is-mobile-ui #app-container {
 
 .host-dot-on {
   background-color: var(--success-color, #22c55e);
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
 }
 
 .host-dot-off {
@@ -280,27 +275,7 @@ html.is-mobile-ui #app-container {
 }
 
 
-/* Machine selector: icon tile with status dot, live/offline state, richer menu */
-.host-current { padding: 8px 10px; transition: border-color .15s ease, background-color .15s ease; }
-.host-current-on { border-color: color-mix(in srgb, var(--success-color) 35%, var(--border-color)); }
-.host-current-off { border-color: color-mix(in srgb, var(--danger-color) 40%, var(--border-color)); }
-.host-icon {
-  position: relative; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px; border-radius: 9px; background: var(--bg-primary); color: var(--text-secondary);
-}
-.host-current-on .host-icon { color: var(--success-color); background: var(--success-bg); }
-.host-current-off .host-icon { color: var(--danger-color); background: var(--danger-bg); }
-.host-icon .host-dot { position: absolute; right: -3px; bottom: -3px; width: 10px; height: 10px; border: 2px solid var(--bg-tertiary); box-sizing: border-box; }
-.host-dot-on { animation: host-pulse 2.4s ease-out infinite; }
 .host-dot-unknown { background-color: var(--text-muted); }
-@keyframes host-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success-color) 55%, transparent); }
-  70%, 100% { box-shadow: 0 0 0 6px transparent; }
-}
-@media (prefers-reduced-motion: reduce) { .host-dot-on { animation: none; } }
-.host-status-text { font-weight: 600; color: var(--text-secondary); }
-.host-current-on .host-status-text { color: var(--success-color); }
-.host-current-off .host-status-text { color: var(--danger-color); }
 
 .ctx-header { padding: 6px 10px 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
 .ctx-item.ctx-host { display: flex; align-items: center; gap: 10px; min-width: 260px; }

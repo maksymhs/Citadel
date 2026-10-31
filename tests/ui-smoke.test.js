@@ -119,6 +119,20 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
+  test('machine selector is compact and preserves the machine menu', () => {
+    const selector = w.document.getElementById('host-selector-btn');
+    assert.equal(selector.type, 'button');
+    assert.ok(selector.querySelector('.host-current-name').textContent.trim());
+    assert.match(selector.getAttribute('aria-label'), /Switch machine — .+ — (Online|Offline|Checking…)/);
+    assert.match(selector.title, /Online|Offline|Checking…/);
+    assert.ok(selector.querySelector('.host-dot[aria-hidden="true"]'));
+    assert.equal(selector.querySelector('.host-icon, .host-current-url'), null);
+    selector.click();
+    assert.ok(w.document.querySelector('.ctx-host-active'));
+    assert.ok(w.document.querySelector('.ctx-host .ctx-detail'));
+    w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+
   test('sidebar toggle keeps desktop preference separate from mobile overlay and restores focus', async () => {
     const sidebar = w.document.getElementById('app-sidebar');
     const toggle = w.document.getElementById('mobile-menu-btn');
@@ -496,13 +510,14 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       health: { loadPerCore: 0.1, load1: 0.1, cores: 2, uptimeSeconds: 60, memory: { usedPercent: 20 }, disk: { usedPercent: 30 } } };
     w.fetch = (url, options) => {
       calls.push(String(url));
+      if (options?.method && options.method !== 'GET') calls.push(`${options.method} ${url}`);
       const result = String(url) === '/api/monitor/overview' ? { hosts: [host] }
         : String(url).includes('/api/monitor/hosts/local/history') ? { points: [], events: [], uptime: 100 }
           : String(url) === '/api/system/integrations' ? { integrations: { agents: [] } } : null;
       return result ? Promise.resolve({ ok: true, json: async () => result }) : originalFetch(url, options);
     };
     try {
-      for (const metric of ['cpu', 'memory', 'disk', 'audit', 'updates']) {
+      for (const metric of ['cpu', 'memory', 'terminals', 'disk', 'audit', 'updates']) {
         w.document.querySelector('.nav-item[data-view="dashboard"]').click();
         await sleep(500);
         const buttons = w.document.querySelectorAll(`[data-metric="${metric}"]`);
@@ -514,6 +529,10 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
           assert.ok(w.document.querySelector('[data-system-detail="processes"]'), `${metric}: ${w.document.getElementById('top-bar-title').textContent} · ${w.document.getElementById('main-content').textContent.slice(0, 300)}`);
           assert.equal(w.document.querySelector(`[data-sort="${metric}"]`).getAttribute('aria-pressed'), 'true');
           assert.ok(calls.some(url => url.includes(`/system/processes?limit=50&sort=${metric}`)));
+        } else if (metric === 'terminals') {
+          assert.ok(w.document.querySelector('[data-system-detail="workspace"]'));
+          assert.ok(w.document.getElementById('system-terminals-body'));
+          assert.equal(calls.some(url => url.includes('/terminals') && url.includes('DELETE')), false);
         } else if (metric === 'disk') {
           assert.match(w.document.querySelector('.disk-view').textContent, /Find what is taking space/);
           assert.equal(calls.some(url => url.includes('/files/usage')), false, 'opening Analyze does not scan');

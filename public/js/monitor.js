@@ -322,7 +322,7 @@
         </div>
         <div class="mon-kpis">
           ${kpiTile(esc, 'Uptime', fmtDuration(hl.uptimeSeconds), 'since last boot')}
-          ${kpiTile(esc, 'Terminals', hl.activeTerminals ?? 0, 'persistent sessions')}
+          ${kpiTile(esc, 'Terminals', hl.activeTerminals ?? 0, 'persistent sessions', null, 'terminals')}
           ${hl.temperature ? kpiTile(esc, hl.temperature.source === 'battery' ? 'Battery temp' : 'CPU temp', `${Math.round(hl.temperature.celsius)} °C`, 'current', hl.temperature.celsius >= 85 ? 'crit' : hl.temperature.celsius >= 70 ? 'warn' : 'ok') : ''}
           ${kpiTile(esc, 'Availability 24h', av24 === null || av24 === undefined ? '—' : `${av24}%`, 'reachable', uptimeTone(av24), 'audit')}
           ${kpiTile(esc, 'Availability 7d', av7 === null || av7 === undefined ? '—' : `${av7}%`, 'reachable', uptimeTone(av7), 'audit')}

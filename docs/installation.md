@@ -167,6 +167,12 @@ Dashboard metric cards are shortcuts for the selected machine: **CPU** and
 **Memory** open System processes sorted accordingly; **Disk** opens Files → Analyze
 (Find what is taking space), without starting a scan. Both **Availability** cards
 open the **Audit** tab, and **Version** opens **Settings → Updates** without updating.
+**Terminals** opens **System → Terminals & VS Code** to review persistent sessions
+and stop them using the existing confirmation controls; opening the card stops nothing.
+The sidebar machine selector uses a single line with a static status dot; the
+full address remains in its tooltip and machine menu, with status announced to screen readers.
+Visual-viewport height adjustments are limited to touch devices at normal pinch
+scale, preserving keyboard handling without shrinking the app during mouse/desktop zoom.
 
 File Explorer initially opens the selected machine's configured `PROJECTS_DIR`
 (`/srv/citadel/projects` on this installation). Breadcrumbs still allow browsing

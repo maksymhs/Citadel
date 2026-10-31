@@ -859,16 +859,12 @@
     const statusText = { on: 'Online', off: 'Offline', unknown: 'Checking…' }[status];
     return `
       <div class="host-selector">
-        <button class="host-current host-current-${status}" id="host-selector-btn" title="Switch machine${address ? ` — ${escapeHtml(address)}` : ''}">
-          <span class="host-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
-            <span class="host-dot host-dot-${status}"></span>
-          </span>
+        <button type="button" class="host-current host-current-${status}" id="host-selector-btn" aria-label="Switch machine — ${escapeHtml(activeHostName())} — ${statusText}" title="${statusText}${address ? ` — ${escapeHtml(address)}` : ''}">
+          <span class="host-dot host-dot-${status}" aria-hidden="true"></span>
           <span class="host-current-text">
             <span class="host-current-name">${escapeHtml(activeHostName())}</span>
-            <span class="host-current-url"><b class="host-status-text">${statusText}</b>${address ? ` · ${escapeHtml(address)}` : ''}</span>
           </span>
-          <span class="host-chevron">▾</span>
+          <svg class="host-chevron" aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 6 3 3 3-3"/></svg>
         </button>
       </div>`;
   }
@@ -1337,6 +1333,7 @@
       openMetric: (hostId, target) => {
         if (state.activeHostId !== hostId || state.currentView !== 'dashboard') return;
         if (target === 'cpu' || target === 'memory') navigateTo('system', { section: 'processes', sort: target });
+        else if (target === 'terminals') navigateTo('system', { section: 'workspace' });
         else if (target === 'disk') navigateTo('files', { disk: true });
         else if (target === 'audit') { state.activityTab = 'audit'; saveUiState({ activityTab: 'audit' }); navigateTo('activity'); }
         else if (target === 'updates') openSettingsAt('updates');
@@ -2271,6 +2268,12 @@
     const root = document.documentElement;
     const apply = () => {
       if (!vv) return;
+      const touch = (navigator.maxTouchPoints || 0) > 0 || window.matchMedia('(pointer: coarse)').matches;
+      if (!touch || (vv.scale && vv.scale !== 1)) {
+        root.style.removeProperty('--app-height');
+        root.style.removeProperty('--app-top');
+        return;
+      }
       root.style.setProperty('--app-height', `${Math.round(vv.height)}px`);
       root.style.setProperty('--app-top', `${Math.round(vv.offsetTop)}px`);
     };

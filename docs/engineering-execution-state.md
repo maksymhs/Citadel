@@ -877,3 +877,10 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Bumped package/lock versions to 0.66.0, all frontend asset tokens to v0660 and the README Latest table; generated CHANGELOG.md from the local release tag.
 - Implementation verification: npm test completed 689 tests (688 passed, 0 failed, 1 skipped); lint and diff checks passed. No real-browser/mobile visual validation (Chrome unavailable).
 - Local release only: no push, GitHub publication, live-host update or restart.
+
+## 185. Minimal machine selector, Dashboard terminal shortcut and zoom sizing
+- Simplified the sidebar machine selector to one line with a static status dot and chevron; removed the icon tile, colored border, pulse and duplicated status/address line. Status remains available to screen readers and address stays in the tooltip/menu; keyboard focus remains visible.
+- Dashboard Terminals opens System → Terminals & VS Code for the selected machine. It does not stop sessions; existing Stop confirmation and permission checks remain unchanged.
+- Visual-viewport sizing now applies only to touch devices at normal pinch scale. Mouse/desktop zoom and touch pinch zoom clear keyboard-specific dimensions instead of shrinking/offsetting the app into exposed background.
+- Added selector/menu, terminal shortcut and viewport zoom regression coverage, documented behavior and changed asset tokens to v0660-polish. No real macOS browser or mobile visual verification; the reported black area has not been reproduced on macOS hardware. No commit, release, push or live-host restart.
+- Verification: focused selector/sidebar/dashboard/Gateway smoke tests passed 5/5; remote metric and visual-viewport tests passed 2/2. npm test completed 691 tests: 690 passed, 0 failed, 1 skipped (/tmp/citadel-polish-full.log). npm run lint and git diff --check passed.

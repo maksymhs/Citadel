@@ -18,12 +18,12 @@ test('remote machine metric buttons route all destinations with the correct host
       localApi: async url => url === '/api/monitor/overview' ? { hosts: [host] } : { points: [], events: [], uptime: 100 },
     }, host.id);
     const buttons = [...win.document.querySelectorAll('button[data-metric]')];
-    assert.deepEqual(buttons.map(button => button.dataset.metric), ['cpu', 'memory', 'disk', 'audit', 'audit', 'updates']);
+    assert.deepEqual(buttons.map(button => button.dataset.metric), ['cpu', 'memory', 'disk', 'terminals', 'audit', 'audit', 'updates']);
     for (const button of buttons) button.click();
     assert.deepEqual(opened, buttons.map(button => [host.id, button.dataset.metric]));
     const oldClick = buttons[0].onclick;
     win.document.getElementById('dash-machine-pane').remove();
     oldClick();
-    assert.equal(opened.length, 6);
+    assert.equal(opened.length, 7);
   } finally { win.close(); }
 });
