@@ -884,3 +884,10 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Visual-viewport sizing now applies only to touch devices at normal pinch scale. Mouse/desktop zoom and touch pinch zoom clear keyboard-specific dimensions instead of shrinking/offsetting the app into exposed background.
 - Added selector/menu, terminal shortcut and viewport zoom regression coverage, documented behavior and changed asset tokens to v0660-polish. No real macOS browser or mobile visual verification; the reported black area has not been reproduced on macOS hardware. No commit, release, push or live-host restart.
 - Verification: focused selector/sidebar/dashboard/Gateway smoke tests passed 5/5; remote metric and visual-viewport tests passed 2/2. npm test completed 691 tests: 690 passed, 0 failed, 1 skipped (/tmp/citadel-polish-full.log). npm run lint and git diff --check passed.
+
+## 186. Release v0.67.0
+- Packages the minimal single-line machine selector, Dashboard Terminals shortcut to System management and viewport sizing fix for desktop/pinch zoom.
+- Bumped package/lock versions to 0.67.0, all 17 frontend asset tokens to v0670 and README Latest; generated CHANGELOG.md from the local release tag.
+- Implementation verification: npm test completed 691 tests (690 passed, 0 failed, 1 skipped); focused smoke passed 5/5 and metric/viewport tests passed 2/2. No real macOS/mobile visual verification.
+- Local release only: no push, GitHub publication, live-host update or restart.
+- Release verification: package/lock versions agree, all 17 asset tokens are v0670, focused metric/viewport tests passed 2/2 (/tmp/citadel-v0670-focused.log), npm run lint and git diff --check passed.

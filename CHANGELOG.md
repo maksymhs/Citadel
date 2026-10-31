@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.67.0](https://github.com/maksymhs/Citadel/releases/tag/v0.67.0) · 2026-10-31
+
+### Added
+
+- **panel**: Simplify machine selector and link dashboard terminals
+
 ## [0.66.0](https://github.com/maksymhs/Citadel/releases/tag/v0.66.0) · 2026-10-30
 
 ### Added
