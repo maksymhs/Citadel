@@ -13,6 +13,7 @@ Self-hosted, lightweight and secure. Runs on a VPS, a Mac or a spare laptop.
 ![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20WSL2-444?style=flat-square)
 ![RAM](https://img.shields.io/badge/RAM-512%20MB-f59e0b?style=flat-square)
 
+[Website](https://maksym.site/citadel/) ·
 [Quick start](#-quick-start) ·
 [Features](#-features) ·
 [CLI](#-the-citadel-cli) ·
@@ -47,18 +48,26 @@ Self-hosted, lightweight and secure. Runs on a VPS, a Mac or a spare laptop.
 Run **Claude Code**, **Codex CLI**, **OpenCode**, **Antigravity**, **Kilo Code**, **Qwen Code** or your own binaries in persistent terminals. Missing agents install with one click, once for every user.
 
 </td>
-<td width="50%" valign="top">
+</tr>
+<tr>
+<td valign="top">
 
-### 🔀 Optional AI Gateway
-Connect Claude and ChatGPT separately, choose discovered models for planning, execution and background work, then route new conversations to **Claude**, **ChatGPT** or opt-in **Auto** fallback. Provider-reported usage windows and reset times appear when available. Experimental; account access and model compatibility are not guaranteed. [Setup and limitations →](docs/ai-gateway.md)
+### 📁 Projects & Git
+Register, create, import and clone repositories with live branch status. Connect GitHub or GitLab and clone private repos in one click. Each workspace offers **Terminal** or optional [browser VS Code](docs/browser-editor.md), with remembered modes and a non-destructive Back arrow. VS Code loads on a black background.
+
+</td>
+<td valign="top">
+
+### ⚙️ System management
+Five focused sections: **Processes**, **Terminals & VS Code**, **AI coding agents**, **Installed tools** and **Activity & Audit**. Sort processes by CPU or memory, manage sessions and review audit/service logs. Destructive admin controls require confirmation; process rows stay compact on mobile.
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-### 📁 Projects & Git
-Register, create, import and clone repositories with live branch status. Connect GitHub or GitLab and clone your private repos in one click. Open optional [browser VS Code](docs/browser-editor.md) without SSH and return to Citadel with one button. Fold the sidebar with the header toggle for more workspace space; desktop remembers your choice, while mobile keeps its overlay.
+### 🔀 Optional AI Gateway
+Connect Claude and ChatGPT separately, choose discovered models for planning, execution and background work, then route new conversations to **Claude**, **ChatGPT** or opt-in **Auto** fallback. Provider-reported usage windows and reset times appear when available. Experimental; account access and model compatibility are not guaranteed. [Setup and limitations →](docs/ai-gateway.md)
 
 </td>
 <td valign="top">
@@ -72,13 +81,13 @@ One encrypted store (AES-256-GCM) for git tokens, env vars and SSH keys. Termina
 <td valign="top">
 
 ### 🌐 Paired machines
-Pair Citadels with a QR code and switch between them from one URL. Survives rotating Cloudflare Quick Tunnel addresses, mesh-pairs automatically and propagates updates.
+Pair Citadels with a QR code and switch between them from one URL using a minimal machine selector with a status dot. Survives rotating Cloudflare Quick Tunnel addresses, mesh-pairs automatically and supports sequential updates.
 
 </td>
 <td valign="top">
 
 ### 📊 Health & alerts
-Online/offline, CPU, memory, disk, latency and 24 h / 7 d availability for every machine. Alerts to **webhook**, **ntfy** or **Telegram**, including security events.
+Online/offline, CPU, memory, disk, latency and 24 h / 7 d availability for every machine. Dashboard metrics link directly to processes, terminals, disk analysis, audit and updates. Alerts to **webhook**, **ntfy** or **Telegram**, including security events.
 
 </td>
 </tr>
@@ -92,7 +101,7 @@ A pull-based work queue so one orchestrator agent can split work across nodes, w
 <td valign="top">
 
 ### 🗂️ Files & disk cleanup
-Browse and edit the host filesystem, analyse disk usage and run quick cleanups with per-item selection.
+Start in the selected machine's configured projects directory, browse and edit files, analyse disk usage and run quick cleanups with per-item selection. Opening Analyze does not start a scan.
 
 </td>
 </tr>
@@ -100,7 +109,7 @@ Browse and edit the host filesystem, analyse disk usage and run quick cleanups w
 <td valign="top">
 
 ### 🔭 Observability
-Event trace plus periodic resource samples, a live sparkline, a filterable timeline and JSON/CSV export.
+Event trace plus periodic resource samples, a live sparkline, a filterable timeline and JSON/CSV export. Find Activity, Audit and Service log together under **System → Activity & Audit**.
 
 </td>
 <td valign="top">
@@ -121,6 +130,20 @@ Fastify + SQLite (WAL). Runs on 512 MB of RAM. Plugin system with fault isolatio
 - **Idempotent installer** and systemd unit (Debian/Ubuntu), `launchd` on macOS.
 
 </details>
+
+### Find your way around
+
+**System** manages the selected machine; **Settings** handles configuration. Both use matching card hubs and the same top-bar Back arrow. Fold the sidebar for more workspace space; desktop remembers your choice, while mobile uses an overlay. Keyboard-specific viewport sizing stays out of the way during desktop and pinch zoom.
+
+| Dashboard shortcut | Opens |
+| --- | --- |
+| CPU / Memory | System → Processes, sorted by the selected resource |
+| Terminals | System → Terminals & VS Code, with confirmed Stop controls |
+| Disk | Files → Analyze: “Find what is taking space”, without starting a scan |
+| Availability 24 h / 7 d | System → Activity & Audit → Audit |
+| Version | Settings → Updates, without applying an update |
+
+These shortcuts inspect the selected machine; opening them does not stop sessions or update software. See [panel navigation and controls](docs/installation.md#system-management).
 
 ## 🔒 Secure by default
 
@@ -260,7 +283,7 @@ through the same connected Claude/ChatGPT accounts. OpenCode supports separate
 Plan/Build models with automatic context compaction and tool-output pruning.
 
 Administrators can install, reinstall/update and remove managed AI CLI launchers
-from **Machines → Tools**. Releases are retained for active sessions; see
+from **System → AI coding agents**; **Installed tools** is a separate inventory. Launcher releases are retained for active sessions; see
 [agent management](docs/installation.md#managing-ai-cli-agents-from-the-panel).
 
 Contributing, with a human or an AI agent? [AGENTS.md](AGENTS.md) explains how the project is organised, how to make common changes, which docs to update and how releases work.
