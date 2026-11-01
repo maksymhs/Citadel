@@ -19,7 +19,9 @@ inventing their meaning. A single account does not need an extra account heading
 Claude Code, OpenCode and Codex CLI each have an independent checkbox. Existing
 configurations keep Claude Code selected; OpenCode and Codex remain opt-in.
 Unselected tools use their native configuration. Save client/model edits with
-**Save changes**, then open a new project terminal. The separate **Enable gateway**
+**Save changes**, then open a new project terminal. Unchecking a tool or turning
+the gateway off takes effect on the next `claude`, `opencode` or `codex` you type,
+even in a terminal that is already open. The separate **Enable gateway**
 power switch applies immediately and does not save pending edits. Context and
 port settings are under **Advanced settings**; saved context budgets are preserved.
 
@@ -239,8 +241,15 @@ remains experimental.
 
 ## Disable and disconnect
 
-Disabling stops the proxy and interrupts its dependent sessions; new terminals
-use native mode. A pending Claude authorization is cancelled locally when it is
+Disabling stops the proxy and interrupts its dependent sessions. Project
+terminals start with small `claude`, `opencode` and `codex` launchers ahead of the
+native commands on `PATH`; they read the current settings each time you run a
+tool and start the native CLI unchanged when the gateway is off or that tool is
+unchecked, so open terminals return to native mode without being closed. If the
+gateway is enabled but stopped, the launchers refuse to start rather than quietly
+using native credentials. Turning the gateway on again still needs a new project
+terminal, because a shell that started while it was off has no launchers; shells
+opened before this launcher design also need one reopen. A pending Claude authorization is cancelled locally when it is
 stopped. **Disconnect** removes both gateway accounts from Citadel and cancels
 pending login; it does not sign your native CLIs out or revoke the provider's
 account-side authorization. Enabled gateways resume after a Citadel restart.

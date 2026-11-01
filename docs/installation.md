@@ -133,7 +133,7 @@ for Claude Code in new project terminals (including typing `claude`).
 Independent tool checkboxes select Claude Code, OpenCode and Codex CLI for the
 same connected accounts. Save client activation changes and open a new project terminal before
 running `opencode` or `codex`. Native CLI installations are still required.
-Exit Claude and reopen an existing project terminal after activation. It binds only to loopback,
+Reopen an existing project terminal after activating; unchecking a tool or disabling the gateway returns it to its native configuration immediately, even in open terminals. It binds only to loopback,
 requires no sudo and remains off by default. This experimental integration offers opt-in Auto fallback after both providers are connected. See [setup and limitations](ai-gateway.md).
 
 ### System management

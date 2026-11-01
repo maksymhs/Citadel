@@ -136,18 +136,25 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     }
     // Pinned CLIProxyAPI watches this inode; rename replacement loses its watch.
     fs.writeFileSync(path.join(runtime, 'config.json'), JSON.stringify(proxy), { mode: 0o600 });
-    const codexBinDir = path.join(root, 'launch-bin');
-    if (c.codexEnabled) {
-      fs.mkdirSync(codexBinDir, { recursive: true, mode: 0o700 });
-      if (!fs.lstatSync(codexBinDir).isDirectory() || fs.lstatSync(codexBinDir).isSymbolicLink()) throw new Error('Gateway launch directory must not be a symlink.');
-      fs.chmodSync(codexBinDir, 0o700);
-      const shim = path.join(codexBinDir, 'codex');
-      try { if (!fs.lstatSync(shim).isFile()) throw new Error('Invalid gateway Codex launcher.'); }
+    const binDir = path.join(root, 'launch-bin');
+    fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
+    if (!fs.lstatSync(binDir).isDirectory() || fs.lstatSync(binDir).isSymbolicLink()) throw new Error('Gateway launch directory must not be a symlink.');
+    fs.chmodSync(binDir, 0o700);
+    const launcher = path.resolve(__dirname, '../../scripts/gateway-launch.js');
+    for (const client of ['claude', 'opencode', 'codex']) {
+      const shim = path.join(binDir, client);
+      try { if (!fs.lstatSync(shim).isFile()) throw new Error('Invalid gateway launcher.'); }
       catch (err) { if (err.code !== 'ENOENT') throw err; }
-      const launcher = path.resolve(__dirname, '../../scripts/gateway-launch.js');
-      fs.writeFileSync(shim, `#!${process.execPath}\nrequire(${JSON.stringify(launcher)}).codexShell();\n`, { mode: 0o700 });
+      fs.writeFileSync(shim, `#!${process.execPath}\nrequire(${JSON.stringify(launcher)}).clientShim(${JSON.stringify(client)});\n`, { mode: 0o700 });
     }
-    fs.writeFileSync(path.join(runtime, 'launch.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${c.port}`, token: key, planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel, mode: c.mode, aliases: ALIASES, contextTokens: c.contextTokens, claudeEnabled: c.claudeEnabled !== false, opencodeEnabled: Boolean(c.opencodeEnabled), codexEnabled: Boolean(c.codexEnabled), codexBinDir }), { mode: 0o600 });
+    const launchFile = path.join(runtime, 'launch.json');
+    fs.writeFileSync(launchFile, JSON.stringify({ baseUrl: `http://127.0.0.1:${c.port}`, token: key, planningModel: c.planningModel, executionModel: c.executionModel, smallModel: c.smallModel, mode: c.mode, aliases: ALIASES, contextTokens: c.contextTokens, claudeEnabled: c.claudeEnabled !== false, opencodeEnabled: Boolean(c.opencodeEnabled), codexEnabled: Boolean(c.codexEnabled), binDir }), { mode: 0o600 });
+    // Shims resolve this pointer on every run: no pointer means native, so disabling reaches open terminals.
+    if (c.enabled) fs.writeFileSync(path.join(binDir, 'current'), launchFile, { mode: 0o600 });
+    else clearLaunchPointer();
+  }
+  function clearLaunchPointer() {
+    try { fs.rmSync(path.join(root, 'launch-bin', 'current'), { force: true }); } catch { /* nothing to clear */ }
   }
   function spawnGateway(args) {
     const child = spawnImpl(binary, ['--config', path.join(runtime, 'config.json'), '--local-model', ...args], {
@@ -409,6 +416,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
       try {
         if (enabled) { await start(); c.clientKey = config().clientKey; c.enabled = true; write(KEY, JSON.stringify(c)); if (runtime) writeRuntime(); syncBalanceTimer(); }
         else {
+          clearLaunchPointer();
           clearBalanceTimer();
           if (login?.provider === 'claude' && ['waiting_callback', 'exchanging'].includes(login.state)) { clearInterval(loginTimer); login = { provider: 'claude', state: 'failed' }; }
           clearInterval(credentialTimer); const child = processHandle; processHandle = null; await stopChild(child); if (runtime) persistCredentials(); releaseIdleRuntime(); }
@@ -600,6 +608,7 @@ function createGatewayService({ dataDir = DATA_DIR, database = getDatabase, fetc
     return exclusive(async () => {
       await close();
       const c = config(); c.enabled = false; write(KEY, JSON.stringify(c));
+      clearLaunchPointer();
       invalidateDiscovery();
       database().prepare('DELETE FROM app_config WHERE key = ?').run(AUTH_KEY);
       login = null; lastError = null;

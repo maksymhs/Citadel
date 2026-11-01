@@ -53,25 +53,54 @@ function codexLaunch(base, settings, args = []) {
   return { env: { ...base, CITADEL_GATEWAY_TOKEN: settings.token },
     args: [...Object.entries(values).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]), ...args] };
 }
-/** Resolve the native Codex binary outside the private shim PATH, without shell evaluation. */
-function codexShell() {
-  try {
-    const nativePath = process.env.CITADEL_GATEWAY_NATIVE_PATH;
-    const file = process.env.CITADEL_GATEWAY_LAUNCH_FILE;
-    if (!nativePath || !file) throw new Error();
-    const binary = nativePath.split(path.delimiter).filter(Boolean).map(dir => path.resolve(dir, 'codex')).find(candidate => {
-      try {
-        if (fs.realpathSync(candidate) === fs.realpathSync(process.argv[1])) return false;
-        fs.accessSync(candidate, fs.constants.X_OK);
-        return fs.statSync(candidate).isFile();
-      } catch { return false; }
-    });
-    if (!binary) throw new Error();
-    main([file, '--client', 'codex', binary, ...process.argv.slice(2)]);
-  } catch {
-    console.error('Could not find native Codex for AI Gateway. Check its installation and open a new project terminal.');
-    process.exitCode = 1;
+function run(binary, args, env, failure) {
+  const child = spawn(binary, args, { stdio: 'inherit', env });
+  child.on('error', () => { console.error(failure); process.exitCode = 1; });
+  child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => child.kill(signal));
+}
+/** Resolve the native executable on PATH, skipping this shim, without shell evaluation. */
+function nativeBinary(name, self) {
+  const own = fs.realpathSync(self);
+  return (process.env.PATH || '').split(path.delimiter).filter(Boolean).map(dir => path.resolve(dir, name)).find(candidate => {
+    try {
+      if (fs.realpathSync(candidate) === own) return false;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return fs.statSync(candidate).isFile();
+    } catch { return false; }
+  });
+}
+/** A missing pointer means the gateway was disabled; a pointer to unreadable settings means it is enabled but stopped. */
+function shimSettings(self) {
+  let file;
+  try { file = fs.readFileSync(path.join(path.dirname(self), 'current'), 'utf8').trim(); }
+  catch (err) { if (err.code === 'ENOENT') return null; throw err; }
+  if (!path.isAbsolute(file) || !fs.lstatSync(file).isFile()) throw new Error();
+  return { file, settings: JSON.parse(fs.readFileSync(file, 'utf8')) };
+}
+/**
+ * Project shells only put this shim ahead of the native CLI. Deciding at run
+ * time lets Settings changes apply to terminals that are already open: the
+ * shell itself never carries gateway variables that could not be unset later.
+ */
+function clientShim(client) {
+  const self = process.argv[1];
+  const args = process.argv.slice(2);
+  const binary = nativeBinary(client, self);
+  if (!binary) {
+    console.error(`Could not find native ${client}. Check its installation.`);
+    process.exitCode = 127;
+    return;
   }
+  let launch;
+  try { launch = shimSettings(self); } catch {
+    console.error('AI Gateway is enabled but stopped. Restart it in Settings → AI Gateway, or disable it to use the native configuration.');
+    process.exitCode = 1;
+    return;
+  }
+  const active = launch && (client === 'claude' ? launch.settings.claudeEnabled !== false : launch.settings[`${client}Enabled`] === true);
+  if (!active) return run(binary, args, { ...process.env }, `Could not launch ${client}.`);
+  main([launch.file, '--client', client, binary, ...args]);
 }
 function main(input = process.argv.slice(2)) {
   const shellMode = input[0] === '--shell';
@@ -83,28 +112,25 @@ function main(input = process.argv.slice(2)) {
   try {
     const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!['claude', 'opencode', 'codex'].includes(client) || !binary || !settings.token || !/^http:\/\/127\.0\.0\.1:\d+$/.test(settings.baseUrl)) throw new Error();
-    if (shellMode) console.error(`[Citadel] AI Gateway active for this project terminal: stable model aliases; routing at launch: ${settings.mode || 'chatgpt'}. Change routes in Settings → AI Gateway.`);
-    if (!shellMode && (client === 'claude' ? settings.claudeEnabled === false : !settings[`${client}Enabled`])) throw new Error();
     let env = { ...process.env };
-    if (client === 'opencode') env = opencodeEnvironment(env, settings);
-    else if (client === 'claude' && (!shellMode || settings.claudeEnabled !== false)) env = gatewayEnvironment(env, settings);
-    let childArgs = shellMode || client !== 'claude' ? args : ['--model', 'opusplan', ...args];
-    if (client === 'codex') ({ env, args: childArgs } = codexLaunch(env, settings, args));
-    if (shellMode && settings.opencodeEnabled) env = opencodeEnvironment(env, settings);
-    if (shellMode && settings.opencodeEnabled) console.error('[Citadel] OpenCode Gateway active: Plan uses planning, Build uses execution; switch with Tab.');
-    if (shellMode && settings.codexEnabled) {
-      env = { ...env, CITADEL_GATEWAY_NATIVE_PATH: env.PATH, CITADEL_GATEWAY_LAUNCH_FILE: file,
-        PATH: `${settings.codexBinDir}${path.delimiter}${env.PATH || ''}` };
-      console.error('[Citadel] Codex AI Gateway active for this project terminal (Responses).');
+    if (shellMode) {
+      if (!settings.binDir) throw new Error();
+      console.error(`[Citadel] AI Gateway active for this project terminal: stable model aliases; routing at launch: ${settings.mode || 'chatgpt'}. Change routes in Settings → AI Gateway.`);
+      if (settings.opencodeEnabled) console.error('[Citadel] OpenCode Gateway active: Plan uses planning, Build uses execution; switch with Tab.');
+      if (settings.codexEnabled) console.error('[Citadel] Codex AI Gateway active for this project terminal (Responses).');
+      run(binary, args, { ...env, PATH: `${settings.binDir}${path.delimiter}${env.PATH || ''}` }, 'Could not launch agent through AI Gateway.');
+      return;
     }
-    const child = spawn(binary, childArgs, { stdio: 'inherit', env });
-    child.on('error', () => { console.error('Could not launch agent through AI Gateway.'); process.exitCode = 1; });
-    child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
-    for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => child.kill(signal));
+    if (client === 'claude' ? settings.claudeEnabled === false : !settings[`${client}Enabled`]) throw new Error();
+    if (client === 'opencode') env = opencodeEnvironment(env, settings);
+    else if (client === 'claude') env = gatewayEnvironment(env, settings);
+    let childArgs = client === 'claude' ? ['--model', 'opusplan', ...args] : args;
+    if (client === 'codex') ({ env, args: childArgs } = codexLaunch(env, settings, args));
+    run(binary, childArgs, env, 'Could not launch agent through AI Gateway.');
   } catch {
     console.error('AI Gateway launch settings are unavailable. Check Settings → AI Gateway.');
     process.exitCode = 1;
   }
 }
 if (require.main === module) main();
-module.exports = { gatewayEnvironment, opencodeEnvironment, codexLaunch, codexShell };
+module.exports = { gatewayEnvironment, opencodeEnvironment, codexLaunch, clientShim };
