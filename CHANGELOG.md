@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.68.0](https://github.com/maksymhs/Citadel/releases/tag/v0.68.0) · 2026-11-01
+
+### Fixed
+
+- **gateway**: Restore native CLI when disabled
+
 ## [0.67.0](https://github.com/maksymhs/Citadel/releases/tag/v0.67.0) · 2026-10-31
 
 ### Added

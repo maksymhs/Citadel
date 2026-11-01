@@ -222,7 +222,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 | Latest | |
 | --- | --- |
-| [v0.67.0](https://github.com/maksymhs/Citadel/releases/tag/v0.67.0) | Minimal machine selector, Dashboard terminal management shortcut and zoom viewport sizing fix |
+| [v0.68.0](https://github.com/maksymhs/Citadel/releases/tag/v0.68.0) | AI Gateway can be disabled per CLI and open project terminals return to native providers |
 | [v0.66.0](https://github.com/maksymhs/Citadel/releases/tag/v0.66.0) | Dashboard metric shortcuts, Activity & Audit in System, and single-row responsive processes |
 | [v0.65.0](https://github.com/maksymhs/Citadel/releases/tag/v0.65.0) | Aligned System/Settings tiles, separate AI agents and installed tools, Files starts in projects and black VS Code loading |
 | [v0.64.0](https://github.com/maksymhs/Citadel/releases/tag/v0.64.0) | Unified Back arrow in System and Settings, three equal Settings tiles per desktop row |
