@@ -222,7 +222,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 | Latest | |
 | --- | --- |
-| [v0.69.0](https://github.com/maksymhs/Citadel/releases/tag/v0.69.0) | Disabling OpenCode removes stale Citadel provider settings and gateway credentials |
+| [v0.69.0](https://github.com/maksymhs/Citadel/releases/tag/v0.69.0) | Clean native OpenCode fallback, safe beta-state retirement and host-isolated tunnel tests |
 | [v0.68.0](https://github.com/maksymhs/Citadel/releases/tag/v0.68.0) | AI Gateway can be disabled per CLI and open project terminals return to native providers |
 | [v0.66.0](https://github.com/maksymhs/Citadel/releases/tag/v0.66.0) | Dashboard metric shortcuts, Activity & Audit in System, and single-row responsive processes |
 | [v0.65.0](https://github.com/maksymhs/Citadel/releases/tag/v0.65.0) | Aligned System/Settings tiles, separate AI agents and installed tools, Files starts in projects and black VS Code loading |

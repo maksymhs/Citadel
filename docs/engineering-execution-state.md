@@ -932,3 +932,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 ## 193. Isolate tunnel tests from installed host helpers
 - The Linux missing-helper test now sets explicit temporary helper/cloudflared paths, so a real installed tunnel helper cannot invalidate the fixture or be invoked by it. All hostname/status/rejection assertions are retained. DATABASE_PATH is also isolated alongside DATA_DIR, PROJECTS_DIR and LOGS_DIR.
 - Verified focused tunnel/release-notes/database/modules suites 22/22. Full npm test: 694 tests, 692 passed, 0 failed, 2 skipped (/tmp/opencode/citadel-v0690-stable-tests.log), including UI smoke and Gateway coverage. npm run lint and git diff --check passed.
+
+## 194. Release v0.69.0
+- Packages native OpenCode fallback cleanup (retains unrelated user settings), non-destructive retirement of experimental beta module state and host-isolated Cloudflare tunnel fixtures. Career Radar has no runtime, Settings, navigation or API in this release.
+- Package/lock versions and frontend cache tokens were already prepared at 0.69.0/v0690 by the implementation commit. Refreshed README Latest and generated CHANGELOG.md from the local stable release tag; final tag points to the release commit.
+- Verified full npm test: 694 tests, 692 passed, 0 failed, 2 skipped (/tmp/opencode/citadel-v0690-stable-tests.log), including UI smoke and Gateway tests. Focused tunnel/release-notes/database/modules suites passed 22/22; lint and whitespace checks passed. No real provider-account or real-browser visual verification.
+- Local release preparation only: no push, GitHub publication, live-host update or restart. Beta processes remain stopped.
