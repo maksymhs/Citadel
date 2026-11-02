@@ -159,7 +159,10 @@ Select **OpenCode** under **3. Choose your tools**, select **Save changes**, and
 **Enable gateway**. Open a new project terminal and run `opencode`, or launch
 OpenCode from the project's agent selector. OpenCode must be installed separately
 through Machines → Tools. The switch defaults off; disabling it leaves new OpenCode
-launches in native mode. Existing terminals keep their launch environment.
+launches in native mode. The project-terminal launcher strips stale Citadel provider
+settings and its gateway token from OpenCode's inline runtime configuration while
+preserving unrelated user settings. Existing OpenCode processes keep their launch
+environment.
 Fresh installs retain the OpenCode CLI; install/update it through Tools if missing.
 The native Chat GUI is removed, but OpenCode's terminal Plan/Build controls,
 terminal native mode, VS Code and gateway routing are unchanged. The panel no

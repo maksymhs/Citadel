@@ -903,3 +903,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Re-enabling still needs a new project terminal for shells that started while the gateway was off, and shells opened before this change need one reopen. Documented in `docs/ai-gateway.md` and `docs/installation.md`.
 - Verified: `tests/gateway.test.js` 21/21, including a real project PTY/tmux session where `claude` goes gateway then native after disabling, per-tool uncheck for Codex/OpenCode and fail-closed when stopped. `npm run lint` clean. Full `npm test`: 692 tests, 682 pass, 8 fail, 2 skipped; the 8 failures (tunnel setup, uninstaller) fail identically on a clean tree. The gateway suite now strips inherited gateway client variables so it is stable when run from a gateway-launched terminal.
 - Not tested: a real Claude/OpenCode/Codex binary, a real provider account, real macOS.
+
+## 189. OpenCode native mode removes stale Citadel configuration (v0.69.0)
+- When OpenCode is unchecked or the gateway is off in a project shell, its shim removes the Citadel provider, Citadel model selections and gateway token from inherited inline runtime configuration while retaining unrelated OpenCode settings. Invalid stale inline JSON is discarded rather than passed to native OpenCode.
+- Updated the AI Gateway guide, package versions, frontend cache tokens and README Latest for v0.69.0.
+- Verified: gateway suite 22/22; `npm run lint` and `git diff --check` passed. Full `npm test`: 693 tests, 690 passed, 1 failed, 2 skipped. The sole failure is `tests/tunnel.test.js` Cloudflare setup (`true == false`); unrelated to this change. One initial full-suite invocation exceeded the 120-second command timeout; rerun completed.
+- Not tested: a real OpenCode binary or live provider account. No commit, tag, publication or live-host restart.

@@ -17,6 +17,33 @@ function gatewayEnvironment(base, settings) {
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
 }
 /** Runtime-only OpenCode overrides; never write credentials into project/global config. */
+function nativeOpenCodeEnvironment(base) {
+  const env = { ...base };
+  delete env.CITADEL_GATEWAY_TOKEN;
+  if (!env.OPENCODE_CONFIG_CONTENT) return env;
+  try {
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+    if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error();
+    if (config.provider && typeof config.provider === 'object') {
+      delete config.provider.citadel;
+      if (!Object.keys(config.provider).length) delete config.provider;
+    }
+    if (Array.isArray(config.enabled_providers)) {
+      config.enabled_providers = config.enabled_providers.filter(id => id !== 'citadel');
+      if (!config.enabled_providers.length) delete config.enabled_providers;
+    }
+    if (Array.isArray(config.disabled_providers) && !config.disabled_providers.includes('citadel')) config.disabled_providers.push('citadel');
+    if (typeof config.model === 'string' && config.model.startsWith('citadel/')) delete config.model;
+    if (typeof config.small_model === 'string' && config.small_model.startsWith('citadel/')) delete config.small_model;
+    for (const agent of Object.values(config.agent || {})) {
+      if (typeof agent?.model === 'string' && agent.model.startsWith('citadel/')) delete agent.model;
+    }
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify(config);
+  } catch {
+    delete env.OPENCODE_CONFIG_CONTENT;
+  }
+  return env;
+}
 function opencodeEnvironment(base, settings) {
   const existing = base.OPENCODE_CONFIG_CONTENT ? JSON.parse(base.OPENCODE_CONFIG_CONTENT) : {};
   if (!existing || typeof existing !== 'object' || Array.isArray(existing)) throw new Error('Invalid OpenCode inline configuration.');
@@ -99,7 +126,11 @@ function clientShim(client) {
     return;
   }
   const active = launch && (client === 'claude' ? launch.settings.claudeEnabled !== false : launch.settings[`${client}Enabled`] === true);
-  if (!active) return run(binary, args, { ...process.env }, `Could not launch ${client}.`);
+  if (!active) {
+    const env = client === 'opencode' ? nativeOpenCodeEnvironment(process.env) : { ...process.env };
+    if (client === 'opencode' && !launch) delete env.CITADEL_GATEWAY_TOKEN;
+    return run(binary, args, env, `Could not launch ${client}.`);
+  }
   main([launch.file, '--client', client, binary, ...args]);
 }
 function main(input = process.argv.slice(2)) {
@@ -133,4 +164,4 @@ function main(input = process.argv.slice(2)) {
   }
 }
 if (require.main === module) main();
-module.exports = { gatewayEnvironment, opencodeEnvironment, codexLaunch, clientShim };
+module.exports = { gatewayEnvironment, opencodeEnvironment, nativeOpenCodeEnvironment, codexLaunch, clientShim };

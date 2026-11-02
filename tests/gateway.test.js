@@ -14,7 +14,7 @@ Object.assign(process.env, { DATA_DIR: root, DATABASE_PATH: path.join(root, 'db.
 for (const name of Object.keys(process.env)) if (/^(ANTHROPIC_|CITADEL_GATEWAY_|OPENCODE_CONFIG_CONTENT$|CLAUDE_CODE_(OAUTH_TOKEN|MAX_CONTEXT_TOKENS$))/.test(name)) delete process.env[name];
 const { getDatabase, closeDatabase } = require('../server/database/db');
 const { createGatewayService, VERSION } = require('../server/services/gatewayService');
-const { gatewayEnvironment, opencodeEnvironment, codexLaunch } = require('../scripts/gateway-launch');
+const { gatewayEnvironment, opencodeEnvironment, nativeOpenCodeEnvironment, codexLaunch } = require('../scripts/gateway-launch');
 const { buildServer } = require('../server/index');
 const { decrypt } = require('../server/security/secrets');
 let app, cookies;
@@ -427,6 +427,25 @@ test('OpenCode runtime config routes Plan, Build and small tasks with bounded co
   assert.throws(() => opencodeEnvironment({ OPENCODE_CONFIG_CONTENT: 'invalid' }, settings));
 });
 
+test('native OpenCode launch removes stale Citadel runtime config and keeps user settings', () => {
+  const env = nativeOpenCodeEnvironment({ CITADEL_GATEWAY_TOKEN: 'stale-secret', OPENCODE_CONFIG_CONTENT: JSON.stringify({
+    theme: 'system', model: 'citadel/citadel-execution', small_model: 'citadel/citadel-small',
+    enabled_providers: ['citadel', 'other'], disabled_providers: ['other'],
+    provider: { citadel: { name: 'Citadel Gateway' }, other: { name: 'Other' } },
+    agent: { plan: { model: 'citadel/citadel-planning', temperature: 0.2 }, build: { model: 'other/model' } },
+  }) });
+  const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+  assert.equal(env.CITADEL_GATEWAY_TOKEN, undefined);
+  assert.equal(config.theme, 'system');
+  assert.equal(config.model, undefined);
+  assert.equal(config.small_model, undefined);
+  assert.deepEqual(config.enabled_providers, ['other']);
+  assert.deepEqual(config.disabled_providers, ['other', 'citadel']);
+  assert.deepEqual(config.provider, { other: { name: 'Other' } });
+  assert.deepEqual(config.agent, { plan: { temperature: 0.2 }, build: { model: 'other/model' } });
+  assert.equal(nativeOpenCodeEnvironment({ OPENCODE_CONFIG_CONTENT: '{invalid' }).OPENCODE_CONFIG_CONTENT, undefined);
+});
+
 test('OpenCode direct launch receives scoped configuration without exposing the key', () => {
   const dir = fs.mkdtempSync(path.join(root, 'opencode-launch-'));
   const file = path.join(dir, 'launch.json');
@@ -512,16 +531,26 @@ test('Claude activation is independent and disabling it preserves OpenCode proje
   const { binDir } = JSON.parse(fs.readFileSync(shell.args[1]));
   const nativeDir = path.join(dir, 'native-bin'); fs.mkdirSync(nativeDir);
   for (const client of ['claude', 'opencode']) {
-    fs.writeFileSync(path.join(nativeDir, client), "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({claude: !!process.env.ANTHROPIC_BASE_URL, opencode: !!process.env.OPENCODE_CONFIG_CONTENT}))\n", { mode: 0o700 });
+    fs.writeFileSync(path.join(nativeDir, client), "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({claude: !!process.env.ANTHROPIC_BASE_URL, opencode: !!process.env.OPENCODE_CONFIG_CONTENT, token: !!process.env.CITADEL_GATEWAY_TOKEN, config: process.env.OPENCODE_CONFIG_CONTENT ? JSON.parse(process.env.OPENCODE_CONFIG_CONTENT) : null}))\n", { mode: 0o700 });
   }
-  const run = client => JSON.parse(execFileSync(path.join(binDir, client), [], {
-    encoding: 'utf8', env: { ...process.env, PATH: binDir + path.delimiter + nativeDir + path.delimiter + process.env.PATH, ANTHROPIC_BASE_URL: '', OPENCODE_CONFIG_CONTENT: '' }, stdio: ['ignore', 'pipe', 'pipe'],
+  const run = (client, extraEnv = {}) => JSON.parse(execFileSync(path.join(binDir, client), [], {
+    encoding: 'utf8', env: { ...process.env, PATH: binDir + path.delimiter + nativeDir + path.delimiter + process.env.PATH, ANTHROPIC_BASE_URL: '', OPENCODE_CONFIG_CONTENT: '', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
   }));
-  assert.deepEqual(run('claude'), { claude: false, opencode: false });
-  assert.deepEqual(run('opencode'), { claude: false, opencode: true });
+  assert.deepEqual(run('claude'), { claude: false, opencode: false, token: false, config: null });
+  const enabled = run('opencode');
+  assert.equal(enabled.config.provider.citadel.name, 'Citadel Gateway');
+  assert.equal(enabled.token, true);
+  const staleConfig = JSON.stringify({ enabled_providers: ['citadel'], provider: { citadel: {} }, model: 'citadel/citadel-execution' });
+  await s.save({ enabled: true, opencodeEnabled: false });
+  const native = run('opencode', { OPENCODE_CONFIG_CONTENT: staleConfig, CITADEL_GATEWAY_TOKEN: 'stale-secret' });
+  assert.equal(native.token, false);
+  assert.equal(native.config.provider?.citadel, undefined);
+  assert.ok(!native.config.enabled_providers?.includes('citadel'));
+  assert.equal(native.config.model, undefined);
   await s.save({ enabled: false });
   assert.equal(fs.existsSync(path.join(binDir, 'current')), false, 'disabling removes the pointer');
-  assert.deepEqual(run('opencode'), { claude: false, opencode: false });
+  assert.equal(run('opencode').config, null);
+  assert.equal(run('opencode').token, false);
   await s.close();
 });
 
