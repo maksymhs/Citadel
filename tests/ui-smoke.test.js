@@ -358,22 +358,22 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     } finally { toolsDom.window.close(); }
   });
 
-  test('System sits directly under Files in the sidebar', () => {
+  test('Settings follows Files and replaces the separate System sidebar entry', () => {
     const order = [...w.document.querySelectorAll('.nav-item[data-view]')].map(item => item.dataset.view);
-    assert.equal(order[order.indexOf('files') + 1], 'system');
-    assert.equal(order[order.indexOf('system') + 1], 'settings');
+    assert.equal(order[order.indexOf('files') + 1], 'settings');
+    assert.equal(order.includes('system'), false);
   });
 
   test('main screens open without script errors', async () => {
-    for (const view of ['files', 'settings', 'projects', 'system', 'dashboard']) {
+    for (const view of ['files', 'settings', 'projects', 'dashboard']) {
       const link = w.document.querySelector(`.nav-item[data-view="${view}"]`);
       assert.ok(link, `nav item ${view} should exist`);
       link.click();
       await sleep(800);
       assert.ok(w.document.getElementById('main-content').innerHTML.length > 100, `${view} rendered nothing`);
-      if (view === 'system') {
+      if (view === 'settings') {
         assert.deepEqual([...w.document.querySelectorAll('[data-system-section]')].map(section => section.dataset.systemSection), ['processes', 'workspace', 'agents', 'tools', 'activity']);
-        assert.equal(w.document.querySelector('[data-system-tab], [role="tab"]'), null, 'System shows five section cards, not tabs');
+        assert.equal(w.document.querySelector('[data-system-tab], [role="tab"]'), null, 'Settings shows grouped cards, not tabs');
       }
       if (view === 'dashboard') assert.equal(w.document.querySelector('[data-mon-tab], #mon-tabs, .mon-tabs'), null, 'Dashboard has no Overview tab');
     }
@@ -408,16 +408,16 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       const back = w.document.getElementById('top-bar-back');
       const arrow = back.innerHTML;
       assert.equal(back.hidden, false);
-      w.document.querySelector('.nav-item[data-view="system"]').click();
+      w.document.querySelector('.nav-item[data-view="settings"]').click();
       await sleep(400);
       assert.equal(back.hidden, true);
       assert.deepEqual(styles('.system-cards', gridProperties), settingsGrid, 'both hubs use the same grid');
       assert.deepEqual(styles('.system-card', tileProperties), settingsTile, 'both hubs share card dimensions and surfaces');
       assert.deepEqual(styles('.system-card .settings-tile-icon', iconProperties), settingsIcon, 'both hubs share icon surfaces');
       assert.deepEqual(styles('.system-card-text strong', ['fontSize', 'fontWeight', 'lineHeight']), settingsLabel, 'both hubs share label typography');
-      assert.deepEqual(styles('.management-screen', ['maxWidth', 'marginLeft', 'marginRight']), settingsWidth);
-      assert.equal(w.document.querySelector('#system-management').firstElementChild.id, 'system-content', 'no extra toolbar offsets the System grid');
-      assert.ok(w.document.querySelector('#top-bar-actions #system-refresh'));
+      assert.deepEqual(styles('.settings-hub', ['maxWidth', 'marginLeft', 'marginRight']), settingsWidth);
+      assert.ok(w.document.querySelector('.settings-hub .system-cards'));
+      assert.equal(w.document.querySelector('#top-bar-actions #system-refresh'), null, 'the navigation-only hub has no refresh control');
       for (const [id, title] of [['processes', 'Processes'], ['workspace', 'Terminals & VS Code'], ['agents', 'AI coding agents'], ['tools', 'Installed tools']]) {
         w.document.querySelector(`[data-system-section="${id}"]`).click();
         await sleep(400);
@@ -426,14 +426,18 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
         assert.equal(back.className, 'top-bar-back');
         assert.equal(back.innerHTML, arrow, 'same icon as Settings, without a separate text button');
         assert.equal(w.document.getElementById('system-back'), null);
-        assert.equal(w.document.getElementById('top-bar-title').textContent, `System · ${title}`);
+        assert.equal(w.document.getElementById('top-bar-title').textContent, `Settings · ${title}`);
+        assert.ok(w.document.querySelector('#top-bar-actions #system-refresh'));
+        assert.equal(w.document.querySelector('.nav-item[data-view="settings"]').getAttribute('aria-current'), 'page');
         assert.deepEqual(styles('.system-detail-head h2', ['fontSize', 'fontWeight']), settingsHeading);
         assert.equal(w.document.querySelector('.system-detail-head').nextElementSibling.dataset.systemDetail, id);
         back.click();
         await sleep(400);
         assert.equal(back.hidden, true);
         assert.equal(w.document.querySelectorAll('.system-card').length, 5);
-        assert.equal(w.document.getElementById('top-bar-title').textContent, 'System');
+        assert.equal(w.document.getElementById('top-bar-title').textContent, 'Settings');
+        assert.equal(w.document.getElementById('system-refresh'), null, 'Back clears the detail toolbar');
+        assert.ok(w.document.querySelector('[data-settings-section="gateway"]'), 'Back returns to both groups');
       }
       w.document.querySelector('[data-system-section="processes"]').click();
       await sleep(400);
@@ -454,12 +458,15 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       w.document.querySelector('.nav-item[data-view="settings"]').click();
       await sleep(700);
       const hub = w.document.querySelector('.settings-hub');
+      assert.deepEqual([...hub.querySelectorAll('.settings-group > h2')].map(node => node.textContent), ['System', 'Configuration']);
+      assert.deepEqual([...hub.querySelectorAll('.settings-group')].map(node => node.querySelectorAll('nav > button').length), [5, 6]);
       assert.ok(hub.querySelector('nav[aria-label="Settings sections"]'));
       assert.equal(w.getComputedStyle(hub.querySelector('.settings-tiles')).gridTemplateColumns, 'repeat(3, minmax(0, 1fr))', 'desktop Settings uses three equal columns');
       assert.notEqual(w.getComputedStyle(hub.querySelector('.settings-tile:last-child')).gridColumn, '1 / -1', 'the last tile does not stretch across the row');
       assert.deepEqual([...hub.querySelectorAll('.settings-tile')].map(button => button.textContent.replace('›', '').trim()), ['AI Gateway', 'Updates', 'Machines', 'Network & access', 'Alerts', 'Credentials']);
       assert.equal(hub.querySelector('.settings-hero, .settings-screen-head, .connect-qr, .settings-tile-text span'), null, 'no duplicate heading, QR, diagnostics or descriptive subtitles');
       assert.equal(calls.filter(url => /\/api\/(?:settings\/connect|system\/(?:connect|node|version)|secrets|pair\/invite)(?:\?|$)/.test(url)).length, 0, 'the hub does not fetch unused section data or create pairing codes');
+      assert.equal(calls.some(url => /\/api\/(?:system\/(?:processes|integrations|tools)|terminals|editor)(?:\?|$)/.test(url)), false, 'the combined hub does not load System summaries or poll');
       const updateIcon = hub.querySelector('[data-settings-section="updates"] .settings-tile-icon svg path');
       assert.ok(updateIcon && updateIcon.getAttribute('d').includes('M20 11'), 'Updates uses a connected refresh icon path');
       hub.querySelector('[data-settings-section="machines"]').click();
@@ -489,19 +496,69 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     } finally { w.fetch = originalFetch; }
   });
 
-  test('System Activity & Audit opens directly and Back returns to System', async () => {
+  test('Settings Activity & Audit opens directly and Back returns to both groups', async () => {
     w.document.querySelector('.nav-item[data-view="settings"]').click(); await sleep(400);
     assert.equal(w.document.querySelector('[data-settings-section="activity"]'), null);
-    w.document.querySelector('.nav-item[data-view="system"]').click(); await sleep(400);
     w.document.querySelector('[data-system-section="activity"]').click(); await sleep(400);
     assert.equal(w.document.getElementById('top-bar-title').textContent, 'Activity & Audit');
     assert.deepEqual([...w.document.querySelectorAll('#top-bar-actions [data-activity-tab]')].map(button => button.textContent), ['Activity', 'Audit', 'Service log']);
     assert.equal(w.document.querySelector('.open-activity-btn'), null, 'there is no intermediate selector');
     assert.ok(w.document.getElementById('logs-refresh'));
     w.document.getElementById('top-bar-back').click(); await sleep(400);
-    assert.equal(w.document.getElementById('top-bar-title').textContent, 'System');
+    assert.equal(w.document.getElementById('top-bar-title').textContent, 'Settings');
     assert.ok(w.document.querySelector('[data-system-section="activity"]'));
+    assert.ok(w.document.querySelector('[data-settings-section="gateway"]'));
     assert.deepEqual(errors, []);
+  });
+
+  test('saved System views resolve to Settings and their legacy details', async () => {
+    for (const [view, detail] of [['system', null], ['processes', 'processes'], ['terminals', 'workspace']]) {
+      const page = await loadPage({ 'citadel.uiState': JSON.stringify({ currentView: view }) });
+      try {
+        const doc = page.window.document;
+        for (let i = 0; i < 30 && !doc.querySelector(detail ? `[data-system-detail="${detail}"]` : '.settings-hub'); i++) await sleep(100);
+        assert.equal(doc.querySelector('.nav-item[data-view="system"]'), null);
+        assert.equal(doc.querySelector('.nav-item[data-view="settings"]').getAttribute('aria-current'), 'page');
+        assert.ok(doc.querySelector(detail ? `[data-system-detail="${detail}"]` : '.settings-hub'), view);
+        if (detail) {
+          doc.getElementById('top-bar-back').click();
+          assert.ok(doc.querySelector('.settings-hub [data-settings-section="gateway"]'));
+        }
+        assert.equal(JSON.parse(page.window.localStorage.getItem('citadel.uiState')).currentView, 'settings');
+      } finally { page.window.close(); }
+    }
+  });
+
+  test('leaving a System detail for Configuration invalidates stale responses and refresh actions', async () => {
+    const originalFetch = w.fetch, calls = [];
+    let release;
+    const held = new Promise(resolve => { release = resolve; });
+    w.fetch = async (url, options) => {
+      calls.push(String(url));
+      if (String(url).includes('/system/processes?limit=50')) {
+        await held;
+        return { ok: true, json: async () => ({ processes: { total: 1, processes: [{ pid: 999, name: 'STALE-SYSTEM', cpuPercent: 0 }] } }) };
+      }
+      return originalFetch(url, options);
+    };
+    try {
+      w.document.querySelector('.nav-item[data-view="settings"]').click();
+      w.document.querySelector('[data-system-section="processes"]').click();
+      const staleRefresh = w.document.getElementById('system-refresh').onclick;
+      const staleBack = w.document.getElementById('top-bar-back').onclick;
+      w.document.querySelector('.nav-item[data-view="settings"]').click();
+      w.document.querySelector('[data-settings-section="machines"]').click();
+      await sleep(400);
+      const before = calls.length;
+      staleRefresh(); staleBack(); release();
+      await sleep(100);
+      assert.equal(calls.length, before, 'captured System handlers cannot issue more requests');
+      assert.equal(w.document.getElementById('top-bar-title').textContent, 'Settings · Machines');
+      assert.equal(w.document.querySelector('#system-management, #system-refresh'), null);
+      assert.ok(w.document.getElementById('settings-pair-btn'));
+      assert.doesNotMatch(w.document.getElementById('main-content').textContent, /STALE-SYSTEM/);
+      w.document.getElementById('top-bar-back').click();
+    } finally { release(); w.fetch = originalFetch; }
   });
 
   test('Dashboard metrics open the corresponding System, Files and Settings destinations', async () => {
@@ -540,7 +597,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
           assert.ok(w.document.querySelector('[data-activity-tab="audit"].active'));
           w.document.getElementById('top-bar-back').click();
           await sleep(400);
-          assert.equal(w.document.getElementById('top-bar-title').textContent, 'System');
+          assert.equal(w.document.getElementById('top-bar-title').textContent, 'Settings');
         } else {
           assert.equal(w.document.getElementById('top-bar-title').textContent, 'Settings · Updates');
           assert.ok(w.document.getElementById('check-updates-btn'));

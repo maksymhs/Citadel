@@ -1,5 +1,5 @@
 /**
- * System management for the selected machine: processes, terminals and shared VS Code,
+ * Settings system details for the selected machine: processes, terminals and shared VS Code,
  * AI coding agents, installed tools and activity/audit each open a detail view. Destructive actions capture the machine
  * and account and require explicit confirmation.
  */
@@ -28,6 +28,9 @@
     ctx = context;
   }
   function dispose() { generation++; clearInterval(timer); timer = undefined; }
+  function cards(summaries = false) {
+    return `<nav class="system-cards" aria-label="System sections">${SECTIONS.map(([id, label]) => `<button type="button" class="system-card" data-system-section="${id}"><span class="settings-tile-icon" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${ICONS[id]}</svg></span><span class="system-card-text"><strong>${label}</strong>${summaries ? `<span class="mon-muted" data-system-summary="${id}">Loading…</span>` : ''}</span><span class="settings-tile-chev" aria-hidden="true">&rsaquo;</span></button>`).join('')}</nav>`;
+  }
   function bytes(value) {
     if (!Number.isFinite(value)) return '—';
     return value >= 1048576 ? `${(value / 1048576).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
@@ -127,7 +130,7 @@
       stopPolling();
       current = null; bodies = {}; pending = {};
       ctx.setDetailNavigation?.(null, null);
-      content.innerHTML = `<nav class="system-cards" aria-label="System sections">${SECTIONS.map(([id, label]) => `<button type="button" class="system-card" data-system-section="${id}"><span class="settings-tile-icon" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${ICONS[id]}</svg></span><span class="system-card-text"><strong>${label}</strong><span class="mon-muted" data-system-summary="${id}">Loading…</span></span><span class="settings-tile-chev" aria-hidden="true">&rsaquo;</span></button>`).join('')}</nav>`;
+      content.innerHTML = cards(true);
       content.querySelectorAll('[data-system-section]').forEach(button => { button.onclick = () => showSection(button.dataset.systemSection); });
       return loadSummaries();
     }
@@ -136,7 +139,7 @@
       stopPolling();
       current = id; bodies = {}; pending = {};
       const label = SECTIONS.find(([key]) => key === id)[1];
-      ctx.setDetailNavigation?.(label, () => { if (present()) return showHub(); });
+      ctx.setDetailNavigation?.(label, () => { if (present()) return ctx.returnToHub ? ctx.returnToHub() : showHub(); });
       const mounts = MOUNTS[id];
       const mountHtml = key => `<div id="system-${key}-body"><div class="mon-muted">Loading…</div></div>`;
       const inner = id === 'workspace'
@@ -252,5 +255,5 @@
     };
     await (SECTIONS.some(([key]) => key === initialSection) ? showSection(initialSection) : showHub());
   }
-  window.CitadelSystem = { init, render, dispose };
+  window.CitadelSystem = { init, render, dispose, cards, sections: SECTIONS.map(([id, title]) => ({ id, title })) };
 })();

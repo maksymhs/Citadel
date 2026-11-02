@@ -57,6 +57,7 @@
     filesPath: null,
     keepSettingsSection: false,
     settingsSection: null, // null = Settings hub, otherwise a section id
+    settingsSystemSort: null, // direct process shortcuts can choose CPU or memory
     filesMode: 'grid', // 'grid' (folder view, default) | 'list' (tree); list only lasts until you leave Files
     dashboardWidgets: null, // ordered widget ids, persisted per browser
   };
@@ -65,12 +66,10 @@
   // project and active terminal instead of always resetting to the dashboard.
   const UI_STATE_KEY = 'citadel.uiState';
 
-  // Primary work views plus core tools. System manages running resources;
-  // host diagnostics/updates and Activity & Audit live in Settings.
+  // Primary work views plus Files and the unified System/Configuration settings hub.
   const PRIMARY_VIEWS = ['dashboard', 'projects', 'workspace'];
   const CORE_NAV = [
     { view: 'files', label: 'Files', icon: 'files' },
-    { view: 'system', label: 'System', icon: 'system' },
     { view: 'settings', label: 'Settings', icon: 'settings' },
   ];
 
@@ -89,7 +88,7 @@
   const LEGACY_VIEW_MAP = {
     repos: 'projects', terminal: 'workspace', logs: 'activity',
     plugins: 'settings', modules: 'settings', deployments: 'proxy',
-    machines: 'dashboard', machine: 'dashboard', processes: 'system', terminals: 'system',
+    machines: 'dashboard', machine: 'dashboard', system: 'settings', processes: 'settings', terminals: 'settings',
     'project-hub': 'projects', missions: 'projects', work: 'projects', docs: 'projects', learning: 'projects',
   };
 
@@ -1172,7 +1171,7 @@
     await loadModules();
     renderAppShell();
     if (ui.currentView === 'workspace') await loadProjects();
-    navigateTo(ui.currentView ? resolveView(ui.currentView) : 'projects');
+    navigateTo(ui.currentView || 'projects');
     maybeOpenPairingLink();
   }
 
@@ -1204,7 +1203,7 @@
   // Secondary screens reached from another one get a Back button at the top
   // left. It returns to the screen the user came from, or to a sensible parent
   // when the page was opened directly on it.
-  const DETAIL_VIEWS = { activity: 'system' };
+  const DETAIL_VIEWS = { activity: 'settings' };
 
   function updateBackButton(view) {
     const btn = document.getElementById('top-bar-back');
@@ -1221,6 +1220,14 @@
   }
 
   function navigateTo(view, options = {}) {
+    // Old System links and saved views enter the unified hub or their exact detail.
+    if (['system', 'processes', 'terminals'].includes(view)) {
+      const section = options.section || (view === 'processes' ? 'processes' : view === 'terminals' ? 'workspace' : null);
+      state.settingsSection = section ? `system:${section}` : null;
+      state.settingsSystemSort = options.sort;
+      state.keepSettingsSection = true;
+      view = 'settings';
+    }
     window.CitadelBrowserEditor.close();
     window.CitadelSystem.dispose();
     workspaceGeneration++;
@@ -1234,7 +1241,7 @@
     // Files always opens as a grid; the list toggle only lasts while you stay in Files.
     if (view === 'files' && from !== 'files') state.filesMode = 'grid';
     if (view !== 'settings') window.CitadelGatewaySettings.dispose();
-    if (view === 'settings' && from !== 'settings' && !state.keepSettingsSection) state.settingsSection = null;
+    if (view === 'settings' && !state.keepSettingsSection) state.settingsSection = null;
     state.keepSettingsSection = false;
     state.currentView = view;
     updateBackButton(view);
@@ -1256,9 +1263,6 @@
     if (view === 'dashboard') {
       titleEl.textContent = 'Dashboard';
       renderDashboardView();
-    } else if (view === 'system') {
-      titleEl.textContent = 'System';
-      window.CitadelSystem.render(options.section, options.sort);
     } else if (view === 'projects') {
       titleEl.textContent = 'Projects & Repositories';
       renderProjectsView();
@@ -1332,8 +1336,8 @@
       useMachine,
       openMetric: (hostId, target) => {
         if (state.activeHostId !== hostId || state.currentView !== 'dashboard') return;
-        if (target === 'cpu' || target === 'memory') navigateTo('system', { section: 'processes', sort: target });
-        else if (target === 'terminals') navigateTo('system', { section: 'workspace' });
+        if (target === 'cpu' || target === 'memory') openSystemSection('processes', target);
+        else if (target === 'terminals') openSystemSection('workspace');
         else if (target === 'disk') navigateTo('files', { disk: true });
         else if (target === 'audit') { state.activityTab = 'audit'; saveUiState({ activityTab: 'audit' }); navigateTo('activity'); }
         else if (target === 'updates') openSettingsAt('updates');
@@ -3325,6 +3329,12 @@
   };
 
   // Open Settings directly on one of its screens, from anywhere.
+  function openSystemSection(section, sort) {
+    if (section === 'activity') return navigateTo('activity');
+    state.settingsSystemSort = sort;
+    openSettingsAt(`system:${section}`);
+  }
+
   function openSettingsAt(section) {
     state.settingsSection = section;
     if (state.currentView === 'settings') {
@@ -3342,21 +3352,36 @@
 
   async function renderSettingsView() {
     const content = document.getElementById('main-content');
-    const section = SETTINGS_SECTIONS[state.settingsSection] ? state.settingsSection : null;
+    const systemSection = window.CitadelSystem.sections.find(item => `system:${item.id}` === state.settingsSection);
+    const section = (systemSection || SETTINGS_SECTIONS[state.settingsSection]) ? state.settingsSection : null;
     state.settingsSection = section;
     const titleEl = document.getElementById('top-bar-title');
-    if (titleEl) titleEl.textContent = section ? `Settings · ${SETTINGS_SECTIONS[section].title}` : 'Settings';
+    if (titleEl) titleEl.textContent = section ? `Settings · ${systemSection?.title || SETTINGS_SECTIONS[section].title}` : 'Settings';
     updateBackButton('settings');
+    window.CitadelSystem.dispose();
     window.CitadelGatewaySettings.dispose();
+    document.getElementById('top-bar-actions').replaceChildren();
+    if (systemSection) {
+      await window.CitadelSystem.render(systemSection.id, state.settingsSystemSort);
+      return;
+    }
     if (!section) {
-      content.innerHTML = `<div class="settings-screen settings-hub"><nav class="settings-tiles" aria-label="Settings sections">
+      content.innerHTML = `<div class="settings-screen settings-hub">
+        <section class="settings-group" aria-labelledby="settings-system-heading">
+          <h2 id="settings-system-heading">System</h2>${window.CitadelSystem.cards()}
+        </section>
+        <section class="settings-group" aria-labelledby="settings-configuration-heading">
+          <h2 id="settings-configuration-heading">Configuration</h2><nav class="settings-tiles" aria-label="Settings sections">
         ${Object.entries(SETTINGS_SECTIONS).map(([id, def]) => `
           <button type="button" class="settings-tile" data-settings-section="${id}">
             <span class="settings-tile-icon" aria-hidden="true"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24">${SETTINGS_ICONS[id]}</svg></span>
             <span class="settings-tile-text"><strong>${escapeHtml(def.title)}</strong></span>
             <span class="settings-tile-chev" aria-hidden="true">&rsaquo;</span>
           </button>`).join('')}
-      </nav></div>`;
+      </nav></section></div>`;
+      content.querySelectorAll('[data-system-section]').forEach(btn => {
+        btn.onclick = () => openSystemSection(btn.dataset.systemSection);
+      });
       content.querySelectorAll('[data-settings-section]').forEach((btn) => {
         btn.onclick = () => openSettingsSection(btn.dataset.settingsSection);
       });
@@ -3941,7 +3966,9 @@
     for (const [id, def] of Object.entries(SETTINGS_SECTIONS)) {
       add('Settings', def.title, def.desc.split('. ')[0].slice(0, 70), () => openSettingsAt(id));
     }
-    add('System', 'Activity & Audit', 'Events and security audit', go('activity'));
+    for (const { id, title } of window.CitadelSystem.sections) {
+      add('System', title, 'Settings · System', () => openSystemSection(id));
+    }
     add('System', 'Service log', 'Citadel service log', () => { state.activityTab = 'service'; navigateTo('activity'); });
     add('System', 'Audit trail', 'Security audit', () => { state.activityTab = 'audit'; navigateTo('activity'); });
     for (const item of OPTIONAL_NAV) {
@@ -4076,12 +4103,13 @@
   window.CitadelFleet.init({ api, escapeHtml, navigateTo, openModal, showToast, state });
   window.CitadelActivity.init({ api, escapeHtml, hostApiPath, moduleEnabled, navigateTo, saveUiState, state });
   window.CitadelSystem.init({ state, localApi, escapeHtml, openModal, showToast, navigateTo, installAgent: installAgentOn, forgetTerminal: monitorCtx().forgetTerminal,
+    returnToHub: () => openSettingsAt(null),
     setToolbar: toolbar => {
-      if (state.currentView === 'system') document.getElementById('top-bar-actions').replaceChildren(toolbar);
+      if (state.currentView === 'settings' && state.settingsSection?.startsWith('system:')) document.getElementById('top-bar-actions').replaceChildren(toolbar);
     },
     setDetailNavigation: (label, onBack) => {
-      if (state.currentView !== 'system') return;
-      document.getElementById('top-bar-title').textContent = label ? `System · ${label}` : 'System';
+      if (state.currentView !== 'settings' || !state.settingsSection?.startsWith('system:')) return;
+      document.getElementById('top-bar-title').textContent = label ? `Settings · ${label}` : 'Settings';
       const button = document.getElementById('top-bar-back');
       button.hidden = !onBack;
       button.onclick = onBack;

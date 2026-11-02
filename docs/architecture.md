@@ -59,7 +59,7 @@ Some APIs always stay local (`LOCAL_ONLY_API` in `app.js`: auth, pairing, host l
 `monitorService.js` runs in each panel: every 60 s it probes this machine and every paired one (latency, load, memory, disk, uptime, version, temperature), stores samples in `host_checks` (30 days) and computes 24 h / 7 d availability. A machine is **offline after two failed checks in a row**. Alerts (offline, disk, memory, CPU) show in the panel and can be pushed once at start and once at recovery to a webhook, ntfy or Telegram. `securityAlertService.js` reuses the same channels for security events (new sign-in address, failed-login bursts, a machine pairing in, setup code replaced, password reset). Monitoring is per panel: a machine cannot alert about its own outage.
 
 Dashboard's machine pane shows health/history directly, with no tab bar. Runtime management
-lives in the standalone `public/js/system.js` screen (three summary cards opening Processes, Terminals & VS Code and Tools details, each
+lives in `public/js/system.js`, reached from the System group in the unified Settings hub (Processes, Terminals & VS Code, AI coding agents, Installed tools and Activity & Audit, each
 mount loaded independently; only the open Processes detail polls, and `?sort=memory` makes the host rank before limiting), initialized by the SPA shell:
 selected-host API paths are captured for processes, terminals, shared VS Code and
 tools. Leaving the view invalidates requests and polling; destructive confirmations
@@ -83,6 +83,11 @@ Each terminal is a `tmux` session `citadel_<project_slug>_<id>`; `node-pty` runs
 Terminal clipboard image paste uploads the image to the active terminal's host via an authenticated API (forwarded by `remoteProxyRoutes.js` for paired hosts). The terminal image service validates type, size and file signature, then asks `fsAgent.js` to create a private temporary file as the terminal's OS identity. The UI inserts the resulting path with xterm's paste API, never image bytes or an implicit Enter. See [the image paste limits](security.md#deployment-details).
 
 ## 8. Reachability
+
+Settings is the single administration entry in the sidebar. Its System and
+Configuration groups share a navigation-only card hub. Old System navigation
+resolves to Settings, details load independently and Back returns to both groups;
+leaving a System detail for Configuration invalidates its requests and polling.
 
 The Settings hub is navigation-only and performs no section-data or pairing-invite requests. Secondary screens fetch their own settings, address, version or vault data as needed, with detached-view and host/account guards. `pairing.js` creates an administrator invitation only after **Machines → Show pairing QR** (or **New code**), preserving single-use expiry, copyable links and reachability warnings in a dialog. Late responses cannot rewrite a closed/replacement dialog or a changed host/account scope. Pairing remains owned by the panel's local host even when another machine is selected.
 

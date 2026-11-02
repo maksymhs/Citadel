@@ -2455,6 +2455,9 @@ label.mon-row:hover { border-color: var(--border-hover); }
 
 /* System and Settings share desktop width and section spacing. */
 .management-screen, .settings-screen { width: 100%; max-width: 1120px; min-width: 0; margin: 0 auto; }
+.settings-hub { display: grid; gap: 32px; }
+.settings-group { min-width: 0; }
+.settings-group > h2 { margin: 0 0 14px; font-size: 18px; font-weight: 600; color: var(--text-primary); }
 .management-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .system-cards, .settings-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
 .system-card, .settings-tile {

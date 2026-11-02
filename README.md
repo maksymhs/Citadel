@@ -59,7 +59,7 @@ Register, create, import and clone repositories with live branch status. Connect
 <td valign="top">
 
 ### ⚙️ System management
-Five focused sections: **Processes**, **Terminals & VS Code**, **AI coding agents**, **Installed tools** and **Activity & Audit**. Sort processes by CPU or memory, manage sessions and review audit/service logs. Destructive admin controls require confirmation; process rows stay compact on mobile.
+Find **Processes**, **Terminals & VS Code**, **AI coding agents**, **Installed tools** and **Activity & Audit** in **Settings → System**. Configuration lives in a second group on the same screen. Destructive admin controls require confirmation; process rows stay compact on mobile.
 
 </td>
 </tr>
@@ -109,7 +109,7 @@ Start in the selected machine's configured projects directory, browse and edit f
 <td valign="top">
 
 ### 🔭 Observability
-Event trace plus periodic resource samples, a live sparkline, a filterable timeline and JSON/CSV export. Find Activity, Audit and Service log together under **System → Activity & Audit**.
+Event trace plus periodic resource samples, a live sparkline, a filterable timeline and JSON/CSV export. Find Activity, Audit and Service log together under **Settings → System → Activity & Audit**.
 
 </td>
 <td valign="top">
@@ -133,14 +133,14 @@ Fastify + SQLite (WAL). Runs on 512 MB of RAM. Plugin system with fault isolatio
 
 ### Find your way around
 
-**System** manages the selected machine; **Settings** handles configuration. Both use matching card hubs and the same top-bar Back arrow. Fold the sidebar for more workspace space; desktop remembers your choice, while mobile uses an overlay. Keyboard-specific viewport sizing stays out of the way during desktop and pinch zoom.
+**Settings** is the single administration entry, with two groups of cards: **System** for running resources and **Configuration** for integrations and preferences. Details share the top-bar Back arrow, returning to both groups. Fold the sidebar for more workspace space; desktop remembers your choice, while mobile uses an overlay. Keyboard-specific viewport sizing stays out of the way during desktop and pinch zoom.
 
 | Dashboard shortcut | Opens |
 | --- | --- |
-| CPU / Memory | System → Processes, sorted by the selected resource |
-| Terminals | System → Terminals & VS Code, with confirmed Stop controls |
+| CPU / Memory | Settings → System → Processes, sorted by the selected resource |
+| Terminals | Settings → System → Terminals & VS Code, with confirmed Stop controls |
 | Disk | Files → Analyze: “Find what is taking space”, without starting a scan |
-| Availability 24 h / 7 d | System → Activity & Audit → Audit |
+| Availability 24 h / 7 d | Settings → System → Activity & Audit → Audit |
 | Version | Settings → Updates, without applying an update |
 
 These shortcuts inspect the selected machine; opening them does not stop sessions or update software. See [panel navigation and controls](docs/installation.md#system-management).

@@ -139,15 +139,21 @@ requires no sudo and remains off by default. This experimental integration offer
 ### System management
 
 **Dashboard** shows machine health directly, without an Overview tab or name; Projects is
-managed separately. **System** sits right under Files in the sidebar and shows the
-selected machine as five cards, each with a one-line summary: **Processes**,
-**Terminals & VS Code**, **AI coding agents**, **Installed tools** and **Activity & Audit**. Opening a card shows its detail with the same icon-only Back
-arrow in the top bar as Settings. Both screens share the same centered width,
-three-column desktop grid, card sizing and detail heading spacing (one column on
-narrow screens). System's machine name and Refresh stay in the top bar, so its
-cards start at the same content edge as Settings. Both hubs use matching rounded
-icon surfaces, label typography and hover/keyboard-focus accents in light and dark
-themes; transitions respect reduced-motion preferences. Processes can be ordered by
+managed separately. **Settings** sits right under Files in the sidebar and has
+two visible groups, without tabs or an intermediate screen:
+
+- **System**: **Processes**, **Terminals & VS Code**, **AI coding agents**,
+  **Installed tools** and **Activity & Audit**.
+- **Configuration**: **AI Gateway**, **Updates**, **Machines**, **Network & access**,
+  **Alerts** and **Credentials**.
+
+The hub is navigation-only: it does not fetch section data, load live summaries
+or poll. Both groups use the same three-column grid on desktop and stack in one
+column on narrow screens, with light/dark themes and keyboard focus states.
+Opening a card loads only its detail; the top-bar Back arrow returns to the
+combined hub. System details show the selected machine and Refresh in the top
+bar. Saved System navigation and old shortcuts still resolve to Settings.
+Processes can be ordered by
 **CPU** or **Memory** (the host ranks before
 limiting, so a memory-hungry idle process is not hidden) and refreshes every 5 s only
 while it is open. Browsing/refreshing these screens never stops work. Administrator
@@ -159,15 +165,15 @@ prove exit—refresh to check. Terminal stops end their running commands; VS Cod
 stop affects its shared instance across projects. AI coding agents retains agent install,
 reinstall/update and managed-launcher removal actions, not automatic installs.
 
-**System → Activity & Audit** opens the Activity/Audit/Service log view directly;
-Back returns to the System hub. Processes stay on one row at narrow widths,
+**Settings → System → Activity & Audit** opens the Activity/Audit/Service log view directly;
+Back returns to the combined Settings hub. Processes stay on one row at narrow widths,
 with horizontal scrolling inside the table when needed instead of stacked cards.
 
 Dashboard metric cards are shortcuts for the selected machine: **CPU** and
-**Memory** open System processes sorted accordingly; **Disk** opens Files → Analyze
+**Memory** open Settings → System → Processes sorted accordingly; **Disk** opens Files → Analyze
 (Find what is taking space), without starting a scan. Both **Availability** cards
 open the **Audit** tab, and **Version** opens **Settings → Updates** without updating.
-**Terminals** opens **System → Terminals & VS Code** to review persistent sessions
+**Terminals** opens **Settings → System → Terminals & VS Code** to review persistent sessions
 and stop them using the existing confirmation controls; opening the card stops nothing.
 The sidebar machine selector uses a single line with a static status dot; the
 full address remains in its tooltip and machine menu, with status announced to screen readers.
