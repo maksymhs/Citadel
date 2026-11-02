@@ -4,9 +4,14 @@ const path = require('node:path');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-tunnel-'));
 process.env.DATA_DIR = TMP;
+process.env.DATABASE_PATH = path.join(TMP, 'citadel.db');
 process.env.PROJECTS_DIR = path.join(TMP, 'projects');
 process.env.LOGS_DIR = path.join(TMP, 'logs');
 process.env.PLUGINS_DIR = path.join(TMP, 'plugins');
+// Exercise the missing-helper case even when tests run on an installed host.
+// Neither the status check nor start() may use the host's actual tunnel helper.
+process.env.CITADEL_TUNNEL_HELPER = path.join(TMP, 'missing-tunnel-helper');
+process.env.CLOUDFLARED_PATH = path.join(TMP, 'missing-cloudflared');
 delete process.env.CITADEL_PUBLIC_URL;
 
 const assert = require('node:assert');
