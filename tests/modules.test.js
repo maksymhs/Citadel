@@ -99,6 +99,8 @@ describe('Module registry HTTP + endpoint gating', () => {
     assert.ok(Array.isArray(byId.files.views));
     assert.ok('serviceAvailable' in byId.files && 'ready' in byId.files);
     assert.equal(byId.agents, undefined, 'the AI Agents module was removed (installs live in the dashboard)');
+    assert.equal(byId.career, undefined, 'Career Radar was removed from this project');
+    assert.equal((await app.inject({ url: '/api/career', headers: { cookie } })).statusCode, 404);
   });
 
   test('a disabled module endpoint is protected with 403', async () => {

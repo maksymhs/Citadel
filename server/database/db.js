@@ -460,6 +460,21 @@ const MIGRATIONS = [
       db.prepare("DELETE FROM app_config WHERE key = 'module.missions.enabled'").run();
     },
   },
+  {
+    name: '018_career_radar',
+    up: (db) => db.exec(`CREATE TABLE IF NOT EXISTS career_records (
+      owner TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
+      PRIMARY KEY(owner, kind, id)
+    );`),
+  },
+  {
+    name: '019_retire_career_radar',
+    up: (db) => {
+      // Migration 018 ran on beta: retain its historical records without
+      // rewriting applied migrations or keeping the removed module enabled.
+      db.prepare("DELETE FROM app_config WHERE key = 'module.career.enabled'").run();
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -505,6 +520,10 @@ function initDatabase(customPath = null) {
 
   // Create tables if not exist
   db.exec(`
+    CREATE TABLE IF NOT EXISTS career_records (
+      owner TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
+      PRIMARY KEY(owner, kind, id)
+    );
     CREATE TABLE IF NOT EXISTS app_config (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,

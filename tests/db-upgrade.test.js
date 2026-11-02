@@ -150,6 +150,23 @@ describe('In-place database upgrade (older install → current schema)', () => {
     cleanDb(testDb);
   });
 
+  test('retiring Career Radar preserves historical records and removes only its enablement', () => {
+    const { initDatabase, runMigrations, closeDatabase } = require('../server/database/db');
+    const db = initDatabase(testDb);
+    try {
+      db.prepare('INSERT INTO career_records(owner, kind, id, data) VALUES (?, ?, ?, ?)').run('owner', 'profile', 'profile', '{"skills":"Java"}');
+      db.prepare("INSERT OR REPLACE INTO app_config(key, value, updated_at) VALUES ('module.career.enabled', '1', 'now')").run();
+      db.prepare("INSERT OR REPLACE INTO app_config(key, value, updated_at) VALUES ('module.fleet.enabled', '1', 'now')").run();
+      db.prepare("DELETE FROM schema_migrations WHERE name = '019_retire_career_radar'").run();
+      runMigrations(db); runMigrations(db);
+      assert.equal(db.prepare("SELECT value FROM app_config WHERE key = 'module.career.enabled'").get(), undefined);
+      assert.equal(db.prepare("SELECT value FROM app_config WHERE key = 'module.fleet.enabled'").get().value, '1');
+      assert.equal(JSON.parse(db.prepare('SELECT data FROM career_records').get().data).skills, 'Java');
+      assert.ok(db.prepare("SELECT name FROM schema_migrations WHERE name = '018_career_radar'").get());
+      assert.ok(db.prepare("SELECT name FROM schema_migrations WHERE name = '019_retire_career_radar'").get());
+    } finally { closeDatabase(); cleanDb(testDb); }
+  });
+
   test('migration 016 scopes historical events and creates the trace index idempotently', () => {
     const { initDatabase, runMigrations, closeDatabase } = require('../server/database/db');
     const db = initDatabase(testDb);
