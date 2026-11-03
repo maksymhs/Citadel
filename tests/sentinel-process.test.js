@@ -153,8 +153,18 @@ describe('Process identity and termination', () => {
   });
 
   test('a process that ignores SIGTERM is escalated to SIGKILL', async () => {
-    const child = spawnNode('process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);');
-    await sleep(100);
+    const child = spawnNode('process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1000);');
+    // Under load, a spawned Node process may need more than 100 ms to install
+    // its handler. Signal only after the fixture confirms it is actually ready.
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('SIGTERM fixture did not become ready')), 10000);
+      child.stdout.once('data', data => {
+        clearTimeout(timer);
+        if (String(data) === 'ready') resolve();
+        else reject(new Error('Unexpected SIGTERM fixture output'));
+      });
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+    });
     const started = Date.now();
     const result = await sentinel.terminateRecord(recordFor(child));
     const elapsed = Date.now() - started;

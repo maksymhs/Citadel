@@ -73,24 +73,34 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     for (const c of cookie.split('; ')) jar.setCookieSync(c, base);
     const virtualConsole = new VirtualConsole();
     virtualConsole.on('jsdomError', (e) => errors.push(e.message.split('\n')[0]));
-    loadPage = (saved = {}, width = 1024, storageBlocked = false) => JSDOM.fromURL(`${base}/`, {
-      runScripts: 'dangerously', resources: { interceptors: [requestInterceptor(() => { countRequest(); })] },
-      pretendToBeVisual: true, cookieJar: jar, virtualConsole,
-      beforeParse(win) {
-        win.innerWidth = width;
-        for (const [key, value] of Object.entries(saved)) win.localStorage.setItem(key, value);
-        if (storageBlocked) {
-          win.Storage.prototype.getItem = () => { throw new Error('Storage blocked'); };
-          win.Storage.prototype.setItem = () => { throw new Error('Storage blocked'); };
-        }
-        win.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
-        win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
-        win.fetch = (url, opts = {}) => { countRequest(); return fetch(new URL(url, base), { ...opts, signal: undefined, headers: { ...(opts.headers || {}), cookie } }); };
-        win.HTMLCanvasElement.prototype.getContext = () => null;
-        win.addEventListener('error', (e) => errors.push(e.message));
-        win.addEventListener('unhandledrejection', (e) => errors.push(`unhandled rejection: ${e.reason && e.reason.message}`));
-      },
-    });
+    loadPage = async (saved = {}, width = 1024, storageBlocked = false) => {
+      const page = await JSDOM.fromURL(`${base}/`, {
+        runScripts: 'dangerously', resources: { interceptors: [requestInterceptor(() => { countRequest(); })] },
+        pretendToBeVisual: true, cookieJar: jar, virtualConsole,
+        beforeParse(win) {
+          win.innerWidth = width;
+          for (const [key, value] of Object.entries(saved)) win.localStorage.setItem(key, value);
+          if (storageBlocked) {
+            win.Storage.prototype.getItem = () => { throw new Error('Storage blocked'); };
+            win.Storage.prototype.setItem = () => { throw new Error('Storage blocked'); };
+          }
+          win.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
+          win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+          win.fetch = (url, opts = {}) => { countRequest(); return fetch(new URL(url, base), { ...opts, signal: undefined, headers: { ...(opts.headers || {}), cookie } }); };
+          win.HTMLCanvasElement.prototype.getContext = () => null;
+          win.addEventListener('error', (e) => errors.push(e.message));
+          win.addEventListener('unhandledrejection', (e) => errors.push(`unhandled rejection: ${e.reason && e.reason.message}`));
+        },
+      });
+      // Script downloads completing is not the same as async authentication and
+      // shell initialisation completing, especially during the parallel suite.
+      for (let i = 0; i < 300 && !page.window.document.querySelector('.nav-item'); i++) await sleep(50);
+      if (!page.window.document.querySelector('.nav-item')) {
+        page.window.close();
+        assert.fail('App shell did not become ready within 15 seconds');
+      }
+      return page;
+    };
     dom = await loadPage();
     w = dom.window;
     await sleep(2500);
