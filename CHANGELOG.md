@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.70.0](https://github.com/maksymhs/Citadel/releases/tag/v0.70.0) · 2026-11-03
+
+### Added
+
+- **settings**: Unify system and configuration in one hub
+
 ## [0.69.0](https://github.com/maksymhs/Citadel/releases/tag/v0.69.0) · 2026-11-02
 
 ### Fixed

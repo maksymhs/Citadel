@@ -222,6 +222,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 | Latest | |
 | --- | --- |
+| [v0.70.0](https://github.com/maksymhs/Citadel/releases/tag/v0.70.0) | One Settings hub with System and Configuration groups, compatible shortcuts and scoped detail loading |
 | [v0.69.0](https://github.com/maksymhs/Citadel/releases/tag/v0.69.0) | Clean native OpenCode fallback, safe beta-state retirement and host-isolated tunnel tests |
 | [v0.68.0](https://github.com/maksymhs/Citadel/releases/tag/v0.68.0) | AI Gateway can be disabled per CLI and open project terminals return to native providers |
 | [v0.66.0](https://github.com/maksymhs/Citadel/releases/tag/v0.66.0) | Dashboard metric shortcuts, Activity & Audit in System, and single-row responsive processes |
