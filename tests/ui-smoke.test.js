@@ -490,6 +490,26 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.equal(box.querySelector('[data-ai="install"]').disabled, false);
       assert.equal(box.querySelector('[data-ai="login"]').disabled, true);
       assert.equal(box.querySelector('[data-ai="test"]').disabled, true);
+      let cancelled = false;
+      w.fetch = (url, options) => {
+        if (String(url) === '/api/director/setup/cancel') {
+          cancelled = true;
+          assert.equal(options.method, 'POST');
+          return Promise.resolve({ ok: true, json: async () => ({ phase: 'idle' }) });
+        }
+        if (String(url) === '/api/director/setup') return Promise.resolve({ ok: true, json: async () => ({ installed: true, connected: false, ready: false, operation: cancelled ? { phase: 'idle' } : { phase: 'running', action: 'login', url: 'https://auth.openai.com/codex/device', code: 'ABCD-EFGHI' } }) });
+        return originalFetch(url, options);
+      };
+      w.document.getElementById('director-refresh').click();
+      await sleep(500);
+      const cancel = w.document.querySelector('[data-ai="cancel"]');
+      assert.ok(cancel);
+      assert.equal(cancel.disabled, false);
+      cancel.click();
+      await sleep(300);
+      assert.equal(cancelled, true);
+      assert.equal(w.document.querySelector('[data-ai="login"]').disabled, false);
+      assert.ok(!w.document.getElementById('director-ai-setup').textContent.includes('ABCD-EFGHI'));
       assert.deepEqual(errors, []);
     } finally { w.fetch = originalFetch; }
   });

@@ -45,3 +45,41 @@ test('GUI coordinator test makes a bounded real execution request and verifies i
   try { assert.equal((await setup.test()).phase, 'done'); assert.equal(invoked, true); }
   finally { setup.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+test('completed native authorization releases a stalled login and removes its code', async () => {
+  const child = fakeChild(); let authorized = false;
+  const setup = createDirectorSetup({ findBinary: () => '/managed/codex', spawnImpl: () => child, execImpl: async (cmd, args) => ({ stdout: args[0] === 'login' && authorized ? 'Logged in using ChatGPT' : 'codex', stderr: '' }) });
+  try {
+    setup.start('login');
+    child.stdout.emit('data', Buffer.from('https://auth.openai.com/codex/device ABCD-EFGHI'));
+    assert.equal((await setup.status()).operation.phase, 'running');
+    authorized = true;
+    const state = await setup.status();
+    assert.equal(state.connected, true);
+    assert.equal(state.operation.phase, 'done');
+    assert.equal(state.operation.code, undefined);
+    child.emit('close', 1);
+    assert.equal((await setup.status()).operation.phase, 'done');
+  } finally { setup.close(); }
+});
+test('cancel clears the old device code and permits a fresh authorization attempt', async () => {
+  const setup = createDirectorSetup({ findBinary: () => '/managed/codex', spawnImpl: fakeChild, execImpl: async () => ({ stdout: '', stderr: '' }) });
+  try {
+    setup.start('login');
+    assert.equal(setup.cancel().phase, 'idle');
+    assert.equal((await setup.status()).operation.code, undefined);
+    assert.equal(setup.start('login').phase, 'running');
+    await assert.rejects(setup.test(), { statusCode: 409 });
+  } finally { setup.close(); }
+});
+test('failed authorization explains permissions without exposing raw diagnostics', async () => {
+  const child = fakeChild();
+  const setup = createDirectorSetup({ findBinary: () => '/managed/codex', spawnImpl: () => child, execImpl: async () => ({ stdout: '', stderr: '' }) });
+  try {
+    setup.start('login');
+    child.stderr.emit('data', Buffer.from('Permission denied /private/session secret-value'));
+    child.emit('close', 1);
+    const state = await setup.status();
+    assert.match(state.operation.message, /write access/);
+    assert.ok(!JSON.stringify(state).includes('secret-value'));
+  } finally { setup.close(); }
+});

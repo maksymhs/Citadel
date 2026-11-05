@@ -35,11 +35,14 @@
         if (!root.isConnected) return;
         const op = status.operation || {}, busy = op.phase === 'running';
         box.innerHTML = `<p>Codex: <strong>${status.installed ? 'Installed' : 'Not installed'}</strong> · ChatGPT: <strong>${status.connected ? 'Connected' : 'Not connected'}</strong></p>
+          ${status.authIssue ? `<p>${esc(status.authIssue)}</p>` : ''}
           <p role="status">${esc(op.message || 'Install Codex, connect ChatGPT, then test the coordinator. No SSH commands are needed.')}</p>
-          ${op.url && op.code ? `<p><a href="${esc(op.url)}" target="_blank" rel="noopener noreferrer">Open OpenAI authorization</a></p><p>Enter this code: <strong>${esc(op.code)}</strong></p>` : ''}
+          ${!status.connected && op.url && op.code ? `<p><a href="${esc(op.url)}" target="_blank" rel="noopener noreferrer">Open OpenAI authorization</a></p><p>Enter this code: <strong>${esc(op.code)}</strong></p>` : ''}
+          ${busy && op.action !== 'test' ? '<button class="btn btn-secondary" data-ai="cancel">Cancel setup / request a new code</button>' : ''}
           <button class="btn btn-secondary" data-ai="install" ${busy ? 'disabled' : ''}>${status.installed ? 'Reinstall Codex' : 'Install Codex'}</button>
           <button class="btn btn-secondary" data-ai="login" ${busy || !status.installed ? 'disabled' : ''}>Connect ChatGPT</button>
-          <button class="btn btn-primary" data-ai="test" ${busy || !status.ready ? 'disabled' : ''}>Test coordinator</button>`;
+          <button class="btn btn-primary" data-ai="test" ${busy || !status.ready ? 'disabled' : ''}>Test coordinator</button>
+          ${!status.ready ? '<p>The coordinator test becomes available after OpenAI confirms authorization and ChatGPT shows Connected.</p>' : ''}`;
         box.querySelectorAll('[data-ai]').forEach(button => {
           button.onclick = async () => {
             box.querySelectorAll('button').forEach(b => { b.disabled = true; });

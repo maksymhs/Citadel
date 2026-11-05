@@ -34,6 +34,7 @@ async function directorRoutes(fastify, options = {}) {
   route('GET', '/setup', null, () => setup.status());
   route('POST', '/setup/install', 'codex_install', () => ({ operation: setup.start('install') }));
   route('POST', '/setup/login', 'codex_login', () => ({ operation: setup.start('login') }));
+  route('POST', '/setup/cancel', 'codex_cancel', () => setup.cancel());
   route('POST', '/setup/test', 'codex_test', () => setup.test());
   route('PUT', '/config', 'configured', r => ({ config: director.configure(r.body) }));
   route('PUT', '/projects/:id', 'policy_saved', r => ({ project: director.configureProject(r.params.id, r.body || {}) }));

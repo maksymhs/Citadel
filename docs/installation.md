@@ -490,6 +490,11 @@ are not modified. Token command output is not copied into setup logs or UI detai
 
 In **Settings → Telegram director → Coordinator AI**, use **Install Codex**,
 **Connect ChatGPT** (browser device authorization), then **Test coordinator**.
+Approve the device code on the OpenAI page and return to Citadel; the panel
+checks the saved session automatically. If authorization stalls, use **Cancel
+setup / request a new code**, then **Connect ChatGPT** again. The test is enabled
+only after ChatGPT shows Connected. Permission and connectivity failures are
+shown without exposing raw credentials.
 The server installs and authorizes under the same service identity used by the
 bot. No executable path, API key or shell login command is required. See
 [Telegram director setup](telegram-director.md) for subscription and kernel limits.
