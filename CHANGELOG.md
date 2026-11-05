@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.72.0](https://github.com/maksymhs/Citadel/releases/tag/v0.72.0) · 2026-11-05
+
+### Changed
+
+- **workspace**: Simplify System terminals and remove Telegram director
+
 ## [0.71.3](https://github.com/maksymhs/Citadel/releases/tag/v0.71.3) · 2026-11-05
 
 ### Fixed
