@@ -1005,3 +1005,10 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Coordinator prompts now include a bounded recent successful conversation, preserving conversational context without treating old messages as fresh authorization. Greetings can return replies with no actions.
 - Worker startup/quota failures no longer flow into action parsing as Invalid coordinator response; Telegram explains native service-user login/availability and retains the blocked request. No raw provider diagnostics are exposed.
 - Focused director regressions cover unavailable Codex and multi-turn conversation without accidental execution. Native user-server authentication remains to be diagnosed; this change does not certify live inference.
+
+## 206. Configure native coordinator AI from Telegram settings
+
+- Added administrator-only GUI/API controls for fixed Codex install, native ChatGPT device authorization, service-user readiness status and one bounded real coordinator test. Installation reuses the existing validated agent lifecycle. Browser authorization exposes only the approved OpenAI device URL and temporary code; no raw CLI output, token audit fields or SSH commands are required.
+- Native executable paths are resolved through the agent registry for worker payloads and compatibility diagnosis, addressing codex missing from the service-user PATH. API-key authorization does not silently substitute for the selected subscription.
+- Verification includes fixed-command installation, authorization-code parsing/clearing, missing CLI, API-key rejection, bounded inference output checking, administrator-only endpoints and GUI button gating. Native subscription authorization and real installation on the user's VPS remain to be validated through the new GUI.
+- Final validation: 27 focused setup/director tests and 3 focused real-SPA setup/Settings tests passed; lint and whitespace checks passed. Full suite completed 752 tests: 741 passed, 1 failed, 8 cancelled, 2 skipped, with the previously observed agent SQLite setup and process-group termination failures. No live account login or package installation was run by the tests.

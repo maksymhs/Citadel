@@ -7,8 +7,8 @@ const run = promisify(execFile);
 const { repositoryIdentity } = require('./repositoryIdentity');
 
 async function command(cmd, args, cwd, timeout = 15000) {
-  const { stdout } = await run(cmd, args, { cwd, timeout, maxBuffer: 2 * 1024 * 1024 });
-  return stdout.trim();
+  const { stdout, stderr } = await run(cmd, args, { cwd, timeout, maxBuffer: 2 * 1024 * 1024 });
+  return (args[0] === 'login' && args[1] === 'status' ? stdout + stderr : stdout).trim();
 }
 async function diagnose(project, policy = {}, { runCommand = command } = {}) {
   const checks = [], cwd = project.path;
@@ -17,8 +17,10 @@ async function diagnose(project, policy = {}, { runCommand = command } = {}) {
     catch { checks.push({ name, ready: false }); return null; }
   };
   const head = await check('repository', 'git', ['rev-parse', 'HEAD']);
-  await check('codex', 'codex', ['--version']);
-  await check('subscription-login', 'codex', ['login', 'status']);
+  const binary = require('./agentRegistry').findBinary('codex') || 'codex';
+  await check('codex', binary, ['--version']);
+  const login = await check('subscription-login', binary, ['login', 'status']);
+  if (login && (!/ChatGPT/i.test(login) || /API key/i.test(login))) checks[checks.length - 1].ready = false;
   const hasKernel = fs.existsSync(path.join(cwd, '.agent/policy.yml'));
   const oceans = project.adapter === 'oceans' || hasKernel;
   if (oceans) {

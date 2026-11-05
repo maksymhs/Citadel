@@ -485,3 +485,11 @@ panel with `sudo systemctl restart citadel` to release the blocked HTTP process.
 The named-tunnel runner uses its own hostname-to-local-panel ingress configuration;
 it does not inherit unrelated `/etc/cloudflared/config.yml` routes. Global files
 are not modified. Token command output is not copied into setup logs or UI detail.
+
+### Coordinator AI without SSH
+
+In **Settings → Telegram director → Coordinator AI**, use **Install Codex**,
+**Connect ChatGPT** (browser device authorization), then **Test coordinator**.
+The server installs and authorizes under the same service identity used by the
+bot. No executable path, API key or shell login command is required. See
+[Telegram director setup](telegram-director.md) for subscription and kernel limits.

@@ -273,7 +273,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 ## Telegram project director (experimental)
 
-Settings → Telegram director configures one private bot to supervise projects in parallel. Native Codex login and per-project verification/publication policies are required. Oceans autonomy stays blocked pending kernel integration. [Setup and limits](docs/telegram-director.md).
+Settings → Telegram director configures one private bot to supervise projects in parallel. Install Codex, connect ChatGPT in your browser and test the coordinator directly from this screen. Per-project verification/publication policies are required. Oceans autonomy stays blocked pending kernel integration. [Setup and limits](docs/telegram-director.md).
 
 ## 🛠️ Development
 

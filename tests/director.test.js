@@ -36,7 +36,7 @@ beforeEach(() => {
   const db = getDatabase();
   for (const t of ['director_jobs', 'director_projects', 'director_config', 'director_inbox', 'director_outbox', 'tasks']) db.prepare('DELETE FROM ' + t).run();
   db.prepare('UPDATE director_chat SET project_id=NULL,offset=0,paused=0').run();
-  service = createDirectorService({ projects: { listProjects: () => fixtures }, dataDir: temp, diagnose: async p => ({ ready: true, repoKey: repositoryIdentity(p.path) }) });
+  service = createDirectorService({ projects: { listProjects: () => fixtures }, dataDir: temp, coordinatorStatus: async () => ({ ready: true }), diagnose: async p => ({ ready: true, repoKey: repositoryIdentity(p.path) }) });
   service.configure({ enabled: true, ownerId: '42', chatId: '42', token });
 });
 after(() => { closeDatabase(); fs.rmSync(temp, { recursive: true, force: true }); });
@@ -185,6 +185,8 @@ test('administrator APIs reject anonymous and cross-site callers and conceal the
     const setup = await app.inject({ method: 'POST', url: '/api/auth/setup', payload: { username: 'director-owner', password: 'DirectorTestPassword123!' } });
     const cookie = setup.cookies.find(c => c.name === 'session_id').value;
     assert.equal((await app.inject({ method: 'GET', url: '/api/director' })).statusCode, 401);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/director/setup/install' })).statusCode, 401);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/director/setup/login' })).statusCode, 401);
     assert.equal((await app.inject({ method: 'PUT', url: '/api/director/config', cookies: { session_id: cookie }, headers: { origin: 'https://foreign.example' }, payload: { enabled: false } })).statusCode, 403);
     const status = await app.inject({ method: 'GET', url: '/api/director', cookies: { session_id: cookie } });
     assert.equal(status.statusCode, 200); assert.ok(!status.payload.includes(token));

@@ -475,6 +475,25 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
+  test('Telegram AI setup offers installation, authorization and a gated coordinator test', async () => {
+    const originalFetch = w.fetch;
+    w.fetch = (url, options) => String(url) === '/api/director/setup'
+      ? Promise.resolve({ ok: true, json: async () => ({ installed: false, connected: false, ready: false, operation: { phase: 'idle' } }) })
+      : originalFetch(url, options);
+    try {
+      w.document.querySelector('.nav-item[data-view="settings"]').click();
+      await sleep(400);
+      w.document.querySelector('[data-settings-section="director"]').click();
+      await sleep(500);
+      const box = w.document.getElementById('director-ai-setup');
+      assert.ok(box.querySelector('[data-ai="install"]'));
+      assert.equal(box.querySelector('[data-ai="install"]').disabled, false);
+      assert.equal(box.querySelector('[data-ai="login"]').disabled, true);
+      assert.equal(box.querySelector('[data-ai="test"]').disabled, true);
+      assert.deepEqual(errors, []);
+    } finally { w.fetch = originalFetch; }
+  });
+
   test('Settings is a compact navigation-only hub and keeps Updates and pairing accessible', async () => {
     const originalFetch = w.fetch, calls = [];
     w.fetch = (url, options) => { calls.push(String(url)); return originalFetch(url, options); };

@@ -7,9 +7,14 @@ and enables it in **Settings → Telegram director**. Linux is the execution tar
 ## Setup
 
 1. Run Citadel as a dedicated unprivileged user, without the privileged System
-   Terminal. Install Git and native Codex for that user and complete its native
-   ChatGPT login. API credentials are not required and the worker removes
-   OPENAI_API_KEY rather than silently billing the API.
+   Terminal. In **Settings → Telegram director → Coordinator AI**, click
+   **Install Codex**, then **Connect ChatGPT**. Open the official authorization
+   link, enter the displayed one-time code and finish in your browser. No SSH
+   login command is needed. Finally click **Test coordinator**: this makes one
+   short real model request and verifies the reply. Native subscription login
+   is checked as the Citadel service user; API-key login does not count as a
+   connected ChatGPT subscription. Device-code login may need enabling in your
+   account's security settings. API credentials are not required.
 2. Create a bot with BotFather. In Settings enter its token, your numeric Telegram
    user ID and your private chat ID. Tokens are encrypted at rest, never returned.
    Use a dedicated bot: no other application may consume its updates or configure
@@ -80,8 +85,8 @@ mesh protocol. Never delete a journal to make a task eligible again.
 Publication reads GitHub state before effects and binds merge to the verified PR
 head. Uncertain publication is stopped for operator reconciliation; inspect the
 stored result, branch, PR and workflow before submitting further instructions.
-This initial version does not automatically recover a missing native session,
-re-authenticate providers or renew project permissions. Quota pauses do not switch
+This version does not automatically recover a missing native session or renew
+project permissions. Reconnect a provider manually from Coordinator AI when needed. Quota pauses do not switch
 to another billing account. Timeouts default to 30 minutes and preserve work.
 Tests and CLI authentication must already work on the host; dependency installation
 may need the operator's configured native sandbox/network policy.
@@ -121,3 +126,16 @@ and return no-store responses. Mutations are audited without message/token conte
 
 `CITADEL_DIRECTOR_TICK_MS` sets the local scheduling interval (default 2000,
 minimum 1000). No Telegram credentials are passed in worker environment variables.
+
+### Coordinator AI setup API
+
+Administrator-only, same origin protections as other director endpoints:
+`GET /api/director/setup`, `POST /api/director/setup/install`,
+`POST /api/director/setup/login`, and `POST /api/director/setup/test`.
+Installation reuses the fixed Codex lifecycle with validation and retained releases.
+The browser can never supply an installer command or executable path. Authorization
+runs `codex login --device-auth` as the service user; only the approved OpenAI URL
+and temporary code are returned, never raw CLI output or account tokens. Codes are
+cleared when authorization ends and are not persisted in Citadel configuration.
+The actual installed executable is resolved through the agent registry for setup,
+project diagnosis and director workers, independently of the SSH user's PATH.

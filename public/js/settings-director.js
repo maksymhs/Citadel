@@ -11,6 +11,7 @@
     const cfg = snapshot.config;
     root.innerHTML = `<h3>One bot, several projects</h3>
       <p>Ask how a project is going, request the next step, or start another project while it works. Only your private Telegram chat is accepted.</p>
+      <section class="card"><h3>Coordinator AI</h3><div id="director-ai-setup">Checking Codex…</div></section>
       <form id="director-config">
         <label><input type="checkbox" name="enabled" ${cfg.enabled ? 'checked' : ''}> Enable Telegram director</label>
         <p><label>Telegram user ID <input class="form-input" name="ownerId" value="${esc(cfg.ownerId)}" inputmode="numeric" required></label></p>
@@ -26,6 +27,32 @@
       <h3>Projects</h3><div id="director-projects"></div>
       <h3>Pending decisions</h3><div id="director-decisions"></div>`;
     const act = async fn => { try { await fn(); showToast('Saved', 'success'); await init(ctx); } catch (err) { showToast(err.message || 'Operation failed', 'error'); } };
+    async function refreshSetup() {
+      const box = root.querySelector('#director-ai-setup');
+      if (!root.isConnected || !box) return;
+      try {
+        const status = await api('/api/director/setup');
+        if (!root.isConnected) return;
+        const op = status.operation || {}, busy = op.phase === 'running';
+        box.innerHTML = `<p>Codex: <strong>${status.installed ? 'Installed' : 'Not installed'}</strong> · ChatGPT: <strong>${status.connected ? 'Connected' : 'Not connected'}</strong></p>
+          <p role="status">${esc(op.message || 'Install Codex, connect ChatGPT, then test the coordinator. No SSH commands are needed.')}</p>
+          ${op.url && op.code ? `<p><a href="${esc(op.url)}" target="_blank" rel="noopener noreferrer">Open OpenAI authorization</a></p><p>Enter this code: <strong>${esc(op.code)}</strong></p>` : ''}
+          <button class="btn btn-secondary" data-ai="install" ${busy ? 'disabled' : ''}>${status.installed ? 'Reinstall Codex' : 'Install Codex'}</button>
+          <button class="btn btn-secondary" data-ai="login" ${busy || !status.installed ? 'disabled' : ''}>Connect ChatGPT</button>
+          <button class="btn btn-primary" data-ai="test" ${busy || !status.ready ? 'disabled' : ''}>Test coordinator</button>`;
+        box.querySelectorAll('[data-ai]').forEach(button => {
+          button.onclick = async () => {
+            box.querySelectorAll('button').forEach(b => { b.disabled = true; });
+            box.querySelector('[role="status"]').textContent = button.dataset.ai === 'test' ? 'Testing one real coordinator response…' : 'Starting setup…';
+            try { await api('/api/director/setup/' + button.dataset.ai, { method: 'POST' }); }
+            catch (err) { showToast(err.message || 'Codex setup failed', 'error'); }
+            if (root.isConnected) await refreshSetup();
+          };
+        });
+        if (busy) setTimeout(() => { if (root.isConnected) void refreshSetup(); }, 2500);
+      } catch { box.textContent = 'Could not check Codex setup. Refresh this screen after updating Citadel.'; }
+    }
+    void refreshSetup();
     root.querySelector('#director-config').onsubmit = event => {
       event.preventDefault();
       const f = event.currentTarget.elements;

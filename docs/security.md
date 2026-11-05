@@ -189,3 +189,9 @@ compatibility and arbitrary streaming/tool replay remain unverified.
 ## Telegram director
 
 The opt-in director accepts one numeric owner in one private chat. Bot tokens are encrypted and omitted from API responses and task environments. Worktrees share the service UID and do not isolate projects or protect service-account files from project code. Use trusted projects without privileged System Terminal grants. Publication requires configured tests and GitHub destinations; Oceans follows its kernel and stays blocked until integration is verified. See [limits](telegram-director.md).
+
+Native director authorization is administrator-only and uses Codex device login.
+Only the allowlisted OpenAI authorization URL and temporary user code reach the
+setup screen, with no-store responses. Raw CLI output and account tokens are not
+stored in Citadel configuration or audit fields. The fixed install action reuses
+the validated agent lifecycle; no browser-supplied shell command is accepted.

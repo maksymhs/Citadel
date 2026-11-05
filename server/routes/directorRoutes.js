@@ -2,15 +2,17 @@
 const { requireAuth } = require('../security/auth');
 const { isAllowedOrigin } = require('../security/guard');
 const audit = require('../services/auditService');
+const { createDirectorSetup } = require('../services/directorSetup');
 const { createDirectorRuntime } = require('../services/directorRuntime');
 async function directorRoutes(fastify, options = {}) {
+  const setup = options.setup || createDirectorSetup();
   const runtime = options.runtime || createDirectorRuntime(), director = runtime.service;
   fastify.addHook('onListen', async () => {
     if (options.startRuntime === false) return;
     const address = fastify.server.address();
     runtime.start(`http://127.0.0.1:${address.port}`);
   });
-  fastify.addHook('onClose', async () => runtime.close());
+  fastify.addHook('onClose', async () => { setup.close(); await runtime.close(); });
   fastify.addHook('preHandler', async (request, reply) => {
     await requireAuth(request, reply);
     if (reply.sent) return;
@@ -29,6 +31,10 @@ async function directorRoutes(fastify, options = {}) {
     } });
   }
   route('GET', '', null, () => ({ ...director.snapshot(), runtime: runtime.status() }));
+  route('GET', '/setup', null, () => setup.status());
+  route('POST', '/setup/install', 'codex_install', () => ({ operation: setup.start('install') }));
+  route('POST', '/setup/login', 'codex_login', () => ({ operation: setup.start('login') }));
+  route('POST', '/setup/test', 'codex_test', () => setup.test());
   route('PUT', '/config', 'configured', r => ({ config: director.configure(r.body) }));
   route('PUT', '/projects/:id', 'policy_saved', r => ({ project: director.configureProject(r.params.id, r.body || {}) }));
   route('POST', '/projects/:id/diagnose', 'diagnosed', r => director.diagnose(r.params.id));

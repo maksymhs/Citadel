@@ -43,4 +43,4 @@ return to the Terminal/VS Code chooser without starting work.
 
 Some names above are prefixes (`task-*` covers `task-execution`, `task-leases`, `task-node-*`; `sentinel*` covers `sentinel`, `sentinel-env`, `sentinel-process`, `sentinel-report`). Check a suite exists with `ls tests | grep <name>`.
 
-| Telegram project director (opt-in, experimental) | `directorRoutes` → `directorService`, `directorRuntime`, `directorAdapters`, `directorGitHub`; sentinel + `scripts/director/worker.js` | `settings-director.js` | `director`, `tasks`, `db-upgrade`, `ui-smoke` | [setup](telegram-director.md) |
+| Telegram project director (opt-in, experimental) | `directorRoutes` → `directorService`, `directorRuntime`, `directorSetup`, `directorAdapters`, `directorGitHub`; sentinel + `scripts/director/worker.js` | `settings-director.js` | `director`, `tasks`, `db-upgrade`, `ui-smoke` | [setup](telegram-director.md) |

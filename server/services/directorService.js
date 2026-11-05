@@ -21,7 +21,8 @@ const MENU = { inline_keyboard: [
   [{ text: '📊 Estado global', callback_data: 'status' }, { text: '⏸ Pausar todo', callback_data: 'pauseall' }],
 ] };
 function createDirectorService({ db = getDatabase, projects = projectsDefault, tasks = tasksDefault,
-  dataDir = config.DATA_DIR, diagnose = adapters.diagnose, publisher = publish, runCommand = adapters.command } = {}) {
+  dataDir = config.DATA_DIR, diagnose = adapters.diagnose, publisher = publish, runCommand = adapters.command,
+  coordinatorStatus = () => require('./directorSetup').createDirectorSetup().status() } = {}) {
   const root = path.join(dataDir, 'director');
   let ticking = false;
   const sql = (query, ...args) => db().prepare(query).all(...args);
@@ -248,6 +249,11 @@ function createDirectorService({ db = getDatabase, projects = projectsDefault, t
     // including jobs whose process outcome is not yet known.
     if (p && jobs().some(j => j.id !== job.id && j.project_id && project(j.project_id).repoKey === p.repoKey && ['running', 'pausing', 'cancelling', 'uncertain', 'publishing', 'publication_uncertain'].includes(j.state))) return;
     if (job.kind === 'route' && jobs().some(j => j.id !== job.id && j.kind === 'route' && j.state === 'running')) return;
+    if (job.kind === 'route' && !(await coordinatorStatus()).ready) {
+      write("UPDATE director_jobs SET state='blocked',updated_at=? WHERE id=?", now(), job.id);
+      send('Conecta la IA en Settings → Telegram director → Coordinator AI: instala Codex, conecta ChatGPT y prueba el coordinador. Tu mensaje se conserva y no se ha ejecutado ninguna acción.', { dedupe: job.id + ':setup-required' });
+      return;
+    }
     if (p) {
       const diagnostics = await diagnose(p, p.policy);
       if (!diagnostics.ready) {
@@ -261,7 +267,7 @@ function createDirectorService({ db = getDatabase, projects = projectsDefault, t
     let progress = {};
     try { progress = parse(fs.readFileSync(path.join(root, job.id + '.result.json.progress.json'), 'utf8')); } catch { /* No prior execution. */ }
     const old = { ...progress, ...parse(job.result) };
-    const input = { kind: job.kind, job, project: p, policy: p?.policy || {},
+    const input = { codex: require('./agentRegistry').findBinary('codex') || 'codex', kind: job.kind, job, project: p, policy: p?.policy || {},
       directory: p?.path || control, workRoot: path.join(root, 'worktrees'),
       sessionId: job.session_id || old.sessionId || (p?.adapter === 'oceans' ? p.sessionId : null),
       worktree: old.worktree || null, timeoutMs: cfg.timeoutMs, resultFile: path.join(root, job.id + '.result.json') };
