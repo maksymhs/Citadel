@@ -469,6 +469,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     const form = w.document.getElementById('director-config');
     assert.ok(form, w.document.getElementById('main-content').textContent);
     assert.equal(form.elements.enabled.checked, false);
+    assert.equal(form.elements.manualMode.checked, false);
     assert.equal(form.elements.token.type, 'password');
     assert.equal(form.elements.token.value, '');
     assert.ok(w.document.getElementById('director-projects'));

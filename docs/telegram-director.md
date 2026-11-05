@@ -58,9 +58,15 @@ inspects source/backlog under the adapter and returns a recommendation; “sigue
 starts that proposal. The router requires a project when the destination is
 ambiguous. A selected project affects new messages, not replies to older cards.
 
-`/projects`, `/status`, `/decisions`, `/pauseall`, `/resumeall`, and `/menu` are
-available without a model. Project cards offer consultation, continuation, pause,
-resume and cancellation. Reply to a decision message or choose an offered option.
+Chat mode is the default, including existing installations: replies contain text
+and no inline menus. Send `/manual` or `/menu` to explicitly enable menus, and
+`/chat` to return to conversation. The preference persists and is also available
+as **Manual mode · show Telegram menus** in Settings → Telegram director.
+
+`/projects`, `/status`, `/decisions`, `/pauseall`, and `/resumeall` remain
+available without a model. Manual project cards offer consultation, continuation,
+pause, resume and cancellation. In chat mode, decision questions list their
+options in text; reply to the decision message to answer.
 The owner may also use the panel for configuration and decisions.
 
 Repos share a scheduling identity across Git worktrees. A second job for the same

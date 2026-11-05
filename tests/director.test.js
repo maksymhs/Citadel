@@ -107,6 +107,8 @@ test('decision replies retain their original project and are accepted once', asy
   const job = service.enqueue('execute', 'p0', 'add auth'); await service.tick();
   complete(service.jobs().find(j => j.id === job.id), { outcome: 'needs_input', summary: 'Choose auth', question: 'Which provider?', options: ['A', 'B'], sessionId: 's1' }); await service.tick();
   const question = service.outbox().find(o => o.job_id === job.id); service.delivered(question.id, 101);
+  assert.equal(JSON.parse(question.payload).reply_markup, undefined);
+  assert.match(JSON.parse(question.payload).text, /1\. A\n2\. B/);
   service.receive(update(11, 'p:p1')); // text does not become callback; change selection explicitly below
   getDatabase().prepare("UPDATE director_chat SET project_id='p1'").run();
   service.receive(update(12, 'A', { reply_to_message: { message_id: 101 } })); service.processInbox();
@@ -208,4 +210,22 @@ test('the coordinator receives recent conversation without turning a greeting in
   const input = JSON.parse(fs.readFileSync(path.join(temp, 'director', next.id + '.input.json'), 'utf8'));
   assert.match(input.prompt, /Quiero hablar sobre oceans/); assert.match(input.prompt, /Hablemos de Oceans/);
   assert.equal(service.jobs().filter(j => j.kind === 'execute').length, 0);
+});
+
+test('conversation omits menus until explicit manual mode and remembers the preference', () => {
+  service.receive(update(301, '/start')); service.processInbox();
+  assert.equal(service.settings().manualMode, false);
+  assert.equal(JSON.parse(service.outbox().find(o => o.dedupe === 'update:301').payload).reply_markup, undefined);
+  service.receive(update(302, '/manual')); service.processInbox();
+  assert.equal(service.settings().manualMode, true);
+  assert.ok(JSON.parse(service.outbox().find(o => o.dedupe === 'update:302').payload).reply_markup.inline_keyboard.length);
+  const restored = createDirectorService({ projects: { listProjects: () => fixtures }, dataDir: temp });
+  assert.equal(restored.settings().manualMode, true);
+  service.receive(update(303, '/chat')); service.processInbox();
+  assert.equal(service.settings().manualMode, false);
+  assert.equal(JSON.parse(service.outbox().find(o => o.dedupe === 'update:303').payload).reply_markup, undefined);
+  service.receive(update(304, '/projects')); service.processInbox();
+  const listing = JSON.parse(service.outbox().find(o => o.dedupe === 'update:304').payload);
+  assert.match(listing.text, /portfolio/); assert.equal(listing.reply_markup, undefined);
+  assert.throws(() => service.configure({ manualMode: 'yes' }), /boolean/);
 });

@@ -70,7 +70,9 @@ function createDirectorRuntime({ service = createDirectorService(), fetchImpl = 
       await service.tick();
       for (const entry of service.outbox()) {
         try {
-          const sent = await telegram('sendMessage', { chat_id: cfg.chatId, ...JSON.parse(entry.payload) });
+          const payload = JSON.parse(entry.payload);
+          if (!service.settings().manualMode) delete payload.reply_markup;
+          const sent = await telegram('sendMessage', { chat_id: cfg.chatId, ...payload });
           service.delivered(entry.id, sent.message_id);
         } catch { service.deliveryFailed(entry.id); lastError = 'Telegram delivery pending.'; break; }
       }

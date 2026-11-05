@@ -39,7 +39,7 @@ test('stored API-key authorization is not mistaken for the selected ChatGPT subs
 test('GUI coordinator test makes a bounded real execution request and verifies its output', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'director-setup-test-')); let invoked = false;
   const setup = createDirectorSetup({ dataDir: dir, findBinary: () => '/managed/codex', execImpl: async (cmd, args, options) => {
-    if (args[0] === 'exec') { invoked = true; assert.equal(options.timeout, 45000); assert.ok(args.includes('read-only')); fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], 'CITADEL_COORDINATOR_READY'); }
+    if (args[0] === 'exec') { invoked = true; assert.equal(options.timeout, 180000); assert.ok(args.includes('read-only')); fs.writeFileSync(args[args.indexOf('--output-last-message') + 1], 'CITADEL_COORDINATOR_READY'); }
     return { stdout: args[0] === 'login' ? 'Logged in using ChatGPT' : 'codex', stderr: '' };
   } });
   try { assert.equal((await setup.test()).phase, 'done'); assert.equal(invoked, true); }
@@ -101,7 +101,7 @@ test('GUI starts inference without keeping the HTTP request open and bounds a hu
     const state = await setup.status();
     assert.equal(invoked, true);
     assert.equal(state.operation.phase, 'error');
-    assert.match(state.operation.message, /exceeded 45 seconds/);
+    assert.match(state.operation.message, /within 3 minutes/);
     assert.equal(fs.readdirSync(path.join(dir, 'director', 'control')).length, 0);
   } finally { setup.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

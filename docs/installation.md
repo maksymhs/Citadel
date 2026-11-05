@@ -494,8 +494,9 @@ Approve the device code on the OpenAI page and return to Citadel; the panel
 checks the saved session automatically. If authorization stalls, use **Cancel
 setup / request a new code**, then **Connect ChatGPT** again. The test is enabled
 only after ChatGPT shows Connected. The coordinator test runs in the background;
-the panel polls its result and stops inference after 45 seconds if no response
-arrives. A completed login stays Connected and does not require another login. Permission and connectivity failures are
+the panel polls its result and stops inference after three minutes if no response
+arrives. A test timeout does not mark the account disconnected; Telegram replies
+may already be working. A completed login stays Connected and does not require another login. Permission and connectivity failures are
 shown without exposing raw credentials.
 The server installs and authorizes under the same service identity used by the
 bot. No executable path, API key or shell login command is required. See

@@ -8,7 +8,7 @@ const { promisify } = require('node:util');
 const registry = require('./agentRegistry');
 const { DATA_DIR, ROOT_DIR } = require('../config');
 const execute = promisify(execFile);
-function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), spawnImpl = spawn, execImpl = execute, dataDir = DATA_DIR, testTimeoutMs = 45000 } = {}) {
+function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), spawnImpl = spawn, execImpl = execute, dataDir = DATA_DIR, testTimeoutMs = 180000 } = {}) {
   let child = null, timer, operation = { phase: 'idle', action: null, message: '' };
   function environment() {
     const env = { ...process.env };
@@ -18,7 +18,7 @@ function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), 
   }
   function diagnostic(value) {
     const text = String(value || '');
-    if (/Coordinator response timed out/.test(text)) return 'Coordinator test exceeded 45 seconds and was stopped. You can retry; check server connectivity and your ChatGPT account if it persists.';
+    if (/Coordinator response timed out/.test(text)) return 'No coordinator response within 3 minutes; the test was stopped. This does not mean ChatGPT is disconnected. If Telegram already responds, the coordinator is working but this test timed out.';
     if (/permission denied|EACCES|read.only file system/i.test(text)) return 'Codex cannot save its session: the Citadel service user needs write access to its Codex home directory.';
     if (/timed? out|ETIMEDOUT|ENOTFOUND|ECONN|certificate|TLS|error sending request/i.test(text)) return 'Codex could not reach OpenAI. Check server connectivity, DNS and certificates, then retry.';
     if (/device.{0,25}(disabled|not enabled)|enable.{0,25}device/i.test(text)) return 'Enable device-code login in your OpenAI account security settings, then request a new code.';
@@ -78,7 +78,7 @@ function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), 
   }
   async function test() {
     if (child || operation.phase === 'running') throw Object.assign(new Error('Finish or cancel ChatGPT authorization before testing.'), { statusCode: 409 });
-    operation = { phase: 'running', action: 'test', message: 'Testing a real coordinator response (up to 45 seconds)…' };
+    operation = { phase: 'running', action: 'test', message: 'Testing a real coordinator response (up to 3 minutes)…' };
     const current = await status();
     if (!current.ready) { operation = { phase: 'error', action: 'test', message: 'Install Codex and connect your ChatGPT account first.' }; throw Object.assign(new Error(operation.message), { statusCode: 409 }); }
     const dir = path.join(dataDir, 'director', 'control');

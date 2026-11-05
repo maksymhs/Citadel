@@ -14,6 +14,8 @@
       <section class="card"><h3>Coordinator AI</h3><div id="director-ai-setup">Checking Codex…</div></section>
       <form id="director-config">
         <label><input type="checkbox" name="enabled" ${cfg.enabled ? 'checked' : ''}> Enable Telegram director</label>
+        <p><label><input type="checkbox" name="manualMode" ${cfg.manualMode ? 'checked' : ''}> Manual mode · show Telegram menus</label></p>
+        <p>Conversation is the default. Send /manual or /menu for buttons, and /chat to hide them.</p>
         <p><label>Telegram user ID <input class="form-input" name="ownerId" value="${esc(cfg.ownerId)}" inputmode="numeric" required></label></p>
         <p><label>Private chat ID <input class="form-input" name="chatId" value="${esc(cfg.chatId)}" inputmode="numeric" required></label></p>
         <p><label>Bot token <input class="form-input" type="password" autocomplete="new-password" name="token" placeholder="${cfg.tokenSet ? 'Configured; leave blank to keep' : 'Token from BotFather'}"></label></p>
@@ -59,7 +61,7 @@
     root.querySelector('#director-config').onsubmit = event => {
       event.preventDefault();
       const f = event.currentTarget.elements;
-      const body = { enabled: f.enabled.checked, ownerId: f.ownerId.value.trim(), chatId: f.chatId.value.trim(), concurrency: Number(f.concurrency.value) };
+      const body = { enabled: f.enabled.checked, manualMode: f.manualMode.checked, ownerId: f.ownerId.value.trim(), chatId: f.chatId.value.trim(), concurrency: Number(f.concurrency.value) };
       if (f.token.value) body.token = f.token.value;
       f.token.value = '';
       void act(() => api('/api/director/config', { method: 'PUT', body }));

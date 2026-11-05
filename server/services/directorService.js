@@ -30,16 +30,17 @@ function createDirectorService({ db = getDatabase, projects = projectsDefault, t
   const write = (query, ...args) => db().prepare(query).run(...args);
   function settings(privateValue = false) {
     const value = parse(one('SELECT data FROM director_config WHERE id=1')?.data);
-    const safe = { enabled: false, ownerId: '', chatId: '', concurrency: 2, timeoutMs: 1800000, ...value };
+    const safe = { enabled: false, ownerId: '', chatId: '', concurrency: 2, manualMode: false, timeoutMs: 1800000, ...value };
     delete safe.token;
     safe.tokenSet = Boolean(value.token);
     if (privateValue) safe.token = value.token ? decrypt(value.token) : null;
     return safe;
   }
   function configure(input) {
-    if (!input || typeof input !== 'object' || Object.keys(input).some(k => !['enabled', 'ownerId', 'chatId', 'token', 'concurrency', 'timeoutMs'].includes(k))) fail('Invalid director configuration.');
+    if (!input || typeof input !== 'object' || Object.keys(input).some(k => !['enabled', 'ownerId', 'chatId', 'token', 'concurrency', 'timeoutMs', 'manualMode'].includes(k))) fail('Invalid director configuration.');
     const old = parse(one('SELECT data FROM director_config WHERE id=1')?.data);
     const next = { ...settings(), ...input }; delete next.tokenSet;
+    if (typeof next.manualMode !== 'boolean') fail('manualMode must be boolean.');
     if (typeof next.enabled !== 'boolean') fail('enabled must be boolean.');
     if (![1, 2, 3, 4, 5, 6].includes(next.concurrency)) fail('Concurrency must be between 1 and 6.');
     if (!Number.isInteger(next.timeoutMs) || next.timeoutMs < 60000 || next.timeoutMs > 7200000) fail('Invalid execution timeout.');
@@ -89,7 +90,7 @@ function createDirectorService({ db = getDatabase, projects = projectsDefault, t
   }
   function send(text, { dedupe = crypto.randomUUID(), projectId = null, jobId = null, keyboard = MENU } = {}) {
     write(`INSERT OR IGNORE INTO director_outbox(dedupe,project_id,job_id,payload) VALUES(?,?,?,?)`, dedupe, projectId, jobId,
-      JSON.stringify({ text: scrub(text, 3900), reply_markup: keyboard }));
+      JSON.stringify({ text: scrub(text, 3900), ...(settings().manualMode && keyboard ? { reply_markup: keyboard } : {}) }));
   }
   function jobs() { return sql('SELECT * FROM director_jobs ORDER BY created_at DESC LIMIT 100').map(j => ({ ...j, result: parse(j.result, null), question: parse(j.question, null) })); }
   function snapshot() {
@@ -160,8 +161,14 @@ function createDirectorService({ db = getDatabase, projects = projectsDefault, t
         try {
           if (related?.job_id && one('SELECT state FROM director_jobs WHERE id=?', related.job_id)?.state === 'waiting_input' && !m.callback) {
             answer(related.job_id, m.text, `telegram:${settings().ownerId}:${entry.update_id}`); reply('Respuesta registrada; continuaré en el proyecto original.');
-          } else if (['/start', '/menu', 'menu'].includes(text)) reply('Citadel · dime qué proyecto quieres consultar o qué trabajo quieres encargar.');
-          else if (['projects', '/projects'].includes(text)) reply('Proyectos', { keyboard: { inline_keyboard: list.map(p => [{ text: p.name.slice(0, 55), callback_data: 'p:' + p.id }]) } });
+          } else if (['/manual', '/menu', 'menu', 'modo manual'].includes(text.trim().toLowerCase())) {
+            configure({ manualMode: true });
+            reply('Modo manual activado. Usa los menús o vuelve a la conversación con /chat.');
+          } else if (['/chat', '/auto', 'modo conversacion', 'modo conversación'].includes(text.trim().toLowerCase())) {
+            configure({ manualMode: false });
+            reply('Modo conversación activado. Dime qué necesitas; puedes pedir /manual para ver los menús.');
+          } else if (text === '/start') reply('Citadel · dime qué proyecto quieres consultar o qué trabajo quieres encargar. Usa /manual si quieres ver los menús.');
+          else if (['projects', '/projects'].includes(text)) reply('Proyectos\n' + list.map(p => `${p.name} · /use ${p.id}`).join('\n'), { keyboard: { inline_keyboard: list.map(p => [{ text: p.name.slice(0, 55), callback_data: 'p:' + p.id }]) } });
           else if (text.startsWith('p:') || text.startsWith('/use ')) {
             const p = project(text.startsWith('p:') ? text.slice(2) : text.slice(5).trim());
             write('UPDATE director_chat SET project_id=? WHERE id=1', p.id);
@@ -342,6 +349,7 @@ function createDirectorService({ db = getDatabase, projects = projectsDefault, t
     let keyboard = MENU;
     if (state === 'waiting_input') {
       text += `\n${result.question || 'Necesito una decisión.'}\n${result.recommendation ? 'Recomendación: ' + result.recommendation : ''}\nResponde a este mensaje.`;
+      if (!settings().manualMode && result.options?.length) text += '\nOpciones:\n' + result.options.slice(0, 6).map((o, i) => `${i + 1}. ${o}`).join('\n');
       keyboard = { inline_keyboard: (result.options || []).slice(0, 6).map((o, i) => [{ text: o.slice(0, 60), callback_data: `a:${job.id}:${i}` }]) };
     } else if (job.kind === 'consult' && result.nextInstruction) {
       text += '\nPropuesta: ' + result.nextInstruction + '\nPuedes decir «sigue».';
