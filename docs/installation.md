@@ -4,17 +4,21 @@ Everything about installing, updating, configuring and removing Citadel. Back to
 
 ## One-line install (Linux and macOS)
 
-Run the installer directly from the repository:
+On Debian/Ubuntu, authenticate in the same terminal before starting the installer (also when connected over SSH):
+
+```bash
+sudo -v && curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | sudo bash
+```
+
+Enter your Linux user's password at the initial prompt; no characters are displayed. The installer keeps its normal quiet progress indicator. Running the installer under `sudo bash` avoids further sudo authentication prompts inside quiet package-install steps. If authentication fails, fix it before retrying; `CITADEL_VERBOSE` is not needed.
+
+If already running as root, or installing on macOS as your normal user, use:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash
 ```
 
-On Debian/Ubuntu, add `sudo` before `bash` to install the system service:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | sudo bash
-```
+If an older invocation remains on “Checking system packages” with `sudo: Authentication failed` in `/tmp/citadel-install.*`, stop that installer with Ctrl+C, then use the authenticated command above in the same terminal. Do not run two installers concurrently or delete apt/dpkg locks. Package downloads may still take several minutes after authentication succeeds.
 
 That command installs the service **local-only and unprivileged by default**. Every additional capability is opt-in:
 
