@@ -53,8 +53,10 @@ function card({ admin = true, canUpdate = true, respond, confirm = () => true } 
   return { elements, calls, timers, state };
 }
 
-test('Updates template has only Check and Update, no channel/version or separate rollout selectors', () => {
-  assert.ok(!source.includes('id="update-channel"'));
+test('Updates template offers Stable/main preview with Check and Update, without a separate rollout action', () => {
+  assert.ok(source.includes('id="update-channel"'));
+  assert.match(source, /value="stable"/);
+  assert.match(source, /value="main"/);
   assert.ok(!source.includes('id="update-rollout-now"'));
   assert.match(source, /id="check-updates-btn">Check<\/button>/);
   assert.match(source, /id="apply-update-btn"[^\n]*>Update<\/button>/);
