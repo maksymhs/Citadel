@@ -1058,3 +1058,8 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Project listings and decision options remain readable in text; replies retain project/job association. Delivery strips previously queued keyboards when manual mode is off. Existing Telegram history is not edited.
 - Increased the bounded coordinator test allowance from 45 seconds to three minutes because successful Telegram replies can take longer. A test timeout keeps ChatGPT Connected and no longer implies failed account authorization. This does not prove successful live inference on the user's server.
 - Verification: 32 focused service/setup checks passed, including mode persistence, menus only on explicit opt-in, plain-text project listings and decision options; real-SPA default chat setting passed. Complete suite and lint follow before publication.
+
+## 214. Release v0.71.3
+
+- Patch release for Telegram chat by default, explicit manual menus in commands/GUI and a three-minute coordinator test allowance. Updated package/lock version, all 18 frontend cache tokens and README Latest. Generated changelog and release notes follow tagged Conventional Commits.
+- Final verification: complete clean-worktree suite ran 761 tests: 758 passed, 1 failed, 0 cancelled, 2 skipped. All 40 UI smoke tests passed. The only failure is the previously reproduced host-dependent descendant-process termination test. Focused director/setup checks (32), release-note checks (3), metadata/cache-token consistency, lint and whitespace checks passed. No live Telegram message, account inference or VPS update was performed during verification.

@@ -224,6 +224,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 | Latest | |
 | --- | --- |
+| [v0.71.3](https://github.com/maksymhs/Citadel/releases/tag/v0.71.3) | Telegram chat by default, explicit manual menus, and a longer bounded coordinator test |
 | [v0.71.2](https://github.com/maksymhs/Citadel/releases/tag/v0.71.2) | Background coordinator tests with bounded inference and automatic result polling |
 | [v0.71.1](https://github.com/maksymhs/Citadel/releases/tag/v0.71.1) | Recover stalled ChatGPT authorization, retry setup from the GUI, and show safe connection diagnostics |
 | [v0.71.0](https://github.com/maksymhs/Citadel/releases/tag/v0.71.0) | Stable/main updates, GUI Codex installation and ChatGPT connection, experimental Telegram director, and verified public tunnel QR |
