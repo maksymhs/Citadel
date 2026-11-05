@@ -2,6 +2,12 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.71.2](https://github.com/maksymhs/Citadel/releases/tag/v0.71.2) · 2026-11-05
+
+### Fixed
+
+- **director**: Bound coordinator tests and poll background results
+
 ## [0.71.1](https://github.com/maksymhs/Citadel/releases/tag/v0.71.1) · 2026-11-05
 
 ### Fixed

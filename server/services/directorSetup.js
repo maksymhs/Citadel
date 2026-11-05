@@ -83,14 +83,30 @@ function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), 
     if (!current.ready) { operation = { phase: 'error', action: 'test', message: 'Install Codex and connect your ChatGPT account first.' }; throw Object.assign(new Error(operation.message), { statusCode: 409 }); }
     const dir = path.join(dataDir, 'director', 'control');
     const file = path.join(dir, `setup-test-${Date.now()}.txt`);
-    let deadline;
+    let deadline, execution;
     try {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      await Promise.race([execImpl(findBinary(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-c', 'approval_policy="never"', '--output-last-message', file, 'Reply exactly CITADEL_COORDINATOR_READY. Do not use tools or perform any actions.'], { env: environment(), cwd: dir, timeout: testTimeoutMs, killSignal: 'SIGKILL', maxBuffer: 128 * 1024 }), new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('Coordinator response timed out.')), testTimeoutMs); })]);
+      execution = execImpl(findBinary(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-c', 'approval_policy="never"', '--output-last-message', file, 'Reply exactly CITADEL_COORDINATOR_READY. Do not use tools or perform any actions.'], { env: environment(), cwd: dir, timeout: testTimeoutMs, killSignal: 'SIGKILL', detached: process.platform === 'linux', maxBuffer: 128 * 1024 });
+      await Promise.race([execution, new Promise((_, reject) => {
+        deadline = setTimeout(() => {
+          // The npm Codex launcher spawns a native child; stop its whole group.
+          const proc = execution.child;
+          if (proc) {
+            try { if (process.platform === 'linux') process.kill(-proc.pid, 'SIGKILL'); else proc.kill('SIGKILL'); } catch { /* Already exited. */ }
+          }
+          reject(new Error('Coordinator response timed out.'));
+        }, testTimeoutMs);
+      })]);
       const ok = fs.readFileSync(file, 'utf8').trim() === 'CITADEL_COORDINATOR_READY';
       operation = { phase: ok ? 'done' : 'error', action: 'test', message: ok ? 'The coordinator answered successfully. You can now talk to your Telegram bot.' : 'Codex responded, but the coordinator check did not pass.' };
     } catch (err) { operation = { phase: 'error', action: 'test', message: diagnostic((err.stderr || '') + (err.message || '')) || 'Codex could not answer. Check account authorization, subscription quota and server connectivity.' }; }
-    finally { clearTimeout(deadline); fs.rmSync(file, { force: true }); }
+    finally {
+      clearTimeout(deadline);
+      if (process.platform === 'linux' && execution?.child) {
+        try { process.kill(-execution.child.pid, 'SIGKILL'); } catch { /* Group already exited. */ }
+      }
+      fs.rmSync(file, { force: true });
+    }
     return { ...operation };
   }
   function startTest() {
