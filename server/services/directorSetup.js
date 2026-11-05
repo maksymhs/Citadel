@@ -8,7 +8,7 @@ const { promisify } = require('node:util');
 const registry = require('./agentRegistry');
 const { DATA_DIR, ROOT_DIR } = require('../config');
 const execute = promisify(execFile);
-function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), spawnImpl = spawn, execImpl = execute, dataDir = DATA_DIR } = {}) {
+function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), spawnImpl = spawn, execImpl = execute, dataDir = DATA_DIR, testTimeoutMs = 45000 } = {}) {
   let child = null, timer, operation = { phase: 'idle', action: null, message: '' };
   function environment() {
     const env = { ...process.env };
@@ -18,6 +18,7 @@ function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), 
   }
   function diagnostic(value) {
     const text = String(value || '');
+    if (/Coordinator response timed out/.test(text)) return 'Coordinator test exceeded 45 seconds and was stopped. You can retry; check server connectivity and your ChatGPT account if it persists.';
     if (/permission denied|EACCES|read.only file system/i.test(text)) return 'Codex cannot save its session: the Citadel service user needs write access to its Codex home directory.';
     if (/timed? out|ETIMEDOUT|ENOTFOUND|ECONN|certificate|TLS|error sending request/i.test(text)) return 'Codex could not reach OpenAI. Check server connectivity, DNS and certificates, then retry.';
     if (/device.{0,25}(disabled|not enabled)|enable.{0,25}device/i.test(text)) return 'Enable device-code login in your OpenAI account security settings, then request a new code.';
@@ -29,8 +30,8 @@ function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), 
     let installed = false, connected = false, authIssue = null;
     if (binary) {
       try {
-        await execImpl(binary, ['--version'], { env: environment(), timeout: 5000 }); installed = true;
-        const auth = await execImpl(binary, ['login', 'status'], { env: environment(), timeout: 5000 });
+        await execImpl(binary, ['--version'], { env: environment(), timeout: 5000, killSignal: 'SIGKILL' }); installed = true;
+        const auth = await execImpl(binary, ['login', 'status'], { env: environment(), timeout: 5000, killSignal: 'SIGKILL' });
         connected = /ChatGPT/i.test(auth.stdout + auth.stderr) && !/API key/i.test(auth.stdout + auth.stderr);
       } catch (err) { authIssue = diagnostic((err.stderr || '') + (err.message || '')); }
     }
@@ -72,25 +73,33 @@ function createDirectorSetup({ findBinary = () => registry.findBinary('codex'), 
     proc.stdout.on('data', scan); proc.stderr.on('data', scan);
     timer = setTimeout(() => { stop(); operation = { phase: 'error', action, message: 'Setup timed out. You can retry from this screen.' }; }, 15 * 60 * 1000);
     proc.on('error', () => { if (child !== proc) return; clearTimeout(timer); child = null; operation = { phase: 'error', action, message: 'Could not start Codex setup. Check the installed tools and service permissions.' }; });
-    proc.on('close', code => { if (child !== proc) return; clearTimeout(timer); child = null; operation = { phase: code === 0 ? 'done' : 'error', action, message: code === 0 ? 'Completed. Refreshing Codex status…' : diagnostic(output) || 'Setup did not complete. Retry authorization or installation; no credentials are shown in logs.' }; });
+    proc.on('close', code => { if (child !== proc) return; clearTimeout(timer); child = null; operation = { phase: code === 0 ? 'done' : 'error', action, message: code === 0 ? action === 'login' ? 'ChatGPT authorization completed. You can now test the coordinator.' : 'Codex installation completed.' : diagnostic(output) || 'Setup did not complete. Retry authorization or installation; no credentials are shown in logs.' }; });
     return { ...operation };
   }
   async function test() {
     if (child || operation.phase === 'running') throw Object.assign(new Error('Finish or cancel ChatGPT authorization before testing.'), { statusCode: 409 });
-    operation = { phase: 'running', action: 'test', message: 'Testing a real coordinator response…' };
+    operation = { phase: 'running', action: 'test', message: 'Testing a real coordinator response (up to 45 seconds)…' };
     const current = await status();
     if (!current.ready) { operation = { phase: 'error', action: 'test', message: 'Install Codex and connect your ChatGPT account first.' }; throw Object.assign(new Error(operation.message), { statusCode: 409 }); }
     const dir = path.join(dataDir, 'director', 'control');
     const file = path.join(dir, `setup-test-${Date.now()}.txt`);
+    let deadline;
     try {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      await execImpl(findBinary(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-c', 'approval_policy="never"', '--output-last-message', file, 'Reply exactly CITADEL_COORDINATOR_READY. Do not use tools or perform any actions.'], { env: environment(), cwd: dir, timeout: 45000, maxBuffer: 128 * 1024 });
+      await Promise.race([execImpl(findBinary(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-c', 'approval_policy="never"', '--output-last-message', file, 'Reply exactly CITADEL_COORDINATOR_READY. Do not use tools or perform any actions.'], { env: environment(), cwd: dir, timeout: testTimeoutMs, killSignal: 'SIGKILL', maxBuffer: 128 * 1024 }), new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('Coordinator response timed out.')), testTimeoutMs); })]);
       const ok = fs.readFileSync(file, 'utf8').trim() === 'CITADEL_COORDINATOR_READY';
       operation = { phase: ok ? 'done' : 'error', action: 'test', message: ok ? 'The coordinator answered successfully. You can now talk to your Telegram bot.' : 'Codex responded, but the coordinator check did not pass.' };
     } catch (err) { operation = { phase: 'error', action: 'test', message: diagnostic((err.stderr || '') + (err.message || '')) || 'Codex could not answer. Check account authorization, subscription quota and server connectivity.' }; }
-    finally { fs.rmSync(file, { force: true }); }
+    finally { clearTimeout(deadline); fs.rmSync(file, { force: true }); }
     return { ...operation };
   }
-  return { status, start, test, cancel, close: stop };
+  function startTest() {
+    if (child || operation.phase === 'running') throw Object.assign(new Error('Wait for the current setup operation.'), { statusCode: 409 });
+    void test().catch(() => {
+      if (operation.phase === 'running') operation = { phase: 'error', action: 'test', message: 'Coordinator setup check failed. Retry from this screen.' };
+    }); // HTTP must not wait for inference.
+    return { ...operation };
+  }
+  return { status, start, test, startTest, cancel, close: stop };
 }
 module.exports = { createDirectorSetup };

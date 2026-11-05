@@ -83,3 +83,25 @@ test('failed authorization explains permissions without exposing raw diagnostics
     assert.ok(!JSON.stringify(state).includes('secret-value'));
   } finally { setup.close(); }
 });
+test('GUI starts inference without keeping the HTTP request open and bounds a hung execution', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'director-hung-test-'));
+  let invoked = false;
+  const setup = createDirectorSetup({ dataDir: dir, testTimeoutMs: 20, findBinary: () => '/managed/codex', execImpl: async (cmd, args, options) => {
+    if (args[0] === 'exec') {
+      invoked = true;
+      assert.equal(options.killSignal, 'SIGKILL');
+      return new Promise(() => {});
+    }
+    return { stdout: args[0] === 'login' ? 'Logged in using ChatGPT' : 'codex', stderr: '' };
+  } });
+  try {
+    assert.equal(setup.startTest().phase, 'running');
+    assert.throws(() => setup.startTest(), { statusCode: 409 });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    const state = await setup.status();
+    assert.equal(invoked, true);
+    assert.equal(state.operation.phase, 'error');
+    assert.match(state.operation.message, /exceeded 45 seconds/);
+    assert.equal(fs.readdirSync(path.join(dir, 'director', 'control')).length, 0);
+  } finally { setup.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});

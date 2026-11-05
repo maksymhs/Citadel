@@ -514,6 +514,35 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     } finally { w.fetch = originalFetch; }
   });
 
+  test('coordinator test polls the result after its background request returns', async () => {
+    const originalFetch = w.fetch;
+    let started = false, polls = 0;
+    w.fetch = (url, options) => {
+      if (String(url) === '/api/director/setup/test') {
+        started = true;
+        assert.equal(options.method, 'POST');
+        return Promise.resolve({ ok: true, json: async () => ({ phase: 'running', action: 'test' }) });
+      }
+      if (String(url) === '/api/director/setup') {
+        if (started) polls++;
+        return Promise.resolve({ ok: true, json: async () => ({ installed: true, connected: true, ready: true, operation: !started ? { phase: 'idle' } : polls === 1 ? { phase: 'running', action: 'test', message: 'Testing response' } : { phase: 'done', action: 'test', message: 'Coordinator answered' } }) });
+      }
+      return originalFetch(url, options);
+    };
+    try {
+      w.document.querySelector('.nav-item[data-view="settings"]').click();
+      await sleep(400);
+      w.document.querySelector('[data-settings-section="director"]').click();
+      await sleep(500);
+      w.document.querySelector('[data-ai="test"]').click();
+      await sleep(3000);
+      assert.ok(polls >= 2);
+      assert.match(w.document.getElementById('director-ai-setup').textContent, /Coordinator answered/);
+      assert.equal(w.document.querySelector('[data-ai="test"]').disabled, false);
+      assert.deepEqual(errors, []);
+    } finally { w.fetch = originalFetch; }
+  });
+
   test('Settings is a compact navigation-only hub and keeps Updates and pairing accessible', async () => {
     const originalFetch = w.fetch, calls = [];
     w.fetch = (url, options) => { calls.push(String(url)); return originalFetch(url, options); };

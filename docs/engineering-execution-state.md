@@ -1038,3 +1038,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Patch release for GUI coordinator setup recovery and safe authentication diagnostics. Bumped package/lock versions, all frontend cache tokens and README Latest. Generated changelog and release notes follow the tagged Conventional Commit history.
 - Verification so far: lint and whitespace checks passed; all 39 UI smoke tests passed, and the added cancel/reconnect UI interaction also passed separately. Eight service recovery/diagnostic tests passed. Full isolated-worktree suite is running; no live OpenAI session or user-server change has been performed.
 - Final full-suite result: 758 tests, 755 passed, 1 failed, 0 cancelled and 2 skipped. The sole failure remains the previously reproduced environment-dependent process-group descendant termination test. All 39 UI tests passed, and the added cancel/reconnect UI interaction passed separately. Eleven focused setup/release-note tests, lint and whitespace checks passed. Actual server authorization still requires verification after updating.
+
+## 211. Bound coordinator inference independently of the HTTP request
+
+- The coordinator setup test now returns its running state immediately and uses the existing GUI polling, instead of keeping the POST open throughout inference. Added an independent response deadline and SIGKILL subprocess timeout, so a stuck or signal-resistant CLI cannot leave the operation running indefinitely. Status/version probes also use SIGKILL on timeout.
+- Successful device login now says authorization completed rather than leaving a misleading refreshing message. Connected remains distinct from a successful inference test; live inference on the user's account is not claimed.
+- Verification covers nonblocking start, duplicate-test rejection, hung CLI timeout and output cleanup. Added a real-SPA polling completion test. Final checks follow before publication.
