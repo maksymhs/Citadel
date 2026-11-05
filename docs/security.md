@@ -185,3 +185,7 @@ launchers reuse the local client key through process environment variables; Code
 uses private PATH shims and structured provider overrides, not global config or
 login-cache edits. Gateway-enabled launches remain administrator-only; live account-pair
 compatibility and arbitrary streaming/tool replay remain unverified.
+
+## Telegram director
+
+The opt-in director accepts one numeric owner in one private chat. Bot tokens are encrypted and omitted from API responses and task environments. Worktrees share the service UID and do not isolate projects or protect service-account files from project code. Use trusted projects without privileged System Terminal grants. Publication requires configured tests and GitHub destinations; Oceans follows its kernel and stays blocked until integration is verified. See [limits](telegram-director.md).

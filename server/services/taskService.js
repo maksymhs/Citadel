@@ -15,6 +15,7 @@
  * newer attempt's outcome or finish after expiry.
  */
 const crypto = require('node:crypto');
+const { repositoryIdentity } = require('./repositoryIdentity');
 const { getDatabase } = require('../database/db');
 const logService = require('./logService');
 
@@ -53,6 +54,7 @@ function toPublicTask(row, { includeClaimToken = false } = {}) {
     status: row.status,
     node: row.node,
     projectPath: row.project_path,
+    repoKey: row.repo_key || null,
     cmd: row.cmd,
     args: parseJson(row.args, []),
     priority: row.priority,
@@ -158,8 +160,8 @@ function enqueue({ cmd, args, projectPath, projectId, priority, node, agent, pro
   const now = new Date().toISOString();
 
   getDatabase().prepare(`
-    INSERT INTO tasks (id, status, node, project_path, cmd, args, priority, agent, prompt, max_attempts, title, created_at, updated_at)
-    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, status, node, project_path, cmd, args, priority, agent, prompt, max_attempts, title, created_at, updated_at, repo_key)
+    VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     node ? String(node) : null,
@@ -172,7 +174,8 @@ function enqueue({ cmd, args, projectPath, projectId, priority, node, agent, pro
     cleanMaxAttempts,
     title ? String(title).trim().slice(0, 200) : null,
     now,
-    now
+    now,
+    repositoryIdentity(projectPath)
   );
 
   logService.record({
@@ -373,6 +376,10 @@ function claimTask(node, { protocol } = {}) {
     const candidate = db.prepare(`
       SELECT * FROM tasks
       WHERE status = 'queued' AND autonomous = 0 AND mission_id IS NULL AND (node IS NULL OR node = ?)
+        AND (repo_key IS NULL OR NOT EXISTS (
+          SELECT 1 FROM tasks busy WHERE busy.id != tasks.id AND busy.repo_key = tasks.repo_key
+            AND busy.status IN ('running', 'cancelling')
+        ))
       ORDER BY priority DESC, created_at ASC
       LIMIT 1
     `).get(cleanNode);

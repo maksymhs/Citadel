@@ -461,6 +461,20 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     } finally { w.fetch = originalFetch; }
   });
 
+  test('Telegram director configuration is disabled by default and renders without secrets', async () => {
+    w.document.querySelector('.nav-item[data-view="settings"]').click();
+    await sleep(400);
+    w.document.querySelector('[data-settings-section="director"]').click();
+    await sleep(500);
+    const form = w.document.getElementById('director-config');
+    assert.ok(form, w.document.getElementById('main-content').textContent);
+    assert.equal(form.elements.enabled.checked, false);
+    assert.equal(form.elements.token.type, 'password');
+    assert.equal(form.elements.token.value, '');
+    assert.ok(w.document.getElementById('director-projects'));
+    assert.deepEqual(errors, []);
+  });
+
   test('Settings is a compact navigation-only hub and keeps Updates and pairing accessible', async () => {
     const originalFetch = w.fetch, calls = [];
     w.fetch = (url, options) => { calls.push(String(url)); return originalFetch(url, options); };
@@ -469,11 +483,11 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await sleep(700);
       const hub = w.document.querySelector('.settings-hub');
       assert.deepEqual([...hub.querySelectorAll('.settings-group > h2')].map(node => node.textContent), ['System', 'Configuration']);
-      assert.deepEqual([...hub.querySelectorAll('.settings-group')].map(node => node.querySelectorAll('nav > button').length), [5, 6]);
+      assert.deepEqual([...hub.querySelectorAll('.settings-group')].map(node => node.querySelectorAll('nav > button').length), [5, 7]);
       assert.ok(hub.querySelector('nav[aria-label="Settings sections"]'));
       assert.equal(w.getComputedStyle(hub.querySelector('.settings-tiles')).gridTemplateColumns, 'repeat(3, minmax(0, 1fr))', 'desktop Settings uses three equal columns');
       assert.notEqual(w.getComputedStyle(hub.querySelector('.settings-tile:last-child')).gridColumn, '1 / -1', 'the last tile does not stretch across the row');
-      assert.deepEqual([...hub.querySelectorAll('.settings-tile')].map(button => button.textContent.replace('›', '').trim()), ['AI Gateway', 'Updates', 'Machines', 'Network & access', 'Alerts', 'Credentials']);
+      assert.deepEqual([...hub.querySelectorAll('.settings-tile')].map(button => button.textContent.replace('›', '').trim()), ['Telegram director', 'AI Gateway', 'Updates', 'Machines', 'Network & access', 'Alerts', 'Credentials']);
       assert.equal(hub.querySelector('.settings-hero, .settings-screen-head, .connect-qr, .settings-tile-text span'), null, 'no duplicate heading, QR, diagnostics or descriptive subtitles');
       assert.equal(calls.filter(url => /\/api\/(?:settings\/connect|system\/(?:connect|node|version)|secrets|pair\/invite)(?:\?|$)/.test(url)).length, 0, 'the hub does not fetch unused section data or create pairing codes');
       assert.equal(calls.some(url => /\/api\/(?:system\/(?:processes|integrations|tools)|terminals|editor)(?:\?|$)/.test(url)), false, 'the combined hub does not load System summaries or poll');

@@ -269,6 +269,10 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 | [Code map](docs/code-map.md) | Every source file with its purpose, and where each screen lives |
 | [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) | How it is built and why |
 
+## Telegram project director (experimental)
+
+Settings → Telegram director configures one private bot to supervise projects in parallel. Native Codex login and per-project verification/publication policies are required. Oceans autonomy stays blocked pending kernel integration. [Setup and limits](docs/telegram-director.md).
+
 ## 🛠️ Development
 
 ```bash

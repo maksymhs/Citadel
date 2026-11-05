@@ -214,3 +214,7 @@ Project hub and its mission, document, learning and graph APIs have been removed
 Migration 017 retires pending automation and requests cancellation of running
 automation. Historical database records and user Markdown remain untouched.
 The task mesh, native CLI adapters and terminal lifecycle journal remain core.
+
+## Telegram director
+
+The optional director receives durable owner-only Telegram updates, schedules structured Codex turns through the existing queue and local journaled sentinel, and persists decisions and outgoing deliveries. Project adapters separate general GitHub publication from Oceans kernel execution. No extra system service or queue is installed. See [behavior and recovery](telegram-director.md).

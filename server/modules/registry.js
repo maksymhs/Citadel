@@ -70,6 +70,12 @@ async function probeService(name) {
  */
 const MODULES = [
   {
+    id: 'director', name: 'Telegram project director',
+    description: 'Opt-in personal project orchestration through Telegram.',
+    core: false, defaultEnabled: false,
+    requires: { modules: [], services: [] }, views: [], widgets: [], capabilities: ['director:admin'],
+  },
+  {
     id: 'dashboard',
     name: 'Dashboard',
     description: 'Configurable overview with add, remove and reorder widgets.',

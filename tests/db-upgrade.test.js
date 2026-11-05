@@ -77,7 +77,7 @@ describe('In-place database upgrade (older install → current schema)', () => {
     const db = initDatabase(testDb); // must not throw
 
     const taskCols = db.prepare('PRAGMA table_info(tasks)').all().map((c) => c.name);
-    for (const col of ['worker_protocol', 'exec_id', 'reconcile_state', 'attempt', 'claim_token', 'result', 'agent', 'prompt']) {
+    for (const col of ['worker_protocol', 'exec_id', 'reconcile_state', 'attempt', 'claim_token', 'result', 'agent', 'prompt', 'repo_key']) {
       assert.ok(taskCols.includes(col), `tasks.${col} should exist after migration`);
     }
     for (const col of ['title', 'mission_id', 'role', 'deps', 'stage', 'handoff_ref', 'exclusive']) {
@@ -86,7 +86,7 @@ describe('In-place database upgrade (older install → current schema)', () => {
     for (const col of ['reviewed_at', 'reviewed_by', 'failure_kind', 'docs_linked']) {
       assert.ok(taskCols.includes(col), `tasks.${col} should exist after migration`);
     }
-    for (const table of ['document_links', 'document_refs']) {
+    for (const table of ['document_links', 'document_refs', 'director_config', 'director_projects', 'director_jobs', 'director_inbox', 'director_outbox', 'director_chat']) {
       const found = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
       assert.ok(found, `${table} table should exist after migration`);
     }

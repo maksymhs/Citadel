@@ -3311,6 +3311,7 @@
   function connectSourceNote(...args) { return window.CitadelDeployments.connectSourceNote(...args); }
 
   const SETTINGS_SECTIONS = {
+    director: { title: 'Telegram director', desc: 'Direct several software projects from one private Telegram conversation.' },
     gateway: { title: 'AI Gateway', desc: 'Connect Claude and ChatGPT, choose models, and switch the shared gateway route for Claude Code, OpenCode and Codex CLI.' },
     updates: { title: 'Updates', desc: 'Keep this machine and the machines paired with it on the latest version.' },
     machines: { title: 'Machines', desc: 'Pair other Citadels to reach them from this panel. Live health and alerts are on the Dashboard.' },
@@ -3320,6 +3321,7 @@
   };
 
   const SETTINGS_ICONS = {
+    director: NAV_ICONS.agents,
     gateway: NAV_ICONS.agents,
     updates: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 11a8 8 0 00-14.93-3M4 4v4h4m-4 5a8 8 0 0014.93 3M20 20v-4h-4"/>',
     machines: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>',
@@ -3385,6 +3387,11 @@
       content.querySelectorAll('[data-settings-section]').forEach((btn) => {
         btn.onclick = () => openSettingsSection(btn.dataset.settingsSection);
       });
+      return;
+    }
+    if (section === 'director') {
+      content.innerHTML = '<div class="settings-screen"><div class="settings-screen-head"><h2>Telegram director</h2></div><div class="card settings-panel" id="director-body">Loading…</div></div>';
+      await window.CitadelDirectorSettings.init({ api, escapeHtml, showToast });
       return;
     }
     if (section === 'gateway') {

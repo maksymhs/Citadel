@@ -70,3 +70,7 @@ are retained. Ordinary tasks, native headless adapters and
 `POST /api/tasks/:id/retry` remain available; retry requires a failed task with
 attempts remaining. The developer-only [gateway trial](gateway-trial.md) does
 not change native task execution or introduce a second queue.
+
+## Director repository exclusion
+
+Tasks with project paths now carry a canonical repository key (common Git directory across worktrees). Atomic claims exclude other running/cancelling tasks with that key. The optional [Telegram director](telegram-director.md) reuses this queue and protocol-2 sentinel with a scoped local node credential. It preserves retired mission history.

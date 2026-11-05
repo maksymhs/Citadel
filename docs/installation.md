@@ -416,3 +416,7 @@ in Settings → AI Gateway and save. Enable the gateway and open a new
 project terminal. Plan/Build use the shared planning/execution models; switch with
 Tab. Native OpenCode remains the default. See [AI Gateway](ai-gateway.md#opencode-as-a-shared-terminal-client)
 for context budgets, account routing and current validation limits.
+
+## Telegram project director
+
+Optional and disabled by default. Configure Settings → Telegram director; see [setup, CLI prerequisites and policies](telegram-director.md). `CITADEL_DIRECTOR_TICK_MS` controls its local scheduling interval (2000 ms default, 1000 minimum).

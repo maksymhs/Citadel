@@ -6,6 +6,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { DATABASE_PATH } = require('../config');
+const directorSchema = require('./directorSchema');
 
 let dbInstance = null;
 
@@ -475,6 +476,18 @@ const MIGRATIONS = [
       db.prepare("DELETE FROM app_config WHERE key = 'module.career.enabled'").run();
     },
   },
+  {
+    name: '020_telegram_director',
+    up: (db) => {
+      db.exec(directorSchema);
+      if (!columnExists(db, 'tasks', 'repo_key')) db.exec('ALTER TABLE tasks ADD COLUMN repo_key TEXT');
+      const { repositoryIdentity } = require('../services/repositoryIdentity');
+      for (const row of db.prepare('SELECT id, project_path FROM tasks WHERE repo_key IS NULL AND project_path IS NOT NULL').all()) {
+        db.prepare('UPDATE tasks SET repo_key = ? WHERE id = ?').run(repositoryIdentity(row.project_path), row.id);
+      }
+      db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_repository ON tasks(repo_key, status)');
+    },
+  },
 ];
 
 function columnExists(db, table, column) {
@@ -670,6 +683,7 @@ function initDatabase(customPath = null) {
     -- sentinel atomically claims one at a time and reports the result. A short
     -- lease (renewed by the node heartbeat) makes crashed workers harmless.
     CREATE TABLE IF NOT EXISTS tasks (
+      repo_key TEXT,
       id TEXT PRIMARY KEY,
       status TEXT NOT NULL DEFAULT 'queued',
       node TEXT,
@@ -901,6 +915,7 @@ function initDatabase(customPath = null) {
   // On an existing install the `tasks` table already exists, so CREATE TABLE IF
   // NOT EXISTS is a no-op and the column is missing until the migration runs —
   // building the index first previously aborted startup on upgraded databases.
+  db.exec(directorSchema);
   runMigrations(db);
 
   // Indexes are created last, once every column they reference is guaranteed to

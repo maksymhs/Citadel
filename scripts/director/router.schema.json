@@ -1,0 +1,15 @@
+{
+  "type":"object","additionalProperties":false,"required":["reply","actions"],
+  "properties":{
+    "reply":{"type":"string"},
+    "actions":{"type":"array","items":{
+      "type":"object","additionalProperties":false,
+      "required":["type","projectId","instruction","name","repoUrl"],
+      "properties":{
+        "type":{"type":"string","enum":["status","consult","execute","pause","resume","cancel","create"]},
+        "projectId":{"type":"string"},"instruction":{"type":"string"},
+        "name":{"type":"string"},"repoUrl":{"type":"string"}
+      }
+    }}
+  }
+}
