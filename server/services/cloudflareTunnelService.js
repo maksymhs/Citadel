@@ -14,6 +14,9 @@ const path = require('node:path');
 
 const { DATA_DIR, LOGS_DIR } = require('../config');
 const { getTunnelUrl } = require('./tunnelService');
+const { runTunnelProcess, activateWithRecovery } = require('./tunnelProcess');
+const { scrub } = require('../security/redact');
+const { waitPublicPanel } = require('../../scripts/wait-public-panel');
 
 const IS_MAC = process.platform === 'darwin';
 // macOS runs the tunnel as a per-user launchd agent (scripts/tunnel-macos.sh),
@@ -74,6 +77,7 @@ function logSetup(line) {
 
 function run(args, timeout = STEP_TIMEOUT_MS) {
   return new Promise((resolve) => {
+    const secretOutput = args[0] === 'tunnel' && args[1] === 'token';
     const label = `cloudflared ${args.filter((a) => !/^[A-Za-z0-9_-]{30,}$/.test(a)).join(' ')}`;
     logSetup(`> ${label}`);
     const child = spawn(CLOUDFLARED, args, { env: cfEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
@@ -88,8 +92,8 @@ function run(args, timeout = STEP_TIMEOUT_MS) {
         setJob({ detail: line.slice(0, 200) });
       }
     };
-    child.stdout.on('data', (d) => { stdout += d; seen(d); });
-    child.stderr.on('data', (d) => { stderr += d; seen(d); });
+    child.stdout.on('data', (d) => { stdout += d; if (!secretOutput) seen(d); });
+    child.stderr.on('data', (d) => { stderr += d; if (!secretOutput) seen(d); });
     child.on('error', (err) => {
       clearTimeout(timer);
       resolve({ code: -1, stdout, stderr: err.message });
@@ -121,13 +125,14 @@ function macScript(args) {
   return spawnSync('bash', [MAC_SCRIPT, ...args], { encoding: 'utf8', timeout: 120000, env });
 }
 
-function runHelper(args = ['up']) {
+async function runHelper(args = ['up']) {
   const res = IS_MAC
-    ? macScript([...args, '--restart'])
-    : spawnSync('sudo', ['-n', HELPER, ...args], { encoding: 'utf8', timeout: 120000 });
-  if (res.status !== 0) {
-    throw new Error(`Could not start the tunnel service: ${lastLine(res.stderr || res.stdout)}`);
-  }
+    ? await runTunnelProcess('bash', [MAC_SCRIPT, ...args, '--restart'], { env: {
+      ...process.env, CITADEL_DATA_DIR: DATA_DIR, CITADEL_APP_DIR: path.join(__dirname, '..', '..'),
+      CLOUDFLARED_PATH: CLOUDFLARED, CITADEL_QUIET: '1',
+    } })
+    : await runTunnelProcess('sudo', ['-n', HELPER, ...args]);
+  if (res.status !== 0) throw new Error(`Could not start the tunnel service: ${scrub(lastLine(res.stderr || res.stdout), 400)}`);
 }
 
 function helperInstalled() {
@@ -195,38 +200,16 @@ async function finishSetup(domain) {
   fs.chmodSync(TOKEN_FILE, 0o600);
   fs.writeFileSync(DOMAIN_FILE, `${domain}\n`, { mode: 0o600 });
 
-  setJob({ message: 'Starting the tunnel service…', detail: '' });
-  runHelper(['up']);
-
-  // Never leave the panel unreachable: the new address must answer from this
-  // very machine, otherwise fall back to a temporary URL and report why.
-  setJob({ message: `Checking https://${domain}…` });
-  const reachable = await waitForPublicUrl(domain);
-  if (!reachable.ok) {
-    logSetup(`  ${domain} did not answer (${reachable.reason}); reverting to a temporary URL`);
-    try { revertToQuick(); } catch (err) { logSetup(`  revert failed: ${err.message}`); }
-    throw new Error(`https://${domain} did not answer (${reachable.reason}), so the temporary URL was restored. Check the DNS record and try again.`);
-  }
-}
-
-/** Poll the public hostname until the panel answers through the tunnel. */
-async function waitForPublicUrl(domain, { attempts = 20, delayMs = 4000 } = {}) {
-  let reason = 'no response';
-  for (let i = 0; i < attempts; i += 1) {
-    try {
-      const res = await fetch(`https://${domain}/api/auth/status`, {
-        signal: AbortSignal.timeout(8000),
-        headers: { 'User-Agent': 'Citadel-TunnelCheck' },
-      });
-      if (res.ok) return { ok: true };
-      reason = `HTTP ${res.status}`;
-    } catch (err) {
-      reason = err.cause && err.cause.code ? err.cause.code : err.name;
-    }
-    setJob({ detail: `Waiting for https://${domain} (${reason})…` });
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-  return { ok: false, reason };
+  await activateWithRecovery(async () => {
+    setJob({ message: 'Starting the tunnel service…', detail: '' });
+    await runHelper(['up']);
+    setJob({ message: `Checking https://${domain}…` });
+    const reachable = await waitPublicPanel(`https://${domain}`);
+    if (!reachable.ready) throw new Error(`https://${domain} did not serve this Citadel (${reachable.reason}).`);
+  }, async () => {
+    logSetup('Named tunnel activation failed; restoring a temporary tunnel.');
+    await revertToQuick();
+  });
 }
 
 /** Begin the login → create → route → start flow. Returns immediately. */
@@ -259,7 +242,7 @@ function start(rawDomain) {
 
   const fail = (err) => {
     cleanupCert();
-    setJob({ phase: 'error', message: err.message, loginUrl: null });
+    setJob({ phase: 'error', message: scrub(err.message, 1000), loginUrl: null });
   };
   child.on('error', fail);
   child.on('close', (code) => {
@@ -296,11 +279,11 @@ function cancel() {
 }
 
 /** Drop the named tunnel and return to a random trycloudflare.com URL. */
-function revertToQuick() {
+async function revertToQuick() {
   fs.rmSync(TOKEN_FILE, { force: true });
   fs.rmSync(DOMAIN_FILE, { force: true });
   if (!helperInstalled()) throw new Error('Run "sudo citadel tunnel --quick" on this machine to finish.');
-  runHelper(['up']);
+  await runHelper(['up', '--quick']);
   setJob({ phase: 'idle', message: '', loginUrl: null, domain: null });
 }
 

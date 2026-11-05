@@ -127,7 +127,7 @@ async function settingsRoutes(fastify) {
 
   fastify.delete('/api/settings/tunnel', { preHandler: requireAdmin }, async (request, reply) => {
     try {
-      cloudflareTunnel.revertToQuick();
+      await cloudflareTunnel.revertToQuick();
     } catch (err) {
       return reply.status(500).send({ error: err.message });
     }

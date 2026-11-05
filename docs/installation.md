@@ -470,3 +470,18 @@ is not considered ready; persistent 404/502 responses suppress the QR with a rea
 Quick Tunnels use their own temporary empty cloudflared configuration, so a global
 `/etc/cloudflared/config.yml` or user ingress rules cannot redirect them to a
 catch-all 404. Existing configurations and named-tunnel settings are left intact.
+
+### Recovering after a failed domain switch
+
+Changing from a Quick Tunnel retires its old temporary hostname. If the new
+hostname fails, Citadel attempts to restore a **new** temporary URL. The panel
+keeps serving HTTP while the helper and its public probes run; helper failure and
+probe failure both enter recovery. Recovery failures are reported explicitly.
+For SSH recovery use `sudo citadel tunnel --quick`, then
+`sudo citadel qr --tunnel`. Each public verification can take up to 60 seconds.
+On installations affected by the earlier synchronous-helper bug, restart only the
+panel with `sudo systemctl restart citadel` to release the blocked HTTP process.
+
+The named-tunnel runner uses its own hostname-to-local-panel ingress configuration;
+it does not inherit unrelated `/etc/cloudflared/config.yml` routes. Global files
+are not modified. Token command output is not copied into setup logs or UI detail.

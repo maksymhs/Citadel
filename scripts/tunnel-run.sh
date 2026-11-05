@@ -30,8 +30,11 @@ if [ -s "$TOKEN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
   # --url is the catch-all ingress for tunnels created from the CLI/panel
   # (locally managed: without it cloudflared answers every request with 503).
   # Dashboard-managed tunnels ignore it and use their own public hostnames.
+  NAMED_CONFIG="$(mktemp "$DATA_DIR/named-config.XXXXXX")"
+  printf 'ingress:\n  - hostname: "%s"\n    service: "%s"\n  - service: http_status:404\n' "$domain" "$TARGET" > "$NAMED_CONFIG"
+  trap 'rm -f "$NAMED_CONFIG"' EXIT
   TUNNEL_TOKEN="$(head -n1 "$TOKEN_FILE" | tr -d '[:space:]')" \
-    "$CLOUDFLARED" tunnel --no-autoupdate --url "$TARGET" run &
+    "$CLOUDFLARED" tunnel --config "$NAMED_CONFIG" --no-autoupdate --url "$TARGET" run &
   cf_pid=$!
   printf 'https://%s\n' "$domain" > "$URL_FILE"
   trap 'kill "$cf_pid" 2>/dev/null' TERM INT
