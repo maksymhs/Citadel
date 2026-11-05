@@ -191,3 +191,19 @@ test('administrator APIs reject anonymous and cross-site callers and conceal the
     assert.equal(status.headers['cache-control'], 'no-store');
   } finally { await app.close(); }
 });
+test('a Codex startup failure is explained rather than reported as an invalid coordinator response', async () => {
+  const job = service.enqueue('route', null, 'bueno'); await service.tick();
+  complete(service.jobs().find(j => j.id === job.id), { outcome: 'blocked', summary: 'Codex failed.' });
+  await service.tick();
+  const replies = service.outbox().map(o => JSON.parse(o.payload).text).join('\n');
+  assert.match(replies, /usuario citadel/); assert.doesNotMatch(replies, /Invalid coordinator response/);
+  assert.equal(service.jobs().find(j => j.id === job.id).state, 'blocked');
+});
+test('the coordinator receives recent conversation without turning a greeting into work', async () => {
+  const previous = service.enqueue('route', null, 'Quiero hablar sobre oceans'); await service.tick();
+  complete(service.jobs().find(j => j.id === previous.id), { reply: 'Hablemos de Oceans.', actions: [] }); await service.tick();
+  const next = service.enqueue('route', null, 'como vamos?'); await service.tick();
+  const input = JSON.parse(fs.readFileSync(path.join(temp, 'director', next.id + '.input.json'), 'utf8'));
+  assert.match(input.prompt, /Quiero hablar sobre oceans/); assert.match(input.prompt, /Hablemos de Oceans/);
+  assert.equal(service.jobs().filter(j => j.kind === 'execute').length, 0);
+});

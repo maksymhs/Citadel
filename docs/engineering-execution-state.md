@@ -999,3 +999,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - The new readiness probe exposed an existing synchronous-helper architecture: spawnSync blocked Fastify while the helper needed to call its HTTP endpoints. Replaced domain activation/recovery helper invocation with bounded asynchronous spawning; the settings route awaits asynchronous rollback without freezing HTTP.
 - Helper startup errors now enter the same recovery path as failed public probes. Recovery reports whether a new Quick Tunnel was actually restored and never promises the old temporary hostname. Named token execution uses its own explicit per-domain ingress instead of inheriting global config. Token-command stdout/stderr no longer enter setup logs or UI progress.
 - Verification: 25 focused helper/responsiveness/recovery/named-ingress/readiness/settings/tunnel checks passed. The subprocess regression requests the real parent HTTP server and proves it stays responsive. Lint, JS/shell syntax and whitespace checks passed. Live domain transition and recovery require server-side validation; no user server or Cloudflare account changes performed from this environment.
+
+## 205. Conversational coordinator context and honest CLI failures
+
+- Coordinator prompts now include a bounded recent successful conversation, preserving conversational context without treating old messages as fresh authorization. Greetings can return replies with no actions.
+- Worker startup/quota failures no longer flow into action parsing as Invalid coordinator response; Telegram explains native service-user login/availability and retains the blocked request. No raw provider diagnostics are exposed.
+- Focused director regressions cover unavailable Codex and multi-turn conversation without accidental execution. Native user-server authentication remains to be diagnosed; this change does not certify live inference.
