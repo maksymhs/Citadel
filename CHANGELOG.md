@@ -2,13 +2,28 @@
 
 All notable changes to Citadel, newest first. Generated from the commit history by `scripts/changelog.js`; each version links to its release on GitHub.
 
+## [0.71.0](https://github.com/maksymhs/Citadel/releases/tag/v0.71.0) · 2026-11-05
+
+### Added
+
+- **updates**: Preview and install main from the panel
+- **director**: Install and connect coordinator AI from settings
+- **director**: Coordinate parallel projects through Telegram
+
+### Fixed
+
+- **director**: Retain conversation and explain unavailable Codex
+- **tunnel**: Keep HTTP responsive during domain activation and rollback
+- **tunnel**: Isolate quick ingress and verify public panel readiness
+- **install**: Show the public QR on first install and updates
+- **qr**: Use the public tunnel without a local fallback
+- **install**: Elevate before setup and render SSH QR without glyph gaps
+
 ## [0.70.0](https://github.com/maksymhs/Citadel/releases/tag/v0.70.0) · 2026-11-03
 
 ### Added
 
 - **settings**: Unify system and configuration in one hub
-
-## [0.69.0](https://github.com/maksymhs/Citadel/releases/tag/v0.69.0) · 2026-11-02
 
 ### Fixed
 

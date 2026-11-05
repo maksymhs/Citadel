@@ -224,6 +224,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 | Latest | |
 | --- | --- |
+| [v0.71.0](https://github.com/maksymhs/Citadel/releases/tag/v0.71.0) | Stable/main updates, GUI Codex installation and ChatGPT connection, experimental Telegram director, and verified public tunnel QR |
 | [v0.70.0](https://github.com/maksymhs/Citadel/releases/tag/v0.70.0) | One Settings hub with System and Configuration groups, compatible shortcuts and scoped detail loading |
 | [v0.69.0](https://github.com/maksymhs/Citadel/releases/tag/v0.69.0) | Clean native OpenCode fallback, safe beta-state retirement and host-isolated tunnel tests |
 | [v0.68.0](https://github.com/maksymhs/Citadel/releases/tag/v0.68.0) | AI Gateway can be disabled per CLI and open project terminals return to native providers |
