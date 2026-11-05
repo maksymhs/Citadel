@@ -220,7 +220,7 @@ Full reference, including Wi-Fi, power and menu bar commands: [installation](doc
 
 ## 📦 Releases
 
-**Settings → Updates** uses the latest **stable** `vX.Y.Z` release, with just **Check** and **Update**. Check is read-only; Update explicitly updates the selected machine first, then its paired machines one at a time after a healthy restart. Progress survives restarts and reports halted or partial outcomes. See [updater details and limitations](docs/installation.md#in-panel-updater); CLI/API channel controls remain available.
+**Settings → Updates** offers **Stable releases** (default, `vX.Y.Z` tags) and **main** for testing unreleased changes. **Check** previews the selected channel; **Update** applies it after confirmation. Installed and available commits distinguish main builds with the same package version. Check is read-only; Update explicitly updates the selected machine first, then its paired machines one at a time after a healthy restart. Progress survives restarts and reports halted or partial outcomes. See [updater details and limitations](docs/installation.md#in-panel-updater); CLI/API channel controls remain available.
 
 | Latest | |
 | --- | --- |

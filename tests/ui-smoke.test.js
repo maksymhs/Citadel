@@ -529,7 +529,8 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       w.document.getElementById('top-bar-back').click();
       w.document.querySelector('[data-settings-section="updates"]').click();
       await sleep(500);
-      assert.equal(w.document.getElementById('update-channel'), null);
+      assert.ok(w.document.getElementById('update-channel'));
+      assert.equal(w.document.querySelector('#update-channel option[value="main"]').textContent.includes('testing'), true);
       assert.equal(w.document.getElementById('check-updates-btn')?.textContent.trim(), 'Check');
       assert.equal(w.document.getElementById('apply-update-btn')?.textContent.trim(), 'Update');
       assert.equal(w.document.getElementById('update-rollout-now'), null);
@@ -537,6 +538,34 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       assert.ok(w.document.querySelector('.settings-hub'));
       assert.deepEqual(errors, []);
     } finally { w.fetch = originalFetch; }
+  });
+
+  test('Updates previews main without mutation and applies only the explicitly selected channel', async () => {
+    const originalFetch = w.fetch, originalConfirm = w.confirm, calls = [], confirmations = [];
+    w.fetch = (url, options = {}) => {
+      const target = String(url); calls.push({ target, options });
+      let result;
+      if (target === '/api/system/version') result = { version: { version: '0.70.0', commit: '1111111', channel: 'stable', canUpdate: true } };
+      else if (target.startsWith('/api/system/updates?')) result = { updates: { channel: 'main', latest: '0.70.0', latestCommit: '2222222', commit: '1111111', updateAvailable: true } };
+      else if (target === '/api/system/update' && options.method === 'POST') result = { started: true };
+      else if (target === '/api/system/update/propagate') result = { pendingUpdate: null, lastRollout: null };
+      else if (target === '/api/system/update/status') result = { update: { status: null } };
+      return result ? Promise.resolve({ ok: true, json: async () => result }) : originalFetch(url, options);
+    };
+    w.confirm = message => { confirmations.push(message); return true; };
+    try {
+      w.document.querySelector('.nav-item[data-view="settings"]').click(); await sleep(400);
+      w.document.querySelector('[data-settings-section="updates"]').click(); await sleep(500);
+      const select = w.document.getElementById('update-channel'); assert.equal(select.value, 'stable');
+      select.value = 'main'; select.dispatchEvent(new w.Event('change')); await sleep(300);
+      assert.ok(calls.some(c => c.target.includes('channel=main')));
+      assert.equal(calls.filter(c => c.options.method && c.options.method !== 'GET').length, 0);
+      assert.match(w.document.getElementById('update-status').textContent, /2222222.*1111111/);
+      w.document.getElementById('apply-update-btn').click(); await sleep(300);
+      const applied = calls.find(c => c.target === '/api/system/update' && c.options.method === 'POST');
+      assert.equal(JSON.parse(applied.options.body).channel, 'main');
+      assert.match(confirmations[0], /main.*testing/); assert.match(confirmations[0], /paired/);
+    } finally { w.fetch = originalFetch; w.confirm = originalConfirm; }
   });
 
   test('Settings Activity & Audit opens directly and Back returns to both groups', async () => {

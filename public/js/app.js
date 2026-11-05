@@ -3434,9 +3434,15 @@
         <div class="card settings-panel">
           <div class="settings-hero-line">
             Running <strong style="color:var(--accent-color);">v${escapeHtml(ver.version || 'unknown')}</strong>
-            <span class="mon-muted">· latest stable release</span>
+            <span class="mon-muted">· commit ${escapeHtml(ver.commit || 'unknown')}</span>
           </div>
           <div class="settings-hero-status">Update ${escapeHtml(activeHost || 'this machine')} first, then all machines paired with it, one at a time. Services restart briefly.</div>
+          <label for="update-channel">Update channel</label>
+          <select id="update-channel" class="form-input" ${canPair ? '' : 'disabled'}>
+            <option value="stable" ${ver.channel !== 'main' ? 'selected' : ''}>Stable releases (recommended)</option>
+            <option value="main" ${ver.channel === 'main' ? 'selected' : ''}>main (testing · unreleased changes)</option>
+          </select>
+          <p class="mon-muted" id="update-channel-note">Selecting a channel only changes this preview. Update applies it to this machine and its paired machines. Stable follows release tags; main follows the branch commit.</p>
           <div id="update-status" class="settings-hero-status" role="status" style="font-size:13px;">
             ${!canPair
               ? 'Sign in as an administrator to update.'
@@ -3740,6 +3746,9 @@
     const rolloutEl = document.getElementById('update-rollout-status');
     const checkBtn = document.getElementById('check-updates-btn');
     const applyBtn = document.getElementById('apply-update-btn');
+    const channelEl = document.getElementById('update-channel');
+    let checkGeneration = 0;
+    const selectedChannel = () => channelEl?.value === 'main' ? 'main' : 'stable';
     const attached = () => statusEl.isConnected && state.activeHostId === hostId
       && state.user?.id === userId && state.user?.role === userRole;
     let pollTimer;
@@ -3762,6 +3771,7 @@
         const r = res.lastRollout;
         const running = Boolean((pending && !failed) || (r && !r.finishedAt));
         if (applyBtn) applyBtn.disabled = !version.canUpdate || running;
+        if (channelEl) channelEl.disabled = userRole !== 'admin' || running;
         if (failed) {
           rolloutEl.style.color = 'var(--danger-color)';
           rolloutEl.textContent = `Local update failed: ${local.error || 'unknown error'}. Paired machines were left untouched.`;
@@ -3794,34 +3804,40 @@
 
     if (checkBtn) {
       checkBtn.onclick = async () => {
+        const channel = selectedChannel(), requestId = ++checkGeneration;
         checkBtn.disabled = true;
         statusEl.style.color = 'var(--text-muted)';
-        statusEl.textContent = 'Checking the latest stable release…';
+        statusEl.textContent = channel === 'main' ? 'Checking the latest main commit…' : 'Checking the latest stable release…';
         try {
-          const res = await updateApi('/api/system/updates?force=true&channel=stable');
-          if (!attached()) return;
+          const res = await updateApi(`/api/system/updates?force=true&channel=${channel}`);
+          if (!attached() || requestId !== checkGeneration || channel !== selectedChannel()) return;
           const u = res.updates || {};
           statusEl.style.color = `var(--${u.error || !u.latest ? 'warning' : u.updateAvailable ? 'warning' : 'success'}-color)`;
           statusEl.textContent = u.error
             ? `Could not check for updates: ${u.error}`
+            : channel === 'main'
+              ? !u.latestCommit ? 'Could not resolve the main branch commit.' : `main: ${u.latestCommit} · installed: ${u.commit || 'unknown'}. ${!u.commit ? 'Installed commit unavailable; comparison cannot be confirmed.' : u.updateAvailable ? 'New changes are available for testing.' : 'This machine is on this commit.'} Update applies this channel to all paired machines too.`
             : !u.latest
               ? 'No stable releases found.'
               : u.updateAvailable
                 ? `Latest stable release: v${u.latest}. Ready to update this machine and all its paired machines.`
                 : `Latest stable release: v${u.latest}. This machine is up to date; Update also checks all its paired machines.`;
         } catch (err) {
-          if (!attached()) return;
+          if (!attached() || requestId !== checkGeneration) return;
           statusEl.style.color = 'var(--danger-color)';
           statusEl.textContent = `Could not check for updates: ${err.message}`;
         } finally {
-          checkBtn.disabled = false;
+          if (requestId === checkGeneration) checkBtn.disabled = false;
         }
       };
     }
+    if (channelEl) channelEl.onchange = () => { checkGeneration++; if (checkBtn) { checkBtn.disabled = false; checkBtn.click(); } };
     if (applyBtn) {
       applyBtn.onclick = async () => {
         if (!attached() || userRole !== 'admin' || applyBtn.disabled) return;
-        if (!confirm(`Update ${targetName || 'this machine'} and all machines paired with it to the latest stable release? This machine restarts first; peers follow one at a time. The rollout stops at the first failure.`)) return;
+        const channel = selectedChannel();
+        const destination = channel === 'main' ? 'main (testing, unreleased changes)' : 'the latest stable release';
+        if (!confirm(`Update ${targetName || 'this machine'} and all machines paired with it to ${destination}? This machine restarts first; peers follow one at a time. The rollout stops at the first failure.`)) return;
         if (!attached()) return;
         generation += 1;
         clearTimeout(pollTimer);
@@ -3830,7 +3846,7 @@
         statusEl.style.color = 'var(--warning-color)';
         statusEl.textContent = 'Starting the local update; paired machines will follow after a healthy restart…';
         try {
-          await updateApi('/api/system/update', { method: 'POST', body: { channel: 'stable' } });
+          await updateApi('/api/system/update', { method: 'POST', body: { channel } });
           if (!attached()) return;
           statusEl.textContent = 'Update requested. Progress below follows this machine and its paired machines across restarts.';
         } catch (err) {

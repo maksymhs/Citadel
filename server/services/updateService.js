@@ -242,6 +242,7 @@ async function checkForUpdates({ force = false, channel = getChannel() } = {}) {
     const remote = channel === 'stable'
       ? { version: null, commit: null }
       : await fetchRemoteBranch(headers);
+    if (channel === 'main' && !remote.commit) throw new Error('Could not resolve the tracked branch commit. No stable fallback was selected.');
     if (remote.version || remote.commit) {
       result.latest = remote.version || APP_VERSION;
       result.latestCommit = remote.commit ? remote.commit.slice(0, 7) : null;

@@ -20,6 +20,7 @@ process.env.CITADEL_SELF_UPDATE = '0';
 const { buildServer } = require('../server/index');
 const { closeDatabase, getDatabase, initDatabase } = require('../server/database/db');
 const updateService = require('../server/services/updateService');
+const checkActualUpdates = updateService.checkForUpdates;
 const pkg = require('../package.json');
 
 describe('Version, updater and migrations', () => {
@@ -285,4 +286,25 @@ describe('Update channel', () => {
     assert.throws(() => updateService.setChannel('nightly'), /Unknown update channel/);
     assert.equal(updateService.getChannel(), 'stable');
   });
+});
+
+test('main preview uses branch commits even when the package version is unchanged', async () => {
+  const original = global.fetch, before = updateService.getChannel();
+  global.fetch = async url => ({ ok: true, json: async () => String(url).includes('/commits/')
+    ? { sha: 'f'.repeat(40), html_url: 'https://github.com/example/repo/commit/test' }
+    : { version: pkg.version } });
+  try {
+    const result = await checkActualUpdates({ force: true, channel: 'main' });
+    assert.equal(result.channel, 'main'); assert.equal(result.latestCommit, 'fffffff');
+    assert.equal(result.latest, pkg.version); assert.equal(updateService.getChannel(), before);
+  } finally { global.fetch = original; }
+});
+test('unavailable main never silently falls back to a stable release', async () => {
+  const original = global.fetch, calls = [];
+  global.fetch = async url => { calls.push(String(url)); return { ok: false }; };
+  try {
+    const result = await checkActualUpdates({ force: true, channel: 'main' });
+    assert.match(result.error, /No stable fallback/); assert.equal(result.latestCommit, null);
+    assert.ok(calls.every(url => !url.includes('/tags') && !url.includes('/releases/')));
+  } finally { global.fetch = original; }
 });

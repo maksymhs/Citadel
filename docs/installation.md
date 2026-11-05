@@ -493,3 +493,17 @@ In **Settings → Telegram director → Coordinator AI**, use **Install Codex**,
 The server installs and authorizes under the same service identity used by the
 bot. No executable path, API key or shell login command is required. See
 [Telegram director setup](telegram-director.md) for subscription and kernel limits.
+
+### Test main from Updates
+
+In **Settings → Updates**, choose **main (testing · unreleased changes)**. Selection
+and **Check** are read-only: neither installs code nor persists the preview.
+The screen shows installed and available commit IDs, even when the package version
+is unchanged. Click **Update** and confirm the channel to apply it to the selected
+machine and then its paired machines sequentially, using the existing health and
+recovery workflow. The chosen channel is persisted only when Update is requested.
+Stable releases remain the default. Choose Stable and Update to return to the
+published channel; this does not promise reversal of database schema changes.
+If the main commit cannot be resolved, Check reports failure rather than silently
+substituting a stable release. Already-installed older panels need one code update
+to gain this selector; their previous Updates screen still only targets stable.
