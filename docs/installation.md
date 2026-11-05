@@ -4,21 +4,30 @@ Everything about installing, updating, configuring and removing Citadel. Back to
 
 ## One-line install (Linux and macOS)
 
-On Debian/Ubuntu, authenticate in the same terminal before starting the installer (also when connected over SSH):
-
-```bash
-sudo -v && curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | sudo bash
-```
-
-Enter your Linux user's password at the initial prompt; no characters are displayed. The installer keeps its normal quiet progress indicator. Running the installer under `sudo bash` avoids further sudo authentication prompts inside quiet package-install steps. If authentication fails, fix it before retrying; `CITADEL_VERBOSE` is not needed.
-
-If already running as root, or installing on macOS as your normal user, use:
+Run the same command on Linux or macOS, including over SSH:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash
 ```
 
-If an older invocation remains on “Checking system packages” with `sudo: Authentication failed` in `/tmp/citadel-install.*`, stop that installer with Ctrl+C, then use the authenticated command above in the same terminal. Do not run two installers concurrently or delete apt/dpkg locks. Package downloads may still take several minutes after authentication succeeds.
+On Linux, authentication happens before package installation: the installer uses
+cached sudo authorization or visibly requests your Linux user's password, then
+runs the complete installation as root. This avoids hidden prompts and permission
+failures when inspecting the service user's private files. A failed authentication
+stops before package changes. Check-only mode does not authenticate. macOS keeps
+its per-user installation and never elevates.
+
+You can still authenticate explicitly and invoke the Linux installer with
+`sudo -v && curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | sudo bash`.
+No verbose mode is required. Do not run two installers concurrently.
+
+Over SSH (and when invoked through sudo), the terminal QR uses black/white
+background cells instead of font-dependent block glyphs. It checks the available
+width and height, falling back to the shorter panel URL when needed. If neither
+fits, enlarge the terminal or reduce the font size and run `citadel qr` again.
+`CITADEL_QR_MODE=unicode citadel qr` explicitly selects the compact glyph renderer
+when your terminal renders those characters correctly. The shared QR renderer is
+used by Linux, macOS and the management CLI.
 
 That command installs the service **local-only and unprivileged by default**. Every additional capability is opt-in:
 

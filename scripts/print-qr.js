@@ -27,19 +27,21 @@ if (!text) {
 // used as a fallback.
 const APPLE_TERMINAL = process.env.TERM_PROGRAM === 'Apple_Terminal';
 
+// SSH does not reliably transmit the local terminal/font identity. Background
+// cells also work after sudo strips TERM_PROGRAM, without gaps between glyphs.
 function detectMode(env) {
   const forced = String(env.CITADEL_QR_MODE || '').toLowerCase();
   if (forced === 'ascii' || forced === 'unicode') return forced;
-  if (env.TERM === 'linux' || env.TERM_PROGRAM === 'Apple_Terminal') return 'ascii';
+  if (env.SUDO_USER || env.SSH_CONNECTION || env.SSH_TTY || env.TERM === 'linux' || env.TERM_PROGRAM === 'Apple_Terminal') return 'ascii';
   const locale = env.LC_ALL || env.LC_CTYPE || env.LANG || '';
   return /utf-?8/i.test(locale) ? 'unicode' : 'ascii';
 }
 
-let columns = Number(process.stdout.columns || process.env.COLUMNS);
+let columns = Number(process.stdout.columns || process.env.COLUMNS || 80);
 let rows = Number(process.stdout.rows || process.env.LINES);
 // A forced mode, or Terminal.app (glyphs are known bad there), never falls back
 // to the half-block glyphs when the cells do not fit.
-const isForcedMode = Boolean(process.env.CITADEL_QR_MODE) || APPLE_TERMINAL;
+const isForcedMode = Boolean(process.env.CITADEL_QR_MODE) || APPLE_TERMINAL || Boolean(process.env.SUDO_USER || process.env.SSH_CONNECTION || process.env.SSH_TTY);
 const preferredMode = detectMode(process.env);
 
 function build(data, targetMode, quiet = 2) {
@@ -75,6 +77,7 @@ function fits(code, reserved = RESERVED_ROWS) {
 // with a 1-module margin, and this keeps the full pairing code usable on short
 // consoles (80x24/25) instead of dropping to the plain panel URL.
 const LAYOUTS = [
+  { quiet: 4, reserved: RESERVED_ROWS },
   { quiet: 2, reserved: RESERVED_ROWS },
   { quiet: 1, reserved: RESERVED_ROWS },
   { quiet: 1, reserved: 1 },
@@ -187,7 +190,7 @@ function findBestFit(data) {
   if (!code) {
     // Build default representation for error reporting
     code = build(text, preferredMode, 2);
-    console.error(`QR needs ${code.width + 1}x${code.height + 1} cells, but this terminal is ${columns || '?'}x${rows || '?'}. Resize it (or connect over SSH) and try again.`);
+    console.error(`QR needs ${code.width + 1}x${code.height + 1} cells, but this terminal is ${columns || '?'}x${rows || '?'}. Enlarge the terminal or reduce its font size and run citadel qr again. CITADEL_QR_MODE=unicode explicitly selects the compact glyph renderer.`);
     process.exit(2);
   }
 

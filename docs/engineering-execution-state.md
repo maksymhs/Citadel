@@ -967,3 +967,10 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 
 - Updated README quick start and installation guide to authenticate interactively with sudo -v, then run the Linux installer with sudo bash. This preserves quiet output and avoids hidden password prompts during package installation, including over SSH. Kept separate macOS/root commands and documented recovery from failed authentication.
 - Validation: checked commands against the installer privilege/progress handling and ran git diff --check. Documentation only; no installer or host package operations run.
+
+## 200. One-line installation privilege boundary and SSH QR rendering
+
+- Linux authenticates visibly and re-enters the entire installer through sudo before package/directory changes; piped invocations download a complete bootstrap instead of reusing consumed stdin. Arguments, selected configuration and SSH rendering context survive elevation. Check-only and macOS remain unprivileged.
+- SSH/sudo terminal QRs use glyph-free background cells, prefer a four-module quiet zone, check terminal bounds and can use the shorter panel URL. A code that cannot fit reports resizing instructions instead of switching to potentially broken glyphs. Shared renderer covers Linux/macOS/CLI; no macOS privilege changes. Power helper output now goes through quiet_run rather than colliding with progress. Nonessential banner reads no longer abort successful installation.
+- Validation: 24 CLI/WSL/elevation checks passed, plus the additional piped-bootstrap regression (4 elevation checks total); bash syntax, lint and whitespace checks passed. Tests use fakes, never the host installer. Real SSH font/camera and macOS terminal rendering not directly exercised; generated grids are decoded in existing QR tests.
+- Full npm test rerun completed with the previously observed agent-suite SQLite setup error/cancellations and process-group termination failure; focused installation/QR checks pass. These unrelated failures were not changed or suppressed.

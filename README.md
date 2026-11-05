@@ -159,19 +159,13 @@ Citadel does not sandbox projects from each other and a terminal is a shell with
 
 ## 🚀 Quick start
 
-**Debian/Ubuntu** (including over SSH), authenticate first and install with normal, quiet output:
-
-```bash
-sudo -v && curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | sudo bash
-```
-
-Enter your Linux user's password when `sudo -v` asks; no characters are displayed. Authentication happens before the progress indicator starts, so the password prompt cannot be hidden behind “Checking system packages”. If already running as root, omit `sudo -v &&` and use `bash` instead of `sudo bash`.
-
-**macOS**, run as your normal user without `sudo`:
+**Linux and macOS**, one line (including over SSH):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maksymhs/Citadel/main/install.sh | bash
 ```
+
+On Debian/Ubuntu the installer requests sudo authentication **before** installing packages, then runs the whole Linux installation with the required privileges. The password prompt stays visible; normal progress stays quiet. Authentication failure stops installation immediately. macOS stays a per-user installation without sudo. Running as root also works.
 
 The installer prints the panel address, a **setup code** and a **QR**. Open the address and create the administrator account. See [installation and troubleshooting](docs/installation.md#one-line-install-linux-and-macos).
 

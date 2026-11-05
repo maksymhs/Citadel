@@ -234,3 +234,17 @@ test('reset-password replaces the password, revokes sessions and is audited', ()
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('SSH QR uses glyph-free backgrounds even with a UTF-8 locale', () => {
+  const out = execFileSync(process.execPath, [PRINT_QR, 'https://example.com'], {
+    encoding: 'utf8', env: { ...process.env, CITADEL_QR_MODE: '', SSH_CONNECTION: '192.0.2.1 123 192.0.2.2 22', LANG: 'en_US.UTF-8', COLUMNS: '100', LINES: '60' },
+  });
+  assert.doesNotMatch(out, /[█▀▄]/); assert.match(out, /\x1b\[40m {2}/);
+  const lines = out.replace(/\x1b\[[0-9;]*m/g, '').split('\n').filter(Boolean);
+  assert.ok(lines.every(line => line.length === lines[0].length && line.length < 100));
+});
+test('SSH QR refuses glyph fallback when background cells cannot fit', () => {
+  assert.throws(() => execFileSync(process.execPath, [PRINT_QR, 'https://example.com'], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CITADEL_QR_MODE: '', SSH_CONNECTION: 'test', COLUMNS: '20', LINES: '24' },
+  }), err => !/[█▀▄]/.test(String(err.stdout)) && /Enlarge the terminal/.test(String(err.stderr)));
+});

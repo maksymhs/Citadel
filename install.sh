@@ -310,6 +310,46 @@ if [ "$IS_WSL" = true ]; then
   fi
 fi
 
+# Run the whole Linux installation under one privilege boundary. Per-command
+# sudo hides prompts behind quiet_run and leaves direct file tests unable to
+# traverse the service user's private tree after ownership changes.
+if [ "$OS" = "Linux" ] && [ "$CHECK_ONLY" = false ] && [ "$(id -u)" -ne 0 ]; then
+  printf '%s' "$CLR"
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "ERROR: installation requires root or sudo. Re-run as root." >&2
+    exit 1
+  fi
+  if ! sudo -n true 2>/dev/null; then
+    echo "Authenticate sudo before installation (your password is not displayed)." >&2
+    if ! sudo -v; then
+      echo "ERROR: sudo authentication failed; installation has not started." >&2
+      exit 1
+    fi
+  fi
+  BOOTSTRAP=""
+  INSTALL_SOURCE="${BASH_SOURCE[0]:-}"
+  if [ ! -f "$INSTALL_SOURCE" ]; then
+    BOOTSTRAP="$(mktemp -t citadel-bootstrap.XXXXXX)"
+    # The shell has already consumed part of a piped script: copying stdin
+    # would produce a truncated installer. Fetch the same branch explicitly.
+    RAW_BASE="${CITADEL_RAW_BASE_URL:-https://raw.githubusercontent.com/maksymhs/Citadel/$REPO_BRANCH}"
+    if ! curl -fsSL "$RAW_BASE/install.sh" -o "$BOOTSTRAP"; then
+      rm -f "$BOOTSTRAP"
+      echo "ERROR: could not download the privileged installer." >&2
+      exit 1
+    fi
+    INSTALL_SOURCE="$BOOTSTRAP"
+  fi
+  INSTALL_ENV=()
+  for name in CITADEL_VERBOSE CITADEL_REPO_URL CITADEL_REPO_BRANCH CITADEL_RAW_BASE_URL CITADEL_AGENTS_DIR CITADEL_PUBLIC_URL CITADEL_QR_MODE SSH_CONNECTION SSH_TTY COLUMNS LINES TERM_PROGRAM LANG LC_ALL LC_CTYPE; do
+    if [ "${!name+x}" = x ]; then INSTALL_ENV+=("$name=${!name}"); fi
+  done
+  INSTALL_RC=0
+  sudo env "${INSTALL_ENV[@]}" bash "$INSTALL_SOURCE" "$@" || INSTALL_RC=$?
+  [ -z "$BOOTSTRAP" ] || rm -f "$BOOTSTRAP"
+  exit "$INSTALL_RC"
+fi
+
 # Standard layout (created in a later step). Defined early so the CLI launcher
 # below can reference it.
 TARGET_DIR="/srv/citadel"
@@ -764,7 +804,7 @@ EOF
   if [ "$KEEP_AWAKE" = true ]; then
     if [ "$OS" = "Linux" ] && [ "$HAS_SUDO" = true ] && [ -f "$APP_DIR/scripts/power.sh" ]; then
       detail "      Enabling 24/7 mode (ignore lid close, block sleep)..."
-      $SUDO bash "$APP_DIR/scripts/power.sh" on || echo -e "${CLR}${YELLOW}      24/7 mode could not be enabled (see errors above).${NC}"
+      quiet_run $SUDO bash "$APP_DIR/scripts/power.sh" on || echo -e "${CLR}${YELLOW}      24/7 mode could not be enabled (see errors above).${NC}"
     else
       echo -e "${CLR}${YELLOW}      24/7 mode skipped (requires Linux + systemd + sudo).${NC}"
     fi
@@ -807,7 +847,7 @@ if [ "$CHECK_ONLY" = true ]; then
   echo "=================================================================="
 else
   printf '%s' "$CLR"
-  CITADEL_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$APP_DIR/package.json" 2>/dev/null | head -n1)"
+  CITADEL_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$APP_DIR/package.json" 2>/dev/null | head -n1 || true)"
 
   # Best URL for a phone: explicit public URL > Cloudflare tunnel > Tailscale
   # (*.ts.net) > LAN IP. Each branch also sets a human label.
@@ -820,7 +860,7 @@ else
     ACCESS_LABEL="Panel (global)"
   fi
   if [ -z "$ACCESS_URL" ] && command -v tailscale >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
-    TS_DNS=$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write((j.Self&&j.Self.DNSName)||"")}catch(e){}})' 2>/dev/null)
+    TS_DNS=$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write((j.Self&&j.Self.DNSName)||"")}catch(e){}})' 2>/dev/null || true)
     if [ -n "$TS_DNS" ]; then
       ACCESS_URL="https://${TS_DNS%.}"
       ACCESS_LABEL="Panel (Tailscale)"
@@ -899,7 +939,7 @@ else
     (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$ACCESS_URL") || true
   elif command -v qrencode >/dev/null 2>&1; then
     # The Linux console font lacks the half-block glyphs used by ANSIUTF8.
-    if [ "${TERM:-}" = "linux" ]; then
+    if [ "${TERM:-}" = "linux" ] || [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}${SUDO_USER:-}" ]; then
       qrencode -t ANSI -m 2 "$QR_TEXT" || true
     else
       qrencode -t ANSIUTF8 -m 2 "$QR_TEXT" || true
