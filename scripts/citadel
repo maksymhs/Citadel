@@ -81,6 +81,7 @@ Citadel CLI
   citadel permissions [open]
                          macOS: one-time Full Disk Access so macOS stops asking per folder
   citadel update         Update to the latest version
+  citadel qr --tunnel     QR for the recorded public tunnel only (no local fallback)
   citadel tunnel         Expose the panel globally via a Cloudflare tunnel
                          (--domain=HOST --token=TOKEN for your own domain)
   citadel help           Show this help
@@ -138,7 +139,32 @@ case "$cmd" in
     ;;
 
   qr)
-    p_url="$(panel_url)"
+    # Metadata belongs to the service user. A normal user's QR must not turn
+    # a permission error into a localhost URL. Elevate visibly, before reading.
+    if [ "$OS" = Linux ] && [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+      exec sudo env CITADEL_APP_DIR="$APP_DIR" CITADEL_DATA_DIR="$DATA_DIR" PORT="$PORT" \
+        SSH_CONNECTION="${SSH_CONNECTION:-}" SSH_TTY="${SSH_TTY:-}" \
+        bash "$APP_DIR/scripts/citadel" qr "$@"
+    fi
+    if [ "${1:-}" = "--tunnel" ]; then
+      tunnel_url="$(as_root head -n1 "$DATA_DIR/tunnel-url" 2>/dev/null || true)"
+      case "$tunnel_url" in
+        https://*.trycloudflare.com|https://*.*) ;;
+        *) echo "No public tunnel URL. Start it with: sudo citadel tunnel" >&2; exit 1 ;;
+      esac
+      case "$tunnel_url" in
+        *localhost*|https://127.*|https://10.*|https://192.168.*|https://169.254.*|https://172.1[6-9].*|https://172.2[0-9].*|https://172.3[01].*) echo "Tunnel URL is local; refusing to print it." >&2; exit 1 ;;
+      esac
+      echo "Tunnel URL: $tunnel_url"
+      as_root node "$APP_DIR/scripts/print-qr.js" "$tunnel_url"
+      exit $?
+    fi
+    p_url=""
+    if [ -s "$DATA_DIR/tunnel-url" ]; then
+      p_url="$(head -n1 "$DATA_DIR/tunnel-url")"
+      case "$p_url" in https://*.*) ;; *) p_url="" ;; esac
+    fi
+    [ -n "$p_url" ] || p_url="$(panel_url)"
     if [ "${1:-}" = "--url" ]; then
       # Short code for small terminals: just the panel address, no pairing secret.
       echo "Panel QR:"

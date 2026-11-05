@@ -433,3 +433,24 @@ for context budgets, account routing and current validation limits.
 ## Telegram project director
 
 Optional and disabled by default. Configure Settings → Telegram director; see [setup, CLI prerequisites and policies](telegram-director.md). `CITADEL_DIRECTOR_TICK_MS` controls its local scheduling interval (2000 ms default, 1000 minimum).
+
+### Public tunnel QR
+
+When a tunnel is requested (the Linux installer default), the final QR uses the
+recorded HTTPS tunnel URL, ahead of any stale local public-URL override. If the
+tunnel has no public URL, installation reports that condition and suppresses the
+QR; it never substitutes a localhost or LAN QR. `--no-tunnel`/`--local` still allow
+an explicitly local installation. macOS already suppresses its public QR when
+its tunnel has no URL.
+
+To start/recover the tunnel and print its short public-address QR on Linux:
+
+```bash
+sudo citadel tunnel
+sudo citadel qr --tunnel
+```
+
+`--tunnel` refuses a missing/local tunnel URL instead of falling back to local
+address discovery. The short QR omits the pairing invitation but opens the panel
+through the tunnel. If tunnel startup fails, inspect
+`sudo journalctl -u citadel-tunnel -n 50 --no-pager`.

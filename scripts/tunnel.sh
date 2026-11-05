@@ -165,6 +165,8 @@ EOF
 
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+# Do not accept the previous tunnel address while the new runner starts.
+$SUDO rm -f "$URL_FILE"
 $SUDO systemctl restart "$SERVICE"
 
 # 3. Wait for the public URL ---------------------------------------------------

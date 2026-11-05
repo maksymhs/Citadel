@@ -849,24 +849,35 @@ else
   printf '%s' "$CLR"
   CITADEL_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$APP_DIR/package.json" 2>/dev/null | head -n1 || true)"
 
-  # Best URL for a phone: explicit public URL > Cloudflare tunnel > Tailscale
-  # (*.ts.net) > LAN IP. Each branch also sets a human label.
-  ACCESS_URL="${CITADEL_PUBLIC_URL:-}"
-  ACCESS_LABEL="Panel (public URL)"
+  # A requested tunnel owns the QR address. A stale local publicUrl setting
+  # or a failed tunnel must never silently produce a local-only phone QR.
+  ACCESS_URL=""
+  ACCESS_LABEL="Panel (global)"
+  PUBLIC_QR_READY=true
   TUNNEL_URL_FILE="$DATA_DIR/tunnel-url"
-  # The data directory belongs to the service user, so read it with $SUDO.
-  if [ -z "$ACCESS_URL" ] && $SUDO test -f "$TUNNEL_URL_FILE" 2>/dev/null; then
-    ACCESS_URL="$($SUDO head -n1 "$TUNNEL_URL_FILE" 2>/dev/null || true)"
-    ACCESS_LABEL="Panel (global)"
+  if [ "$TUNNEL" = true ]; then
+    if $SUDO test -s "$TUNNEL_URL_FILE" 2>/dev/null; then
+      ACCESS_URL="$($SUDO head -n1 "$TUNNEL_URL_FILE" 2>/dev/null || true)"
+    fi
+    case "$ACCESS_URL" in
+      https://*.trycloudflare.com|https://*.*) : ;;
+      *) ACCESS_URL=""; PUBLIC_QR_READY=false ;;
+    esac
+    case "$ACCESS_URL" in
+      *localhost*|https://127.*|https://10.*|https://192.168.*|https://169.254.*|https://172.1[6-9].*|https://172.2[0-9].*|https://172.3[01].*) ACCESS_URL=""; PUBLIC_QR_READY=false ;;
+    esac
+  else
+    ACCESS_URL="${CITADEL_PUBLIC_URL:-}"
+    ACCESS_LABEL="Panel (public URL)"
   fi
-  if [ -z "$ACCESS_URL" ] && command -v tailscale >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  if [ "$TUNNEL" != true ] && [ -z "$ACCESS_URL" ] && command -v tailscale >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
     TS_DNS=$(tailscale status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write((j.Self&&j.Self.DNSName)||"")}catch(e){}})' 2>/dev/null || true)
     if [ -n "$TS_DNS" ]; then
       ACCESS_URL="https://${TS_DNS%.}"
       ACCESS_LABEL="Panel (Tailscale)"
     fi
   fi
-  if [ -z "$ACCESS_URL" ] && [ "$LAN_EXPOSED" = true ] && command -v hostname >/dev/null 2>&1; then
+  if [ "$TUNNEL" != true ] && [ -z "$ACCESS_URL" ] && [ "$LAN_EXPOSED" = true ] && command -v hostname >/dev/null 2>&1; then
     LAN_IP=$(detect_lan_ip)
     if [ -n "$LAN_IP" ]; then
       ACCESS_URL="http://${LAN_IP}:$PANEL_PORT"
@@ -882,30 +893,32 @@ else
   # same code scanned from another Citadel's Pair screen pairs the two hosts.
   # The server writes the current single-use invitation at startup; fall back to
   # the plain URL when it is unavailable (for example in check-only mode).
-  QR_TEXT="$ACCESS_URL"
-  PAIR_QR=false
-  # Mint the invitation for exactly the address shown below, so the code can
-  # always pair (never depends on a stale connect-qr file or a different
-  # primary address than the one the user sees).
-  PAIR_LINK="$(run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' DATABASE_PATH='$DATA_DIR/citadel.db' node scripts/pair-qr.js '$ACCESS_URL'" 2>/dev/null | tail -n1 || true)"
-  case "$PAIR_LINK" in
-    "${ACCESS_URL%/}"*"#pair="*) QR_TEXT="$PAIR_LINK"; PAIR_QR=true ;;
-  esac
-  if [ "$PAIR_QR" != true ] && [ -n "$DATA_DIR" ]; then
-    # The service writes the invitation just after it starts; give it a moment
-    # so the post-install banner can show the dual-purpose code.
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      $SUDO test -f "$DATA_DIR/connect-qr" 2>/dev/null && break
-      sleep 0.3
-    done
-    if $SUDO test -f "$DATA_DIR/connect-qr" 2>/dev/null; then
-      INVITE_LINK="$($SUDO head -n1 "$DATA_DIR/connect-qr" 2>/dev/null || true)"
-      if [ -n "$INVITE_LINK" ] && [ -n "$ACCESS_URL" ] && [[ "$INVITE_LINK" == "$ACCESS_URL"* ]]; then
-        QR_TEXT="$INVITE_LINK"
-        case "$INVITE_LINK" in *'#pair='*) PAIR_QR=true ;; esac
-      elif [ -z "$ACCESS_URL" ] && [ -n "$INVITE_LINK" ]; then
-        QR_TEXT="$INVITE_LINK"
-        case "$INVITE_LINK" in *'#pair='*) PAIR_QR=true ;; esac
+  if [ "$PUBLIC_QR_READY" = true ]; then
+    QR_TEXT="$ACCESS_URL"
+    PAIR_QR=false
+    # Mint the invitation for exactly the address shown below, so the code can
+    # always pair (never depends on a stale connect-qr file or a different
+    # primary address than the one the user sees).
+    PAIR_LINK="$(run_as_service_user "cd '$APP_DIR' && DATA_DIR='$DATA_DIR' DATABASE_PATH='$DATA_DIR/citadel.db' node scripts/pair-qr.js '$ACCESS_URL'" 2>/dev/null | tail -n1 || true)"
+    case "$PAIR_LINK" in
+      "${ACCESS_URL%/}"*"#pair="*) QR_TEXT="$PAIR_LINK"; PAIR_QR=true ;;
+    esac
+    if [ "$PAIR_QR" != true ] && [ -n "$DATA_DIR" ]; then
+      # The service writes the invitation just after it starts; give it a moment
+      # so the post-install banner can show the dual-purpose code.
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        $SUDO test -f "$DATA_DIR/connect-qr" 2>/dev/null && break
+        sleep 0.3
+      done
+      if $SUDO test -f "$DATA_DIR/connect-qr" 2>/dev/null; then
+        INVITE_LINK="$($SUDO head -n1 "$DATA_DIR/connect-qr" 2>/dev/null || true)"
+        if [ -n "$INVITE_LINK" ] && [ -n "$ACCESS_URL" ] && [[ "$INVITE_LINK" == "$ACCESS_URL"* ]]; then
+          QR_TEXT="$INVITE_LINK"
+          case "$INVITE_LINK" in *'#pair='*) PAIR_QR=true ;; esac
+        elif [ -z "$ACCESS_URL" ] && [ -n "$INVITE_LINK" ]; then
+          QR_TEXT="$INVITE_LINK"
+          case "$INVITE_LINK" in *'#pair='*) PAIR_QR=true ;; esac
+        fi
       fi
     fi
   fi
@@ -930,19 +943,25 @@ else
   elif [ "$SETUP_CODE_RC" -ne 0 ]; then
     echo -e "  ${YELLOW}The panel asks for a setup code to create the admin account: run  citadel setup-code${NC}"
   fi
-  if [ "$PAIR_QR" = true ]; then
+  if [ "$PUBLIC_QR_READY" != true ]; then
+    echo "  Public tunnel unavailable: no local-address QR was generated."
+    echo "  Run: sudo citadel tunnel, then sudo citadel qr --tunnel"
+    echo "  Inspect: sudo journalctl -u citadel-tunnel -n 50 --no-pager"
+  elif [ "$PAIR_QR" = true ]; then
     echo "  Scan to open on your phone, or to pair from another Citadel."
   else
     echo "  Scan to open on your phone."
   fi
-  if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
-    (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$ACCESS_URL") || true
-  elif command -v qrencode >/dev/null 2>&1; then
-    # The Linux console font lacks the half-block glyphs used by ANSIUTF8.
-    if [ "${TERM:-}" = "linux" ] || [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}${SUDO_USER:-}" ]; then
-      qrencode -t ANSI -m 2 "$QR_TEXT" || true
-    else
-      qrencode -t ANSIUTF8 -m 2 "$QR_TEXT" || true
+  if [ "$PUBLIC_QR_READY" = true ]; then
+    if command -v node >/dev/null 2>&1 && [ -f "$APP_DIR/scripts/print-qr.js" ]; then
+      (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$ACCESS_URL") || true
+    elif command -v qrencode >/dev/null 2>&1; then
+      # The Linux console font lacks the half-block glyphs used by ANSIUTF8.
+      if [ "${TERM:-}" = "linux" ] || [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}${SUDO_USER:-}" ]; then
+        qrencode -t ANSI -m 2 "$QR_TEXT" || true
+      else
+        qrencode -t ANSIUTF8 -m 2 "$QR_TEXT" || true
+      fi
     fi
   fi
   echo "  Manage with: citadel status | qr | update | doctor"
