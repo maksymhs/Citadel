@@ -228,6 +228,11 @@ if [ "$TUNNEL" = true ] && [ "$HEALTH_OK" = true ] && [ -f "$APP_DIR/scripts/tun
   PUBLIC_URL="$(head -n1 "$DATA_DIR/tunnel-url" 2>/dev/null || true)"
 fi
 
+if [ "$TUNNEL" = true ] && [ -n "$PUBLIC_URL" ]; then
+  step "Verifying the public panel"
+  if ! quiet_run node "$APP_DIR/scripts/wait-public-panel.js" "$PUBLIC_URL" "http://127.0.0.1:$PORT_NUM"; then PUBLIC_URL=""; fi
+fi
+
 VERSION="$(node -p "require('$APP_DIR/package.json').version" 2>/dev/null || true)"
 ACCESS_URL="$PUBLIC_URL"
 if [ "$TUNNEL" != true ] && [ -z "$ACCESS_URL" ]; then ACCESS_URL="http://127.0.0.1:$PORT_NUM"; fi

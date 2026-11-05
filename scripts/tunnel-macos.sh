@@ -148,6 +148,7 @@ EOF
 
 # Keep a running tunnel (and its URL) untouched unless something changed.
 if [ "$RESTART" = false ] && launchctl print "$LAUNCH_DOMAIN/$LABEL" >/dev/null 2>&1 && [ -s "$URL_FILE" ]; then
+  node "$APP_DIR/scripts/wait-public-panel.js" "$(head -n1 "$URL_FILE")" "http://127.0.0.1:$PORT" || exit 1
   say "Tunnel already running: $(head -n1 "$URL_FILE")"
   exit 0
 fi
@@ -171,4 +172,5 @@ if [ -z "$PUBLIC_URL" ]; then
   echo "The tunnel is starting but no URL appeared yet. See: $LOG_FILE" >&2
   exit 1
 fi
+node "$APP_DIR/scripts/wait-public-panel.js" "$PUBLIC_URL" "http://127.0.0.1:$PORT" || exit 1
 say "Global URL: $PUBLIC_URL"

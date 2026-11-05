@@ -460,3 +460,13 @@ or update**, including the first run; no subsequent CLI command is required.
 A previous local address setting does not override the recorded tunnel. When a
 requested tunnel fails, neither installer presents a local address as its result.
 The recovery commands above are only for that failure case.
+
+Before announcing a working tunnel or rendering its QR, the installer waits up
+to 60 seconds for the public `/` page and `/api/auth/status` to return HTTP 200.
+The page must contain the Citadel shell, and the public API identity must match
+the local instance. An issued hostname or a registered Cloudflare connection alone
+is not considered ready; persistent 404/502 responses suppress the QR with a reason.
+
+Quick Tunnels use their own temporary empty cloudflared configuration, so a global
+`/etc/cloudflared/config.yml` or user ingress rules cannot redirect them to a
+catch-all 404. Existing configurations and named-tunnel settings are left intact.

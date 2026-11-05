@@ -185,6 +185,11 @@ if [ -z "$PUBLIC_URL" ]; then
   exit 1
 fi
 
+# A cloudflared startup banner is not proof that edge routing is ready.
+if ! node "$APP_DIR/scripts/wait-public-panel.js" "$PUBLIC_URL" "$TARGET"; then
+  exit 1
+fi
+
 QUIET="${CITADEL_QUIET:-}"
 if [ -z "$QUIET" ]; then
   echo ""

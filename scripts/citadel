@@ -155,6 +155,7 @@ case "$cmd" in
       case "$tunnel_url" in
         *localhost*|https://127.*|https://10.*|https://192.168.*|https://169.254.*|https://172.1[6-9].*|https://172.2[0-9].*|https://172.3[01].*) echo "Tunnel URL is local; refusing to print it." >&2; exit 1 ;;
       esac
+      as_root node "$APP_DIR/scripts/wait-public-panel.js" "$tunnel_url" "http://127.0.0.1:$PORT"
       echo "Tunnel URL: $tunnel_url"
       as_root node "$APP_DIR/scripts/print-qr.js" "$tunnel_url"
       exit $?
@@ -163,6 +164,7 @@ case "$cmd" in
     if [ -s "$DATA_DIR/tunnel-url" ]; then
       p_url="$(head -n1 "$DATA_DIR/tunnel-url")"
       case "$p_url" in https://*.*) ;; *) p_url="" ;; esac
+      if [ -n "$p_url" ]; then node "$APP_DIR/scripts/wait-public-panel.js" "$p_url" "http://127.0.0.1:$PORT"; fi
     fi
     [ -n "$p_url" ] || p_url="$(panel_url)"
     if [ "${1:-}" = "--url" ]; then

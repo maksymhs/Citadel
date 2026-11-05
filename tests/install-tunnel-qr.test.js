@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const source = fs.readFileSync(path.join(__dirname, '../install.sh'), 'utf8');
-const selection = source.slice(source.indexOf('  # A requested tunnel owns'), source.indexOf('  # Scan-to-start:'));
+const selection = source.slice(source.indexOf('  # A requested tunnel owns'), source.indexOf('  if [ \"$TUNNEL\" = true ] && [ \"$PUBLIC_QR_READY\" = true ]; then'));
 function select(url, tunnel = true, override = '') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-tunnel-qr-'));
   if (url !== null) fs.writeFileSync(path.join(dir, 'tunnel-url'), url);
@@ -61,10 +61,10 @@ for (const update of [false, true]) {
     fs.writeFileSync(path.join(root, 'package.json'), '{"version":"0.70.0"}');
     fs.writeFileSync(path.join(root, 'scripts', 'print-qr.js'), '');
     fs.writeFileSync(path.join(root, 'tunnel-url'), 'https://first.trycloudflare.com\n');
-    fs.writeFileSync(path.join(bin, 'node'), '#!/bin/bash\nprintf "QR:%s FALLBACK:%s\\n" "$2" "$3"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'node'), '#!/bin/bash\ncase "$1" in *wait-public-panel.js) exit 0;; esac\nprintf "QR:%s FALLBACK:%s\\n" "$2" "$3"\n', { mode: 0o755 });
     const start = source.indexOf('  printf \'%s\' "$CLR"\n  CITADEL_VERSION=');
     const banner = source.slice(start).trimEnd().replace(/\nfi$/, '');
-    const preamble = `set -euo pipefail\nCLR=''\nGREEN=''\nYELLOW=''\nNC=''\nSUDO=''\nDATA_DIR="$1"\nAPP_DIR="$1"\nTUNNEL=true\nLAN_EXPOSED=false\nPANEL_PORT=3000\nRUN_USER=test\nHEALTH_OK=true\nUPDATE_MODE=${update}\nrun_as_service_user() { case "$1" in *pair-qr*) printf 'https://first.trycloudflare.com/#pair=test';; *setup-code*) printf 'TEST-ONLY';; esac; }\n`;
+    const preamble = `step() { :; }; quiet_run() { \"$@\"; };\nset -euo pipefail\nCLR=''\nGREEN=''\nYELLOW=''\nNC=''\nSUDO=''\nDATA_DIR="$1"\nAPP_DIR="$1"\nTUNNEL=true\nLAN_EXPOSED=false\nPANEL_PORT=3000\nRUN_USER=test\nHEALTH_OK=true\nUPDATE_MODE=${update}\nrun_as_service_user() { case "$1" in *pair-qr*) printf 'https://first.trycloudflare.com/#pair=test';; *setup-code*) printf 'TEST-ONLY';; esac; }\n`;
     try {
       const result = spawnSync('bash', ['-c', preamble + banner, 'test', root], { encoding: 'utf8', env: {
         ...process.env, PATH: bin + ':' + process.env.PATH, CITADEL_PUBLIC_URL: 'http://192.168.18.31:3000',

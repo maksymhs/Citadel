@@ -40,8 +40,15 @@ if [ -s "$TOKEN_FILE" ] && [ -s "$DOMAIN_FILE" ]; then
   exit 0
 fi
 
+# Quick tunnels must not inherit another application's global/user ingress
+# rules (a catch-all http_status:404 can otherwise shadow --url). Leave those
+# files untouched and give this runner its own explicit empty configuration.
+QUICK_CONFIG="$(mktemp "$DATA_DIR/quick-config.XXXXXX")"
+printf '{}\n' > "$QUICK_CONFIG"
+trap 'rm -f "$QUICK_CONFIG"' EXIT
+
 # Stream cloudflared output, scraping the public URL from the startup banner.
-"$CLOUDFLARED" tunnel --no-autoupdate --url "$TARGET" 2>&1 | while IFS= read -r line; do
+"$CLOUDFLARED" tunnel --config "$QUICK_CONFIG" --no-autoupdate --url "$TARGET" 2>&1 | while IFS= read -r line; do
   printf '%s\n' "$line"
   case "$line" in
     *trycloudflare.com*)

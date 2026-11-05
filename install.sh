@@ -889,6 +889,15 @@ else
     ACCESS_LABEL="Panel (this machine)"
   fi
 
+  if [ "$TUNNEL" = true ] && [ "$PUBLIC_QR_READY" = true ]; then
+    step 8 "Verifying the public panel..."
+    if ! quiet_run node "$APP_DIR/scripts/wait-public-panel.js" "$ACCESS_URL" "http://127.0.0.1:$PANEL_PORT"; then
+      PUBLIC_QR_READY=false
+      ACCESS_URL=""
+    fi
+    printf '%s' "$CLR"
+  fi
+
   # Scan-to-start: one QR for both jobs. A normal camera opens the panel; the
   # same code scanned from another Citadel's Pair screen pairs the two hosts.
   # The server writes the current single-use invitation at startup; fall back to
