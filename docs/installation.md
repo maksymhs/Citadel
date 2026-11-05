@@ -454,3 +454,9 @@ sudo citadel qr --tunnel
 address discovery. The short QR omits the pairing invitation but opens the panel
 through the tunnel. If tunnel startup fails, inspect
 `sudo journalctl -u citadel-tunnel -n 50 --no-pager`.
+
+The public URL and QR are printed automatically on **every successful installation
+or update**, including the first run; no subsequent CLI command is required.
+A previous local address setting does not override the recorded tunnel. When a
+requested tunnel fails, neither installer presents a local address as its result.
+The recovery commands above are only for that failure case.

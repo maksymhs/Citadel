@@ -229,7 +229,8 @@ if [ "$TUNNEL" = true ] && [ "$HEALTH_OK" = true ] && [ -f "$APP_DIR/scripts/tun
 fi
 
 VERSION="$(node -p "require('$APP_DIR/package.json').version" 2>/dev/null || true)"
-ACCESS_URL="${PUBLIC_URL:-http://127.0.0.1:$PORT_NUM}"
+ACCESS_URL="$PUBLIC_URL"
+if [ "$TUNNEL" != true ] && [ -z "$ACCESS_URL" ]; then ACCESS_URL="http://127.0.0.1:$PORT_NUM"; fi
 
 printf '%s' "$CLR"
 if [ "$HEALTH_OK" = true ]; then
@@ -241,7 +242,7 @@ if [ "$HEALTH_OK" = true ]; then
 else
   echo "… Citadel ${VERSION:+v$VERSION }is still starting (check: citadel status, log: $LOGS_DIR/citadel.log)"
 fi
-echo "  $ACCESS_URL"
+if [ -n "$ACCESS_URL" ]; then echo "  $ACCESS_URL"; else echo "  Public URL unavailable: the tunnel has not provided an address."; fi
 
 # One QR, last: opens the panel from a phone camera and pairs from another
 # Citadel's "Pair a machine" screen (single-use invitation for this address).
@@ -258,13 +259,13 @@ if [ "$UPDATE_MODE" = false ]; then
     echo "  The panel asks for a setup code to create the admin account: run  citadel setup-code"
   fi
 fi
-if [ -n "$PUBLIC_URL" ] && [ "$UPDATE_MODE" = false ]; then
+if [ -n "$PUBLIC_URL" ]; then
   PAIR_LINK="$(cd "$APP_DIR" && DATA_DIR="$DATA_DIR" node scripts/pair-qr.js "$PUBLIC_URL" 2>/dev/null | tail -n1 || true)"
   QR_TEXT="$PUBLIC_URL"
   case "$PAIR_LINK" in "$PUBLIC_URL"*"#pair="*) QR_TEXT="$PAIR_LINK" ;; esac
   echo "  Scan to open on your phone, or to pair from another Citadel."
   (cd "$APP_DIR" && node scripts/print-qr.js "$QR_TEXT" "$PUBLIC_URL") || true
-elif [ -z "$PUBLIC_URL" ] && [ "$UPDATE_MODE" = false ]; then
+elif [ -z "$PUBLIC_URL" ]; then
   if [ "$TUNNEL" = true ]; then
     echo "  No public tunnel yet. Try: citadel tunnel"
   else

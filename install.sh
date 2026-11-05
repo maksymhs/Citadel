@@ -884,7 +884,7 @@ else
       ACCESS_LABEL="Panel (your network)"
     fi
   fi
-  if [ -z "$ACCESS_URL" ]; then
+  if [ "$TUNNEL" != true ] && [ -z "$ACCESS_URL" ]; then
     ACCESS_URL="http://127.0.0.1:$PANEL_PORT"
     ACCESS_LABEL="Panel (this machine)"
   fi
@@ -928,7 +928,11 @@ else
     *) STATUS_MARK="${GREEN}✔${NC}"; STATUS_TEXT="installed" ;;
   esac
   echo -e "${STATUS_MARK} Citadel ${CITADEL_VERSION:+v$CITADEL_VERSION }${STATUS_TEXT}"
-  echo "  $ACCESS_URL"
+  if [ -n "$ACCESS_URL" ]; then
+    echo "  $ACCESS_URL"
+  else
+    echo "  Public URL unavailable: the tunnel has not provided an address."
+  fi
   # Creating the first administrator needs a code only this shell can read, so a
   # stranger who finds the panel first cannot claim it.
   SETUP_CODE=""

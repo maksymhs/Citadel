@@ -981,3 +981,9 @@ One numbered entry per meaningful change: what changed, how it was verified, kno
 - Added citadel qr --tunnel to render only the recorded public tunnel address, with privileged metadata access and no local fallback. Tunnel restart clears old URL metadata before waiting for the new runner. Pairing fallback continues to use the same tunnel URL.
 - Validation: 35 focused installer/privilege/CLI/QR/tunnel checks passed, plus bash syntax, lint and whitespace checks. No real host installer, Cloudflare service or server credentials used.
 - Final CLI/selection recheck passed 22/22, including direct invocation of qr --tunnel; normal Linux qr now elevates before reading private metadata and prefers the recorded tunnel over local address settings. Full npm test again hit the previously observed agent SQLite setup and process-group termination failures. Lint passed after the final CLI changes.
+
+## 202. Public QR on first and every subsequent installation
+
+- Added completion-banner regressions exercising first and repeat Linux installations: both automatically invoke the renderer with the observed tunnel URL and the same public fallback, even with a stale LAN override. A failed requested tunnel no longer prints a local address as the installation result.
+- Aligned macOS: public QR is shown after updates as well as first installation; missing public tunnels no longer print loopback as the result. Explicit no-tunnel remains supported.
+- Validation: 25 completion-banner/URL-selection/CLI/WSL/macOS installer checks passed, bash syntax, lint and whitespace checks passed. Real Cloudflare startup and macOS execution remain unverified; no live host changes performed. The prior full-suite failures remain documented in entry 201.
