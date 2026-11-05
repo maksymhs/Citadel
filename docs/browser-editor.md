@@ -15,7 +15,10 @@ from keyboard focus; closing it while focused inside returns focus to the toggle
 New browser sessions start in Projects; an existing saved screen is restored.
 Projects shows imported/registered projects above a compact detected-folders
 list. System (host) is the first Workspace entry for administrators, not a Projects
-card. Each suggestion shows its name/path, **Import folder**, a dismiss **×** and
+card. Opening System reattaches its existing terminal or creates the first one
+automatically. The toolbar uses the same Terminal controls as projects. Only
+administrators can open it; switching to a configured OS account still requires
+confirmation. Each suggestion shows its name/path, **Import folder**, a dismiss **×** and
 an administrator-only **Delete** action. Dismiss
 only hides the current discovery suggestion: it neither deletes files nor
 registers the folder. **Refresh** shows it again; dismissing all suggestions hides

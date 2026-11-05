@@ -2308,13 +2308,12 @@
     const content = document.getElementById('main-content');
     content.style.padding = '0'; // Terminal takes full viewport
     const titleEl = document.getElementById('top-bar-title');
-    if (titleEl) titleEl.textContent = 'Workspace — System (host)';
+    if (titleEl) titleEl.textContent = 'Workspace — System';
 
     content.innerHTML = `
       <div class="workspace-container">
         <div class="terminal-tabs-bar" id="sys-terminal-tabs-container">
-          <span class="badge badge-muted" id="sys-host-badge" style="margin-right:6px;">Host shell</span>
-          <button class="btn btn-secondary btn-sm" id="sys-new-terminal" type="button">New System terminal</button>
+          <button class="btn btn-secondary btn-sm" id="sys-new-terminal" type="button">+ Terminal</button>
           <span class="system-terminal-security-note" id="sys-terminal-security-note" hidden>Project agents share the service user's sudo capability; this is not OS isolation.</span>
           ${fontButtonsHtml('sys')}
           <button class="btn btn-secondary btn-sm select-btn" id="sys-select-btn" title="Select and copy text (screen and history)">
@@ -2364,8 +2363,6 @@
     try {
       const termRes = await api('/api/terminals?scope=global');
       state.tmuxAvailable = !!termRes.tmuxAvailable;
-      const hostBadge = document.getElementById('sys-host-badge');
-      if (hostBadge) hostBadge.textContent = termRes.runAsUser ? `Host shell (as ${termRes.runAsUser})` : 'Host shell (service user)';
       newTerminalButton.dataset.runAsUser = termRes.runAsUser || '';
       const securityNote = document.getElementById('sys-terminal-security-note');
       if (securityNote) securityNote.hidden = !termRes.runAsUser;
@@ -2381,8 +2378,11 @@
       }
 
       if (alive.length === 0) {
-        viewport.innerHTML = `<div class="system-terminal-empty"><strong>${isAdmin ? 'No System terminal is open.' : 'System terminals require an administrator account.'}</strong>${termRes.runAsUser ? `<p>This terminal will start as <strong>${escapeHtml(termRes.runAsUser)}</strong>. Projects continue to start as the Citadel service user, but this is not an OS isolation boundary: projects and agents may share the service user’s sudo capability.</p>` : '<p>The host terminal uses the Citadel service account.</p>'}${isAdmin ? '<p>Start a terminal only when you need host-level access; sudo prompts use the host account policy.</p>' : ''}</div>`;
-        newTerminalButton.disabled = !isAdmin;
+        if (isAdmin) {
+          await spawnSysTerminal(termRes.runAsUser || '');
+        } else {
+          viewport.innerHTML = '<div class="system-terminal-empty">System terminals require an administrator account.</div>';
+        }
         return;
       }
       newTerminalButton.disabled = !isAdmin;
@@ -2413,7 +2413,7 @@
     try {
       const res = await api('/api/terminals', {
         method: 'POST',
-        body: { name: `Host ${state.sysTerminals.size + 1}` },
+        body: { name: `Terminal ${state.sysTerminals.size + 1}` },
       });
       await loadSessions();
       await activateSysTerminal(res.session.sessionId, res.session.name);
@@ -3311,7 +3311,6 @@
   function connectSourceNote(...args) { return window.CitadelDeployments.connectSourceNote(...args); }
 
   const SETTINGS_SECTIONS = {
-    director: { title: 'Telegram director', desc: 'Direct several software projects from one private Telegram conversation.' },
     gateway: { title: 'AI Gateway', desc: 'Connect Claude and ChatGPT, choose models, and switch the shared gateway route for Claude Code, OpenCode and Codex CLI.' },
     updates: { title: 'Updates', desc: 'Keep this machine and the machines paired with it on the latest version.' },
     machines: { title: 'Machines', desc: 'Pair other Citadels to reach them from this panel. Live health and alerts are on the Dashboard.' },
@@ -3321,7 +3320,6 @@
   };
 
   const SETTINGS_ICONS = {
-    director: NAV_ICONS.agents,
     gateway: NAV_ICONS.agents,
     updates: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 11a8 8 0 00-14.93-3M4 4v4h4m-4 5a8 8 0 0014.93 3M20 20v-4h-4"/>',
     machines: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>',
@@ -3387,11 +3385,6 @@
       content.querySelectorAll('[data-settings-section]').forEach((btn) => {
         btn.onclick = () => openSettingsSection(btn.dataset.settingsSection);
       });
-      return;
-    }
-    if (section === 'director') {
-      content.innerHTML = '<div class="settings-screen"><div class="settings-screen-head"><h2>Telegram director</h2></div><div class="card settings-panel" id="director-body">Loading…</div></div>';
-      await window.CitadelDirectorSettings.init({ api, escapeHtml, showToast });
       return;
     }
     if (section === 'gateway') {

@@ -572,12 +572,6 @@ function runTask(task) {
       // The direct child exited but the group is not empty. This is observable
       // and explicitly not treated as "everything finished".
       console.warn(`[sentinel] ${task.id}: child exited but descendants remain in pgid ${entry.record.pgid}.`);
-      if (task.node === 'citadel-director') {
-        // Director jobs may publish or start another repo turn after completion.
-        // A surviving descendant must keep the execution/repository blocked.
-        await safeReconcileRecord({ ...recordFor(entry), taskId: task.id, claimToken, execId }, 'unknown');
-        return;
-      }
     }
 
     const report = {

@@ -190,11 +190,8 @@ for (const dir of [DATA_DIR, PROJECTS_DIR, LOGS_DIR, PLUGINS_DIR]) {
   }
 }
 
-const DIRECTOR_NODE = 'citadel-director';
-const DIRECTOR_TICK_MS = Math.max(1000, parseInt(process.env.CITADEL_DIRECTOR_TICK_MS, 10) || 2000);
 
 module.exports = {
-  DIRECTOR_NODE, DIRECTOR_TICK_MS,
   ROOT_DIR,
   PORT,
   HOST,

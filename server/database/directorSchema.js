@@ -1,4 +1,4 @@
-/** Durable Telegram inbox/outbox and project supervision, separate from legacy missions. */
+/** Historical director schema retained for migration compatibility; no runtime uses it. */
 module.exports = `
 CREATE TABLE IF NOT EXISTS director_config (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS director_projects (

@@ -235,7 +235,7 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.deepEqual(errors, []);
   });
 
-  test('Projects is the entry point and System opens directly from Workspace without spawning a shell', async () => {
+  test('Projects is the entry point and System opens a terminal directly from Workspace', async () => {
     w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(350);
     assert.equal(w.document.querySelector('[data-view="workspace"]'), null);
     assert.ok(w.document.querySelector('.workspace-heading'));
@@ -244,18 +244,28 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     assert.equal(w.document.querySelector('.project-system, #projects-system-open'), null);
     assert.equal(system.parentElement.firstElementChild, system);
     const originalFetch = w.fetch, calls = [];
+    let systemCreated = false;
     w.fetch = (url, opts = {}) => {
       calls.push({ url: String(url), method: opts.method || 'GET' });
-      if (String(url) === '/api/terminals?scope=global') return Promise.resolve({ ok: true, json: async () => ({ sessions: [], tmuxAvailable: false }) });
+      if (String(url) === '/api/terminals?scope=global') return Promise.resolve({ ok: true, json: async () => ({ sessions: systemCreated ? [{ id: 'system-smoke', name: 'Terminal 1', isAlive: true }] : [], tmuxAvailable: false }) });
+      if (String(url) === '/api/terminals' && opts.method === 'POST') {
+        systemCreated = true;
+        return Promise.resolve({ ok: true, json: async () => ({ session: { sessionId: 'system-smoke', name: 'Terminal 1' } }) });
+      }
       return originalFetch(url, opts);
     };
     try {
       system.click(); await sleep(300);
-      assert.equal(w.document.getElementById('top-bar-title').textContent, 'Workspace — System (host)');
+      assert.equal(w.document.getElementById('top-bar-title').textContent, 'Workspace — System');
       assert.ok(w.document.getElementById('sys-terminal-viewport'));
       assert.equal(w.document.querySelector('.workspace-chooser'), null);
       assert.ok(w.document.querySelector('[data-workspace-context="system"].active'));
-      assert.equal(calls.some(call => call.method !== 'GET'), false);
+      assert.equal(calls.filter(call => call.url === '/api/terminals' && call.method === 'POST').length, 1);
+      assert.equal(w.document.getElementById('sys-host-badge'), null);
+      assert.equal(w.document.querySelector('.system-terminal-empty'), null);
+      w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
+      w.document.querySelector('[data-workspace-context="system"]').click(); await sleep(300);
+      assert.equal(calls.filter(call => call.url === '/api/terminals' && call.method === 'POST').length, 1, 'reopening reuses the live shell');
     } finally {
       w.fetch = originalFetch;
       w.document.querySelector('.nav-item[data-view="projects"]').click(); await sleep(300);
@@ -461,87 +471,15 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
     } finally { w.fetch = originalFetch; }
   });
 
-  test('Telegram director configuration is disabled by default and renders without secrets', async () => {
+  test('Telegram director is removed from Settings and its API is unavailable', async () => {
     w.document.querySelector('.nav-item[data-view="settings"]').click();
     await sleep(400);
-    w.document.querySelector('[data-settings-section="director"]').click();
-    await sleep(500);
-    const form = w.document.getElementById('director-config');
-    assert.ok(form, w.document.getElementById('main-content').textContent);
-    assert.equal(form.elements.enabled.checked, false);
-    assert.equal(form.elements.manualMode.checked, false);
-    assert.equal(form.elements.token.type, 'password');
-    assert.equal(form.elements.token.value, '');
-    assert.ok(w.document.getElementById('director-projects'));
-    assert.deepEqual(errors, []);
-  });
-
-  test('Telegram AI setup offers installation, authorization and a gated coordinator test', async () => {
-    const originalFetch = w.fetch;
-    w.fetch = (url, options) => String(url) === '/api/director/setup'
-      ? Promise.resolve({ ok: true, json: async () => ({ installed: false, connected: false, ready: false, operation: { phase: 'idle' } }) })
-      : originalFetch(url, options);
-    try {
-      w.document.querySelector('.nav-item[data-view="settings"]').click();
-      await sleep(400);
-      w.document.querySelector('[data-settings-section="director"]').click();
-      await sleep(500);
-      const box = w.document.getElementById('director-ai-setup');
-      assert.ok(box.querySelector('[data-ai="install"]'));
-      assert.equal(box.querySelector('[data-ai="install"]').disabled, false);
-      assert.equal(box.querySelector('[data-ai="login"]').disabled, true);
-      assert.equal(box.querySelector('[data-ai="test"]').disabled, true);
-      let cancelled = false;
-      w.fetch = (url, options) => {
-        if (String(url) === '/api/director/setup/cancel') {
-          cancelled = true;
-          assert.equal(options.method, 'POST');
-          return Promise.resolve({ ok: true, json: async () => ({ phase: 'idle' }) });
-        }
-        if (String(url) === '/api/director/setup') return Promise.resolve({ ok: true, json: async () => ({ installed: true, connected: false, ready: false, operation: cancelled ? { phase: 'idle' } : { phase: 'running', action: 'login', url: 'https://auth.openai.com/codex/device', code: 'ABCD-EFGHI' } }) });
-        return originalFetch(url, options);
-      };
-      w.document.getElementById('director-refresh').click();
-      await sleep(500);
-      const cancel = w.document.querySelector('[data-ai="cancel"]');
-      assert.ok(cancel);
-      assert.equal(cancel.disabled, false);
-      cancel.click();
-      await sleep(300);
-      assert.equal(cancelled, true);
-      assert.equal(w.document.querySelector('[data-ai="login"]').disabled, false);
-      assert.ok(!w.document.getElementById('director-ai-setup').textContent.includes('ABCD-EFGHI'));
-      assert.deepEqual(errors, []);
-    } finally { w.fetch = originalFetch; }
-  });
-
-  test('coordinator test polls the result after its background request returns', async () => {
-    const originalFetch = w.fetch;
-    let started = false, polls = 0;
-    w.fetch = (url, options) => {
-      if (String(url) === '/api/director/setup/test') {
-        started = true;
-        assert.equal(options.method, 'POST');
-        return Promise.resolve({ ok: true, json: async () => ({ phase: 'running', action: 'test' }) });
-      }
-      if (String(url) === '/api/director/setup') {
-        if (started) polls++;
-        return Promise.resolve({ ok: true, json: async () => ({ installed: true, connected: true, ready: true, operation: !started ? { phase: 'idle' } : polls === 1 ? { phase: 'running', action: 'test', message: 'Testing response' } : { phase: 'done', action: 'test', message: 'Coordinator answered' } }) });
-      }
-      return originalFetch(url, options);
-    };
-    try {
-      w.document.querySelector('.nav-item[data-view="settings"]').click();
-      await sleep(400);
-      w.document.querySelector('[data-settings-section="director"]').click();
-      await sleep(500);
-      w.document.querySelector('[data-ai="test"]').click();
-      await sleep(3000);
-      assert.ok(polls >= 2);
-      assert.match(w.document.getElementById('director-ai-setup').textContent, /Coordinator answered/);
-      assert.equal(w.document.querySelector('[data-ai="test"]').disabled, false);
-      assert.deepEqual(errors, []);
-    } finally { w.fetch = originalFetch; }
+    assert.equal(w.document.querySelector('[data-settings-section="director"]'), null);
+    for (const endpoint of ['/api/director', '/api/director/setup']) {
+      const response = await w.fetch(endpoint);
+      assert.equal(response.status, 404);
+    }
+    assert.equal(w.CitadelDirectorSettings, undefined);
   });
 
   test('Settings is a compact navigation-only hub and keeps Updates and pairing accessible', async () => {
@@ -552,11 +490,11 @@ describe('UI smoke (jsdom)', { skip: !JSDOM && 'jsdom is not installed', timeout
       await sleep(700);
       const hub = w.document.querySelector('.settings-hub');
       assert.deepEqual([...hub.querySelectorAll('.settings-group > h2')].map(node => node.textContent), ['System', 'Configuration']);
-      assert.deepEqual([...hub.querySelectorAll('.settings-group')].map(node => node.querySelectorAll('nav > button').length), [5, 7]);
+      assert.deepEqual([...hub.querySelectorAll('.settings-group')].map(node => node.querySelectorAll('nav > button').length), [5, 6]);
       assert.ok(hub.querySelector('nav[aria-label="Settings sections"]'));
       assert.equal(w.getComputedStyle(hub.querySelector('.settings-tiles')).gridTemplateColumns, 'repeat(3, minmax(0, 1fr))', 'desktop Settings uses three equal columns');
       assert.notEqual(w.getComputedStyle(hub.querySelector('.settings-tile:last-child')).gridColumn, '1 / -1', 'the last tile does not stretch across the row');
-      assert.deepEqual([...hub.querySelectorAll('.settings-tile')].map(button => button.textContent.replace('›', '').trim()), ['Telegram director', 'AI Gateway', 'Updates', 'Machines', 'Network & access', 'Alerts', 'Credentials']);
+      assert.deepEqual([...hub.querySelectorAll('.settings-tile')].map(button => button.textContent.replace('›', '').trim()), ['AI Gateway', 'Updates', 'Machines', 'Network & access', 'Alerts', 'Credentials']);
       assert.equal(hub.querySelector('.settings-hero, .settings-screen-head, .connect-qr, .settings-tile-text span'), null, 'no duplicate heading, QR, diagnostics or descriptive subtitles');
       assert.equal(calls.filter(url => /\/api\/(?:settings\/connect|system\/(?:connect|node|version)|secrets|pair\/invite)(?:\?|$)/.test(url)).length, 0, 'the hub does not fetch unused section data or create pairing codes');
       assert.equal(calls.some(url => /\/api\/(?:system\/(?:processes|integrations|tools)|terminals|editor)(?:\?|$)/.test(url)), false, 'the combined hub does not load System summaries or poll');
